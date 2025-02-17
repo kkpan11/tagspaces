@@ -1,6 +1,6 @@
 /**
  * TagSpaces - universal file and folder organizer
- * Copyright (C) 2023-present TagSpaces UG (haftungsbeschraenkt)
+ * Copyright (C) 2023-present TagSpaces GmbH
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License (version 3) as
@@ -18,7 +18,6 @@
 
 import React, { createContext, useEffect, useMemo, useRef } from 'react';
 import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
-import PlatformIO from '-/services/platform-facade';
 import AppConfig from '-/AppConfig';
 import {
   extractContainingDirectoryPath,
@@ -27,9 +26,11 @@ import {
 import { locationType } from '@tagspaces/tagspaces-common/misc';
 import { PerspectiveIDs } from '-/perspectives';
 import { useDirectoryContentContext } from '-/hooks/useDirectoryContentContext';
-import { toFsEntry } from '-/services/utils-io';
 import { Changed } from '../../main/chokidarWatcher';
 import { useEditedEntryContext } from '-/hooks/useEditedEntryContext';
+import { TS } from '-/tagspaces.namespace';
+import { watchFolderMessage } from '-/services/utils-io';
+import { Pro } from '-/pro';
 
 type FSWatcherContextData = {
   ignored: string[];
@@ -58,17 +59,20 @@ export type FSWatcherContextProviderProps = {
 export const FSWatcherContextProvider = ({
   children,
 }: FSWatcherContextProviderProps) => {
-  const { currentLocation } = useCurrentLocationContext();
+  const { currentLocationId, findLocation } = useCurrentLocationContext();
   const {
+    getAllPropertiesPromise,
     currentDirectoryEntries,
     loadDirectoryContent,
     currentDirectoryPath,
-    currentDirectoryPerspective,
+    getPerspective,
   } = useDirectoryContentContext();
-  const { reflectDeleteEntries, reflectAddEntry, reflectUpdateMeta } =
-    useEditedEntryContext();
+  const { setReflectActions, reflectUpdateMeta } = useEditedEntryContext();
   const ignored = useRef<string[]>([]);
   const watchingFolderPath = useRef<string>(undefined);
+  let timer; // Timer variable to delay batch execution
+  const actionsQueue: TS.EditAction[] = [];
+  const currentLocation = findLocation();
 
   useEffect(() => {
     if (
@@ -77,21 +81,34 @@ export const FSWatcherContextProvider = ({
       currentLocation.type !== locationType.TYPE_CLOUD
     ) {
       if (currentDirectoryPath && currentDirectoryPath.length > 0) {
-        const depth =
-          currentDirectoryPerspective === PerspectiveIDs.KANBAN ? 3 : 1;
+        const depth = getPerspective() === PerspectiveIDs.KANBAN ? 3 : 1;
 
         watchFolder(currentDirectoryPath, depth);
       }
     } else {
       stopWatching();
     }
-  }, [currentLocation, currentDirectoryPath]);
+  }, [currentLocationId, currentDirectoryPath]);
 
   function watchFolder(locationPath, depth) {
-    console.log('Start watching: ' + locationPath);
-    stopWatching();
-    watchingFolderPath.current = locationPath;
-    PlatformIO.watchFolder(locationPath, depth);
+    if (
+      Pro &&
+      !currentLocation.haveObjectStoreSupport() &&
+      !currentLocation.haveWebDavSupport()
+    ) {
+      console.log('Start watching: ' + locationPath);
+      stopWatching();
+      watchingFolderPath.current = locationPath;
+      watchFolderMessage(locationPath, depth);
+    }
+  }
+
+  function executeBatchActions() {
+    if (actionsQueue.length > 0) {
+      setReflectActions(...actionsQueue);
+      // Clear the actions queue after executing batch changes
+      actionsQueue.length = 0;
+    }
   }
 
   const folderChanged = useMemo(() => {
@@ -105,7 +122,11 @@ export const FSWatcherContextProvider = ({
         return;
       }
       // console.log(`ignored list:` + JSON.stringify(ignored.current));
-      const pathParts = path.split(PlatformIO.getDirSeparator());
+      const pathParts = path.split(
+        currentLocation
+          ? currentLocation.getDirSeparator()
+          : AppConfig.dirSeparator,
+      );
       for (let i = 0; i < ignored.current.length; i++) {
         if (
           path.startsWith(ignored.current[i]) ||
@@ -115,6 +136,14 @@ export const FSWatcherContextProvider = ({
           return;
         }
       }
+      // Clear existing timer
+      clearTimeout(timer);
+
+      // Set timer to delay batch execution
+      timer = setTimeout(() => {
+        // Execute batch changes after 1 second delay
+        executeBatchActions();
+      }, 1000);
 
       switch (event) {
         case 'unlink':
@@ -123,17 +152,34 @@ export const FSWatcherContextProvider = ({
             //currentDirectoryEntries.some((entry) => path === entry.path) &&
             !path.includes(AppConfig.metaFolder)
           ) {
-            reflectDeleteEntries(toFsEntry(path, false));
+            actionsQueue.push({
+              action: 'delete',
+              entry: currentLocation.toFsEntry(path, false),
+              source: 'fsWatcher',
+            });
+            //reflectDeleteEntries(toFsEntry(path, false, currentLocation.uuid));
           }
           break;
         case 'add':
           if (!path.includes(AppConfig.metaFolder)) {
-            reflectAddEntry(toFsEntry(path, true));
+            actionsQueue.push({
+              action: 'add',
+              entry: currentLocation.toFsEntry(path, true),
+              open: false,
+              source: 'fsWatcher',
+            });
+            // reflectAddEntry(toFsEntry(path, true, currentLocation.uuid));
           }
           break;
         case 'addDir':
           if (!path.includes(AppConfig.metaFolder)) {
-            reflectAddEntry(toFsEntry(path, false));
+            actionsQueue.push({
+              action: 'add',
+              entry: currentLocation.toFsEntry(path, false),
+              open: false,
+              source: 'fsWatcher',
+            });
+            //reflectAddEntry(toFsEntry(path, false, currentLocation.uuid));
           }
           break;
         case 'change':
@@ -146,20 +192,22 @@ export const FSWatcherContextProvider = ({
               // endsWith json
               const filePath = getFileLocationFromMetaFile(
                 path,
-                PlatformIO.getDirSeparator(),
+                currentLocation?.getDirSeparator(),
               );
-              reflectUpdateMeta(filePath);
+              getAllPropertiesPromise(filePath).then((entry) =>
+                reflectUpdateMeta(entry),
+              );
             }
             if (path.endsWith(AppConfig.metaFolderFile)) {
               // endsWith tsm.json
               const directoryPath = getFileLocationFromMetaFile(
                 path,
-                PlatformIO.getDirSeparator(),
+                currentLocation?.getDirSeparator(),
               );
               loadDirectoryContent(
                 extractContainingDirectoryPath(
                   directoryPath,
-                  PlatformIO.getDirSeparator(),
+                  currentLocation?.getDirSeparator(),
                 ),
                 false,
                 true,
@@ -200,9 +248,11 @@ export const FSWatcherContextProvider = ({
   }
 
   function addToIgnored(path: string) {
-    const index = ignored.current.indexOf(path);
-    if (index === -1) {
-      ignored.current.push(path);
+    if (path) {
+      const index = ignored.current.indexOf(path);
+      if (index === -1) {
+        ignored.current.push(path);
+      }
     }
   }
 
@@ -210,7 +260,9 @@ export const FSWatcherContextProvider = ({
     setTimeout(() => {
       for (let i = 0; i < ignored.current.length; i++) {
         const pathParts = ignored.current[i].split(
-          PlatformIO.getDirSeparator(),
+          currentLocation
+            ? currentLocation.getDirSeparator()
+            : AppConfig.dirSeparator,
         );
         if (path.startsWith(ignored.current[i]) || pathParts.includes(path)) {
           ignored.current.splice(i, 1);

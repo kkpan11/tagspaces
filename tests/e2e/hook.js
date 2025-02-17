@@ -1,7 +1,7 @@
-/* Copyright (c) 2016-present - TagSpaces UG (Haftungsbeschraenkt). All rights reserved. */
+/* Copyright (c) 2016-present - TagSpaces GmbH. All rights reserved. */
 import pathLib from 'path';
 import fse from 'fs-extra';
-// import { execSync } from 'child_process';
+import { uploadFile } from '../s3rver/S3DataRefresh';
 
 // Spectron API https://github.com/electron/spectron
 // Webdriver.io http://webdriver.io/api.html
@@ -70,13 +70,40 @@ export async function clearLocalStorage() {
 }
 
 export async function copyExtConfig(extconfig = 'extconfig-with-welcome.js') {
-  const srcDir = pathLib.join(
-    __dirname,
-    '..',
-    '..',
-    'scripts',
-    global.isWeb ? 'web' + extconfig : extconfig,
-  );
+  let srcDir;
+  if (global.isWeb) {
+    srcDir = pathLib.join(
+      __dirname,
+      '..',
+      '..',
+      'scripts',
+      'web' + (global.isS3 ? 's3' : '') + extconfig,
+    );
+
+    if (!fse.existsSync(srcDir)) {
+      srcDir = pathLib.join(
+        __dirname,
+        '..',
+        '..',
+        'scripts',
+        (global.isS3 ? 's3' : '') + extconfig,
+      );
+    }
+    if (!fse.existsSync(srcDir)) {
+      srcDir = pathLib.join(__dirname, '..', '..', 'scripts', extconfig);
+    }
+  } else {
+    srcDir = pathLib.join(
+      __dirname,
+      '..',
+      '..',
+      'scripts',
+      (global.isS3 ? 's3' : '') + extconfig,
+    );
+    if (!fse.existsSync(srcDir)) {
+      srcDir = pathLib.join(__dirname, '..', '..', 'scripts', extconfig);
+    }
+  }
   const destDir = pathLib.join(
     __dirname,
     '..',
@@ -88,16 +115,30 @@ export async function copyExtConfig(extconfig = 'extconfig-with-welcome.js') {
 }
 
 export async function removeExtConfig() {
-  await fse.remove(
-    pathLib.join(
-      __dirname,
-      '..',
-      '..',
-      global.isWeb ? 'web' : 'release/app/dist/renderer',
-      'extconfig.js',
-    ),
-  );
+  if (!global.isWeb) {
+    await fse.remove(
+      pathLib.join(
+        __dirname,
+        '..',
+        '..',
+        global.isWeb ? 'web' : 'release/app/dist/renderer',
+        'extconfig.js',
+      ),
+    );
+  }
 }
+
+const waitForMainMessage = (electronApp, messageId) => {
+  return electronApp.evaluate(({ ipcMain }, messageId) => {
+    return new Promise((resolve) => {
+      ipcMain.once(messageId, () => resolve());
+    });
+  }, messageId);
+};
+
+const waitForAppLoaded = async (electronApp) => {
+  await waitForMainMessage(electronApp, 'startup-finished');
+};
 
 export async function startTestingApp(extconfig) {
   if (extconfig) {
@@ -159,25 +200,38 @@ export async function startTestingApp(extconfig) {
       ],
       bypassCSP: true,
       env: {
+        // ...process.env,     // Preserve existing environment variables
         ELECTRON_ENABLE_LOGGING: true,
         ELECTRON_ENABLE_STACK_DUMPING: true,
         // NODE_ENV: 'test'
       },
     });
+    const startupPromise = waitForAppLoaded(global.app);
+    const appPath = await global.app.evaluate(async ({ app }) => {
+      // This runs in the main Electron process, parameter here is always
+      // the result of the require('electron') in the main app script.
+      return app.getAppPath();
+    });
+    console.log('appPath:' + appPath);
+    global.app.on('console', (msg) => {
+      console.log(`[Electron Main] ${msg.type()}: ${msg.text()}`);
+    });
 
     // Get the Electron context.
     global.context = await global.app.context();
-
+    await global.app.waitForEvent('window');
     // Get the first window that the app opens, wait if necessary.
     global.client = await global.app.firstWindow();
     // global.session = await global.client.context().newCDPSession(global.client);
-    await global.client.setViewportSize({ width: 1920, height: 1080 }); // ({ width: 800, height: 600 });
+    // Setting the viewport size helps keep test environments consistent.
+    await global.client.setViewportSize({ width: 1920, height: 1080 }); //{width: 1200,height: 800} ({ width: 800, height: 600 });
     await global.client.waitForLoadState('load'); //'domcontentloaded'); //'networkidle');
 
     if (process.env.SHOW_CONSOLE) {
       // Direct Electron console to Node terminal.
       global.client.on('console', console.debug);
     }
+    await startupPromise;
   }
 }
 
@@ -191,19 +245,37 @@ export async function stopApp() {
   }
 }
 
-export async function testDataRefresh() {
-  const src = pathLib.join(
-    __dirname,
-    '..',
-    'testdata',
-    'file-structure',
-    'supported-filestypes',
-  );
-  const dst = pathLib.join(__dirname, '..', 'testdata-tmp', 'file-structure');
+export async function testDataRefresh(s3ServerInstance) {
+  if (global.isS3) {
+    /*if(s3ServerInstance) {
+      s3ServerInstance.reset();
+     await uploadTestDirectory();
+    }*/
+  } else {
+    await deleteTestData();
+    const src = pathLib.join(
+      __dirname,
+      '..',
+      'testdata',
+      'file-structure',
+      'supported-filestypes',
+    );
+    const dst = pathLib.join(__dirname, '..', 'testdata-tmp', 'file-structure');
+    let newPath = pathLib.join(dst, pathLib.basename(src));
+    await fse.copy(src, newPath); //, { overwrite: true });
+  }
+}
 
-  let newPath = pathLib.join(dst, pathLib.basename(src));
-  await fse.emptyDir(newPath);
-  await fse.copy(src, newPath); //, { overwrite: true });
+export async function deleteTestData() {
+  await fse.emptyDir(
+    pathLib.join(
+      __dirname,
+      '..',
+      'testdata-tmp',
+      'file-structure',
+      'supported-filestypes',
+    ),
+  );
 }
 
 export async function createFile(
@@ -220,96 +292,18 @@ export async function createFile(
     rootFolder,
     fileName,
   );
-
-  try {
-    if (fileContent) {
-      await fse.outputFile(filePath, fileContent);
-    } else {
-      await fse.createFile(filePath);
-      console.log('Empty file created!');
+  if (global.isS3) {
+    await uploadFile(filePath, fileContent || 'test content');
+  } else {
+    try {
+      if (fileContent) {
+        await fse.outputFile(filePath, fileContent);
+      } else {
+        await fse.createFile(filePath);
+        console.log('Empty file created!');
+      }
+    } catch (err) {
+      console.error(err);
     }
-  } catch (err) {
-    console.error(err);
   }
 }
-
-/*export async function takeScreenshot(name = expect.getState().currentTestName) {
-  // if (jasmine.currentTest.failedExpectations.length > 0) {
-  if (global.isWeb) {
-    await global.client.saveFullPageScreen(`${name}`, {
-      fullPageScrollTimeout: '1500'
-    });
-  } else {
-    // await global.client.takeScreenshot();
-    const filename = `${name}.png`; // -${new Date().toISOString()}
-    //.replace(/\s/g, '_')
-    //.replace(/:/g, '')
-    //.replace(/\*!/g, '')
-    //.replace(/-/g, '');
-    const imageBuffer = await global.app.browserWindow.capturePage();
-    const fs = require('fs-extra');
-    const path = pathLib.resolve(__dirname, 'test-pages', filename);
-    fs.outputFile(path, imageBuffer, 'base64');
-    /!*global.app.webContents
-        .savePage(
-          pathLib.resolve(__dirname, 'test-pages', filename),
-          'HTMLComplete'
-        )
-        .then(function() {
-          console.log('page saved');
-        })
-        .catch(function(error) {
-          console.error('saving page failed', error.message);
-        });*!/
-  }
-}*/
-
-// the path the electron app, that will be tested
-/* let testPath = '../tsn/app'; // '../repo/app';
-if (global.isWin) {
-  testPath = '..\\tsn\\app'; // '..\\repo\\app';
-}
-
-for (var index in process.argv) {
-  let str = process.argv[index];
-  if (str.indexOf('--webdav') == 0) {
-    testPath = 'electron-app';
-  }
-} */
-
-/*beforeAll(async () => {
-  if (global.isWeb) {
-    global.webserver = await startWebServer();
-    global.chromeDriver = await startChromeDriver();
-  }
-  if (global.isMinio) {
-    global.minio = await startMinio();
-  } else {
-    // copy extconfig
-    const fse = require('fs-extra');
-    const path = require('path');
-
-    let srcDir = path.join(__dirname, '..', '..', 'scripts', 'extconfig.js');
-    let destDir = path.join(__dirname, '..', '..', 'app', 'extconfig.js');
-
-    fse.copySync(srcDir, destDir);
-  }
-
-  await startSpectronApp();
-});
-
-afterAll(async () => {
-  if (global.isWeb) {
-    // await stopWebServer(global.webserver); TODO stop webserver
-    await stopChromeDriver(global.chromeDriver);
-  }
-  if (global.isMinio) {
-    await stopMinio(global.minio);
-  } else {
-    // cleanup extconfig
-    const fse = require('fs-extra');
-    const path = require('path');
-    fse.removeSync(path.join(__dirname, '..', '..', 'app', 'extconfig.js'));
-  }
-  await stopSpectronApp();
-});*/

@@ -1,6 +1,6 @@
 /**
  * TagSpaces - universal file and folder organizer
- * Copyright (C) 2017-present TagSpaces UG (haftungsbeschraenkt)
+ * Copyright (C) 2017-present TagSpaces GmbH
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License (version 3) as
@@ -16,20 +16,20 @@
  *
  */
 
-import React, { useState, useEffect } from 'react';
-import Button from '@mui/material/Button';
-import TextField from '@mui/material/TextField';
-import DialogActions from '@mui/material/DialogActions';
+import InfoIcon from '-/components/InfoIcon';
+import TsButton from '-/components/TsButton';
+import TsTextField from '-/components/TsTextField';
+import TsDialogActions from '-/components/dialogs/components/TsDialogActions';
+import TsDialogTitle from '-/components/dialogs/components/TsDialogTitle';
+import { useOpenedEntryContext } from '-/hooks/useOpenedEntryContext';
+import Dialog from '@mui/material/Dialog';
 import DialogContent from '@mui/material/DialogContent';
-import DialogTitle from '@mui/material/DialogTitle';
 import FormControl from '@mui/material/FormControl';
 import InputAdornment from '@mui/material/InputAdornment';
-import Dialog from '@mui/material/Dialog';
-import DialogCloseButton from '-/components/dialogs/DialogCloseButton';
-// import useMediaQuery from '@mui/material/useMediaQuery';
-import InfoIcon from '-/components/InfoIcon';
+import { useTheme } from '@mui/material/styles';
+import useMediaQuery from '@mui/material/useMediaQuery';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useOpenedEntryContext } from '-/hooks/useOpenedEntryContext';
 
 interface Props {
   open: boolean;
@@ -38,6 +38,8 @@ interface Props {
 
 function OpenLinkDialog(props: Props) {
   const { t } = useTranslation();
+  const theme = useTheme();
+  const smallScreen = useMediaQuery(theme.breakpoints.down('md'));
   const { openLink } = useOpenedEntryContext();
   const [inputError, setInputError] = useState(false);
   const [disableConfirmButton, setDisableConfirmButton] = useState(true);
@@ -84,14 +86,26 @@ function OpenLinkDialog(props: Props) {
     setDisableConfirmButton(true);
   }
 
-  // const theme = useTheme();
-  // const fullScreen = useMediaQuery(theme.breakpoints.down('md'));
+  const okButton = (
+    <TsButton
+      disabled={disableConfirmButton}
+      onClick={onConfirm}
+      data-tid="confirmOpenLink"
+      variant="contained"
+      style={{
+        // @ts-ignore
+        WebkitAppRegion: 'no-drag',
+      }}
+    >
+      {t('core:open')}
+    </TsButton>
+  );
+
   return (
     <Dialog
       open={open}
       onClose={onClose}
-      style={{ minWidth: 300 }}
-      // fullScreen={fullScreen}
+      fullScreen={smallScreen}
       onKeyDown={(event) => {
         if (event.key === 'Enter' || event.keyCode === 13) {
           event.preventDefault();
@@ -100,15 +114,15 @@ function OpenLinkDialog(props: Props) {
         }
       }}
     >
-      <DialogTitle>
-        {t('core:openLink')}
-        <DialogCloseButton testId="closeOpenLinkTID" onClose={onClose} />
-      </DialogTitle>
-      <DialogContent>
-        <FormControl fullWidth={true} error={inputError}>
-          <TextField
-            fullWidth
-            margin="dense"
+      <TsDialogTitle
+        dialogTitle={t('core:openLink')}
+        closeButtonTestId="closeOpenLinkTID"
+        onClose={onClose}
+        actionSlot={okButton}
+      />
+      <DialogContent style={{ minWidth: smallScreen ? 100 : 400 }}>
+        <FormControl fullWidth={true}>
+          <TsTextField
             autoFocus
             name="name"
             label={t('core:link')}
@@ -116,32 +130,32 @@ function OpenLinkDialog(props: Props) {
               const { target } = event;
               setLinkURL(target.value);
             }}
+            updateValue={(value) => {
+              setLinkURL(value);
+            }}
+            retrieveValue={() => linkURL}
             value={linkURL}
-            data-tid="directoryName"
-            InputProps={{
-              endAdornment: (
-                <InputAdornment position="start">
-                  <InfoIcon tooltip="TagSpace links begin with ts://? and are used for internal sharing of files and folders" />
-                </InputAdornment>
-              ),
+            data-tid="openLinkTID"
+            slotProps={{
+              input: {
+                endAdornment: (
+                  <InputAdornment position="start">
+                    <InfoIcon tooltip="TagSpace links begin with ts://? and are used for internal sharing of files and folders" />
+                  </InputAdornment>
+                ),
+              },
             }}
           />
         </FormControl>
       </DialogContent>
-      <DialogActions>
-        <Button data-tid="closeOpenLinkDialog" onClick={onCancel}>
-          {t('core:cancel')}
-        </Button>
-        <Button
-          disabled={disableConfirmButton}
-          onClick={onConfirm}
-          data-tid="confirmOpenLink"
-          color="primary"
-          variant="contained"
-        >
-          {t('core:open')}
-        </Button>
-      </DialogActions>
+      {!smallScreen && (
+        <TsDialogActions>
+          <TsButton data-tid="closeOpenLinkDialog" onClick={onCancel}>
+            {t('core:cancel')}
+          </TsButton>
+          {okButton}
+        </TsDialogActions>
+      )}
     </Dialog>
   );
 }

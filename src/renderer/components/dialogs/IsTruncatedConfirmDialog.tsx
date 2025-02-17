@@ -1,6 +1,6 @@
 /**
  * TagSpaces - universal file and folder organizer
- * Copyright (C) 2017-present TagSpaces UG (haftungsbeschraenkt)
+ * Copyright (C) 2017-present TagSpaces GmbH
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License (version 3) as
@@ -17,8 +17,8 @@
  */
 
 import React from 'react';
-import Button from '@mui/material/Button';
-import DialogActions from '@mui/material/DialogActions';
+import TsButton from '-/components/TsButton';
+import TsDialogActions from '-/components/dialogs/components/TsDialogActions';
 import DialogContent from '@mui/material/DialogContent';
 import DialogTitle from '@mui/material/DialogTitle';
 import DialogContentText from '@mui/material/DialogContentText';
@@ -31,7 +31,6 @@ import AppConfig from '-/AppConfig';
 import Typography from '@mui/material/Typography';
 import InfoIcon from '-/components/InfoIcon';
 import FormControlLabel from '@mui/material/FormControlLabel';
-import PlatformIO from '-/services/platform-facade';
 import { useTranslation } from 'react-i18next';
 import { useDirectoryContentContext } from '-/hooks/useDirectoryContentContext';
 import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
@@ -46,7 +45,8 @@ function IsTruncatedConfirmDialog(props: Props) {
   const { t } = useTranslation();
 
   const { openDirectory, currentDirectoryPath } = useDirectoryContentContext();
-  const { currentLocation, editLocation } = useCurrentLocationContext();
+  const { findLocation, editLocation } = useCurrentLocationContext();
+  const currentLocation = findLocation();
 
   let defaultMaxLoops = AppConfig.maxLoops;
   if (
@@ -71,11 +71,7 @@ function IsTruncatedConfirmDialog(props: Props) {
       );
       onClose();
       if (currentLocation.type === locationType.TYPE_CLOUD) {
-        PlatformIO.enableObjectStoreSupport(currentLocation)
-          .then(() => openDirectory(currentDirectoryPath))
-          .catch((error) => {
-            console.log('enableObjectStoreSupport', error);
-          });
+        openDirectory(currentDirectoryPath);
       }
     }
   }
@@ -113,11 +109,9 @@ function IsTruncatedConfirmDialog(props: Props) {
           />
         </DialogContentText>
       </DialogContent>
-      <DialogActions>
-        <Button onClick={() => onClose()} color="primary">
-          {t('core:continue')}
-        </Button>
-      </DialogActions>
+      <TsDialogActions>
+        <TsButton onClick={() => onClose()}>{t('core:continue')}</TsButton>
+      </TsDialogActions>
     </Dialog>
   );
 }

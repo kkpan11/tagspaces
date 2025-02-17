@@ -1,6 +1,6 @@
 /**
  * TagSpaces - universal file and folder organizer
- * Copyright (C) 2017-present TagSpaces UG (haftungsbeschraenkt)
+ * Copyright (C) 2017-present TagSpaces GmbH
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License (version 3) as
@@ -28,6 +28,7 @@ import Menu from '@mui/material/Menu';
 import MenuItem from '@mui/material/MenuItem';
 import { getMaxSearchResults } from '-/reducers/settings';
 import { TS } from '-/tagspaces.namespace';
+import TsMenuList from '-/components/TsMenuList';
 import { useTranslation } from 'react-i18next';
 import { useTaggingActionsContext } from '-/hooks/useTaggingActionsContext';
 import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
@@ -85,8 +86,8 @@ function TagMenu(props: Props) {
   }
 
   function applyTag() {
-    const selectedEntryPaths = selectedEntries.map((entry) => entry.path);
-    addTags(selectedEntryPaths, [selectedTag]);
+    // const selectedEntryPaths = selectedEntries.map((entry) => entry.path);
+    addTags(selectedEntries, [selectedTag]);
     onClose();
   }
 
@@ -96,42 +97,44 @@ function TagMenu(props: Props) {
   return (
     <div style={{ overflowY: 'hidden' }}>
       <Menu anchorEl={anchorEl} open={open} onClose={onClose}>
-        {!isSmartTag && (
-          <MenuItem
-            data-tid="showFilesWithThisTag"
-            onClick={showFilesWithThisTag}
-          >
-            <ListItemIcon>
-              <ShowEntriesWithTagIcon />
-            </ListItemIcon>
-            <ListItemText primary={t('core:showFilesWithThisTag')} />
-          </MenuItem>
-        )}
+        <TsMenuList>
+          {!isSmartTag && (
+            <MenuItem
+              data-tid="showFilesWithThisTag"
+              onClick={showFilesWithThisTag}
+            >
+              <ListItemIcon>
+                <ShowEntriesWithTagIcon />
+              </ListItemIcon>
+              <ListItemText primary={t('core:showFilesWithThisTag')} />
+            </MenuItem>
+          )}
 
-        {selectedEntries && selectedEntries.length > 0 && !readOnlyMode && (
-          <MenuItem data-tid="applyTagTID" onClick={applyTag}>
-            <ListItemIcon>
-              <ApplyTagIcon />
-            </ListItemIcon>
-            <ListItemText primary={t('core:applyTag')} />
-          </MenuItem>
-        )}
-        {!isSmartTag && !isTagLibraryReadOnly && (
-          <MenuItem data-tid="editTagDialog" onClick={showEditTagMenuDialog}>
-            <ListItemIcon>
-              <Edit />
-            </ListItemIcon>
-            <ListItemText primary={t('core:editTag')} />
-          </MenuItem>
-        )}
-        {!isSmartTag && !isTagLibraryReadOnly && (
-          <MenuItem data-tid="deleteTagDialog" onClick={openDeleteTagDialog}>
-            <ListItemIcon>
-              <DeleteIcon />
-            </ListItemIcon>
-            <ListItemText primary={t('core:deleteTagFromTagGroup')} />
-          </MenuItem>
-        )}
+          {selectedEntries && selectedEntries.length > 0 && !readOnlyMode && (
+            <MenuItem data-tid="applyTagTID" onClick={applyTag}>
+              <ListItemIcon>
+                <ApplyTagIcon />
+              </ListItemIcon>
+              <ListItemText primary={t('core:applyTag')} />
+            </MenuItem>
+          )}
+          {!isSmartTag && !isTagLibraryReadOnly && (
+            <MenuItem data-tid="editTagDialog" onClick={showEditTagMenuDialog}>
+              <ListItemIcon>
+                <Edit />
+              </ListItemIcon>
+              <ListItemText primary={t('core:editTag')} />
+            </MenuItem>
+          )}
+          {!isSmartTag && !isTagLibraryReadOnly && (
+            <MenuItem data-tid="deleteTagDialog" onClick={openDeleteTagDialog}>
+              <ListItemIcon>
+                <DeleteIcon />
+              </ListItemIcon>
+              <ListItemText primary={t('core:deleteTagFromTagGroup')} />
+            </MenuItem>
+          )}
+        </TsMenuList>
       </Menu>
     </div>
   );

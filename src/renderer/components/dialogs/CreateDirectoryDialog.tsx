@@ -1,6 +1,6 @@
 /**
  * TagSpaces - universal file and folder organizer
- * Copyright (C) 2017-present TagSpaces UG (haftungsbeschraenkt)
+ * Copyright (C) 2017-present TagSpaces GmbH
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License (version 3) as
@@ -16,21 +16,40 @@
  *
  */
 
-import React, { useState, useEffect, useRef } from 'react';
-import Button from '@mui/material/Button';
-import TextField from '@mui/material/TextField';
-import DialogActions from '@mui/material/DialogActions';
-import DialogContent from '@mui/material/DialogContent';
-import DialogTitle from '@mui/material/DialogTitle';
-import FormControl from '@mui/material/FormControl';
-import FormHelperText from '@mui/material/FormHelperText';
-import Dialog from '@mui/material/Dialog';
-import { joinPaths } from '@tagspaces/tagspaces-common/paths';
-import DialogCloseButton from '-/components/dialogs/DialogCloseButton';
-import PlatformIO from '-/services/platform-facade';
-import { useTranslation } from 'react-i18next';
+import React, { useReducer, useRef, useState } from 'react';
+import DraggablePaper from '-/components/DraggablePaper';
+import TsButton from '-/components/TsButton';
+import TsIconButton from '-/components/TsIconButton';
+import TsTextField from '-/components/TsTextField';
+import TsDialogActions from '-/components/dialogs/components/TsDialogActions';
+import TsDialogTitle from '-/components/dialogs/components/TsDialogTitle';
+import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
 import { useDirectoryContentContext } from '-/hooks/useDirectoryContentContext';
 import { useIOActionsContext } from '-/hooks/useIOActionsContext';
+import { useNotificationContext } from '-/hooks/useNotificationContext';
+import { dirNameValidation } from '-/services/utils-io';
+import { TS } from '-/tagspaces.namespace';
+import SetBackgroundIcon from '@mui/icons-material/OpacityOutlined';
+import {
+  Box,
+  Dialog,
+  DialogContent,
+  FormControl,
+  FormHelperText,
+  InputAdornment,
+  Paper,
+  inputBaseClasses,
+  useMediaQuery,
+} from '@mui/material';
+import { styled, useTheme } from '@mui/material/styles';
+import { joinPaths } from '@tagspaces/tagspaces-common/paths';
+import { useTranslation } from 'react-i18next';
+
+const FolderColorTextField = styled(TsTextField)(({ theme }) => ({
+  [`& .${inputBaseClasses.root}`]: {
+    height: 200,
+  },
+}));
 
 interface Props {
   open: boolean;
@@ -41,27 +60,55 @@ interface Props {
 
 function CreateDirectoryDialog(props: Props) {
   const { t } = useTranslation();
-  const { createDirectory } = useIOActionsContext();
-  const { currentDirectoryPath } = useDirectoryContentContext();
+  const { createDirectory, setBackgroundColorChange } = useIOActionsContext();
+  const { findLocation } = useCurrentLocationContext();
+  const { currentDirectoryPath, getAllPropertiesPromise } =
+    useDirectoryContentContext();
+  const { showNotification } = useNotificationContext();
 
   const [inputError, setInputError] = useState(false);
-  const isFirstRun = useRef(true);
+  //const isFirstRun = useRef(true);
+  const backgroundColor = useRef<string>('transparent');
   const [disableConfirmButton, setDisableConfirmButton] = useState(true);
   const [name, setName] = useState('');
+
+  const [ignored, forceUpdate] = useReducer((x) => x + 1, 0, undefined);
   const { open, onClose, selectedDirectoryPath } = props;
+  const currentLocation = findLocation();
 
-  useEffect(() => {
-    if (isFirstRun.current) {
-      isFirstRun.current = false;
-      return;
-    }
-    handleValidation();
-  });
+  const defaultBackgrounds = [
+    'transparent',
+    // '#00000044',
+    '#ac725e44',
+    '#f83a2244',
+    // '#ff753744',
+    '#ffad4644',
+    '#42d69244',
+    // '#00800044',
+    '#7bd14844',
+    '#fad16544',
+    '#92e1c044',
+    '#9fe1e744',
+    '#9fc6e744',
+    '#4986e744',
+    '#9a9cff44',
+    '#c2c2c244',
+    '#cca6ac44',
+    '#f691b244',
+    // '#cd74e644',
+    // '#a47ae244',
+    // '#845EC260',
+    // '#D65DB160',
+    // '#FF6F9160',
+    // '#FF967160',
+    // '#FFC75F60',
+    // '#F9F87160',
+    // '#008E9B60',
+    // '#008F7A60',
+  ];
 
-  function handleValidation() {
-    // const pathRegex = '^((\.\./|[a-zA-Z0-9_/\-\\])*\.[a-zA-Z0-9]+)$';
-    // const nameRegex = '^[A-Z][-a-zA-Z]+$';
-    if (name.length > 0) {
+  function handleValidation(dirName) {
+    if (!dirNameValidation(dirName)) {
       setInputError(false);
       setDisableConfirmButton(false);
     } else {
@@ -71,19 +118,33 @@ function CreateDirectoryDialog(props: Props) {
   }
 
   function onConfirm() {
+    handleValidation(name);
     if (!disableConfirmButton && name) {
       const dirPath = joinPaths(
-        PlatformIO.getDirSeparator(),
+        currentLocation.getDirSeparator(),
         selectedDirectoryPath !== undefined
           ? selectedDirectoryPath
           : currentDirectoryPath,
         name,
       );
-      createDirectory(dirPath).then(() => {
-        if (props.callback) {
-          props.callback(dirPath);
+      currentLocation.checkDirExist(dirPath).then((exist) => {
+        if (!exist) {
+          createDirectory(dirPath).then(() => {
+            if (props.callback) {
+              props.callback(dirPath);
+            }
+            if (backgroundColor.current !== 'transparent') {
+              getAllPropertiesPromise(dirPath).then(
+                (fsEntry: TS.FileSystemEntry) =>
+                  setBackgroundColorChange(fsEntry, backgroundColor.current),
+              );
+            }
+          });
+        } else {
+          showNotification('Directory ' + dirPath + ' exist!');
         }
       });
+
       resetState();
       props.onClose();
     }
@@ -100,64 +161,127 @@ function CreateDirectoryDialog(props: Props) {
     setDisableConfirmButton(true);
   }
 
-  // const theme = useTheme();
-  // const fullScreen = useMediaQuery(theme.breakpoints.down('md'));
+  const theme = useTheme();
+  const smallScreen = useMediaQuery(theme.breakpoints.down('md'));
+  const okButton = (
+    <TsButton
+      disabled={disableConfirmButton}
+      onClick={onConfirm}
+      data-tid="confirmCreateNewDirectory"
+      id="confirmCreateNewDirectory"
+      variant="contained"
+      style={{
+        // @ts-ignore
+        WebkitAppRegion: 'no-drag',
+      }}
+    >
+      {t('core:ok')}
+    </TsButton>
+  );
+
   return (
     <Dialog
       open={open}
       onClose={onClose}
-      // fullScreen={fullScreen}
+      fullScreen={smallScreen}
+      PaperComponent={smallScreen ? Paper : DraggablePaper}
       keepMounted
       scroll="paper"
       onKeyDown={(event) => {
-        if (event.key === 'Enter' || event.keyCode === 13) {
+        if (event.key === 'Enter') {
           event.preventDefault();
           event.stopPropagation();
           onConfirm();
-        } /*else if (event.key === 'Escape') {
+        } else if (event.key === 'Escape') {
           onClose();
-        }*/
+        }
       }}
     >
-      <DialogTitle>
-        {t('core:createNewDirectoryTitle')}
-        <DialogCloseButton testId="closeCreateDirectoryTID" onClose={onClose} />
-      </DialogTitle>
+      <TsDialogTitle
+        dialogTitle={t('core:createNewDirectoryTitle')}
+        closeButtonTestId="closeCreateDirectoryTID"
+        onClose={onClose}
+        actionSlot={okButton}
+      />
       <DialogContent>
         <FormControl fullWidth={true} error={inputError}>
-          <TextField
-            fullWidth
+          <TsTextField
             error={inputError}
-            margin="dense"
             autoFocus
+            fullWidth
             name="name"
-            label={t('core:createNewDirectoryTitleName')}
+            label={t('core:folderName')}
             onChange={(event) => {
               const { target } = event;
+              handleValidation(target.value);
               setName(target.value);
             }}
+            updateValue={(value) => {
+              setName(value);
+            }}
+            retrieveValue={() => name}
             value={name}
             data-tid="directoryName"
             id="directoryName"
           />
-          <FormHelperText>{t('core:directoryNameHelp')}</FormHelperText>
+          {inputError && (
+            <FormHelperText>{t('core:directoryNameHelp')}</FormHelperText>
+          )}
+        </FormControl>
+        <FormControl>
+          <FolderColorTextField
+            data-tid="folderColorTID"
+            fullWidth
+            label={t('backgroundColor')}
+            retrieveValue={() => backgroundColor.current}
+            value={' '}
+            style={{ marginTop: 0 }}
+            slotProps={{
+              input: {
+                readOnly: true,
+                endAdornment: (
+                  <InputAdornment position="end" style={{ height: 300 }}>
+                    <Box style={{ padding: 10, width: 300 }}>
+                      {defaultBackgrounds.map((background, cnt) => (
+                        <React.Fragment key={cnt}>
+                          <TsIconButton
+                            tooltip={background}
+                            data-tid={'bgTID' + cnt}
+                            aria-label="changeFolderBackground"
+                            onClick={() => {
+                              backgroundColor.current = background;
+                              forceUpdate();
+                            }}
+                            style={{
+                              backgroundColor: background,
+                              backgroundImage: background,
+                              margin: 5,
+                              ...(backgroundColor.current === background && {
+                                border: '0.5rem outset ' + background,
+                              }),
+                            }}
+                          >
+                            <SetBackgroundIcon />
+                          </TsIconButton>
+                          {(cnt + 1) % 5 === 0 && <br />}
+                        </React.Fragment>
+                      ))}
+                    </Box>
+                  </InputAdornment>
+                ),
+              },
+            }}
+          />
         </FormControl>
       </DialogContent>
-      <DialogActions>
-        <Button data-tid="closeCreateNewDirectory" onClick={onCancel}>
-          {t('core:cancel')}
-        </Button>
-        <Button
-          disabled={disableConfirmButton}
-          onClick={onConfirm}
-          variant="contained"
-          data-tid="confirmCreateNewDirectory"
-          id="confirmCreateNewDirectory"
-          color="primary"
-        >
-          {t('core:ok')}
-        </Button>
-      </DialogActions>
+      {!smallScreen && (
+        <TsDialogActions>
+          <TsButton data-tid="closeCreateNewDirectory" onClick={onCancel}>
+            {t('core:cancel')}
+          </TsButton>
+          {okButton}
+        </TsDialogActions>
+      )}
     </Dialog>
   );
 }

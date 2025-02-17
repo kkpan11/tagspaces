@@ -1,6 +1,6 @@
 /**
  * TagSpaces - universal file and folder organizer
- * Copyright (C) 2017-present TagSpaces UG (haftungsbeschraenkt)
+ * Copyright (C) 2017-present TagSpaces GmbH
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License (version 3) as
@@ -16,30 +16,27 @@
  *
  */
 
-import React, { useRef } from 'react';
-import { useSelector, useDispatch } from 'react-redux';
-import Menu from '@mui/material/Menu';
+import React from 'react';
+import { Menu } from '@mui/material';
 import { formatDateTime4Tag } from '@tagspaces/tagspaces-common/misc';
 import AppConfig from '-/AppConfig';
 import {
-  extractContainingDirectoryPath,
+  extractParentDirectoryPath,
   extractDirectoryName,
   getThumbFileLocationForDirectory,
   normalizePath,
   generateSharingLink,
 } from '@tagspaces/tagspaces-common/paths';
 import { Pro } from '-/pro';
-import PlatformIO from '-/services/platform-facade';
-import { actions as AppActions, AppDispatch } from '-/reducers/app';
-import FileUploadContainer, {
-  FileUploadContainerRef,
-} from '-/components/FileUploadContainer';
-import { TS } from '-/tagspaces.namespace';
-import { getRelativeEntryPath, toFsEntry } from '-/services/utils-io';
+import {
+  createNewInstance,
+  getRelativeEntryPath,
+  openDirectoryMessage,
+  readMacOSTags,
+} from '-/services/utils-io';
 import { PerspectiveIDs } from '-/perspectives';
-import PlatformFacade from '-/services/platform-facade';
+import TsMenuList from '-/components/TsMenuList';
 import { getDirectoryMenuItems } from '-/perspectives/common/DirectoryMenuItems';
-import { getLocations } from '-/reducers/locations';
 import { useTranslation } from 'react-i18next';
 import { useOpenedEntryContext } from '-/hooks/useOpenedEntryContext';
 import { useTaggingActionsContext } from '-/hooks/useTaggingActionsContext';
@@ -48,17 +45,31 @@ import { useDirectoryContentContext } from '-/hooks/useDirectoryContentContext';
 import { useNotificationContext } from '-/hooks/useNotificationContext';
 import { useSelectedEntriesContext } from '-/hooks/useSelectedEntriesContext';
 import { usePlatformFacadeContext } from '-/hooks/usePlatformFacadeContext';
+import { useThumbGenerationContext } from '-/hooks/useThumbGenerationContext';
+import { generateClipboardLink } from '-/utils/dom';
+import { useEditedEntryContext } from '-/hooks/useEditedEntryContext';
+import { TS } from '-/tagspaces.namespace';
+import { useIOActionsContext } from '-/hooks/useIOActionsContext';
+import { useCreateDirectoryDialogContext } from '-/components/dialogs/hooks/useCreateDirectoryDialogContext';
+import { useProgressDialogContext } from '-/components/dialogs/hooks/useProgressDialogContext';
+import { useNewFileDialogContext } from '-/components/dialogs/hooks/useNewFileDialogContext';
+import { useNewAudioDialogContext } from '-/components/dialogs/hooks/useNewAudioDialogContext';
+import { useProTeaserDialogContext } from '-/components/dialogs/hooks/useProTeaserDialogContext';
+import { useDeleteMultipleEntriesDialogContext } from '-/components/dialogs/hooks/useDeleteMultipleEntriesDialogContext';
+import { useFileUploadContext } from '-/hooks/useFileUploadContext';
+import { TabNames } from '-/hooks/EntryPropsTabsContextProvider';
 
 interface Props {
   open: boolean;
   classes?: any;
   onClose: (param?: any) => void;
-  anchorEl: Element;
+  anchorEl?: Element;
+  items?: React.ReactNode;
   directoryPath: string;
   openAddRemoveTagsDialog?: () => void;
   switchPerspective?: (perspectiveId: string) => void;
   perspectiveMode?: boolean;
-  openRenameDirectoryDialog: () => void;
+  openRenameDirectoryDialog?: () => void;
   openMoveCopyFilesDialog?: () => void;
   mouseX?: number;
   mouseY?: number;
@@ -69,55 +80,46 @@ function DirectoryMenu(props: Props) {
   const { openEntry } = useOpenedEntryContext();
   const { selectedEntries, setSelectedEntries } = useSelectedEntriesContext();
   const { addTags } = useTaggingActionsContext();
-  const { currentLocation, readOnlyMode, getLocationPath } =
+  const { openProgressDialog } = useProgressDialogContext();
+  const { openNewFileDialog } = useNewFileDialogContext();
+  const { readOnlyMode, getLocationPath, findLocation } =
     useCurrentLocationContext();
+  const { setThumbnailImageChange, getMetadataID } = useIOActionsContext();
   const { showNotification } = useNotificationContext();
+  const { openFileUpload } = useFileUploadContext();
+  const { openCreateDirectoryDialog } = useCreateDirectoryDialogContext();
   const {
     openDirectory,
     currentDirectoryPath,
-    setDirectoryPerspective,
+    currentDirectoryEntries,
+    setManualDirectoryPerspective,
     openCurrentDirectory,
   } = useDirectoryContentContext();
+  const { generateThumbnails } = useThumbGenerationContext();
   const { copyFilePromise, renameFilePromise } = usePlatformFacadeContext();
-  const fileUploadContainerRef = useRef<FileUploadContainerRef>(null);
+  const { setReflectActions } = useEditedEntryContext();
+  const { openNewAudioDialog } = useNewAudioDialogContext();
+  const { openProTeaserDialog } = useProTeaserDialogContext();
+  const { openDeleteMultipleEntriesDialog } =
+    useDeleteMultipleEntriesDialogContext();
   const {
     open,
     onClose,
     anchorEl,
     mouseX,
     mouseY,
+    items,
     openAddRemoveTagsDialog,
     openMoveCopyFilesDialog,
     openRenameDirectoryDialog,
     switchPerspective,
     perspectiveMode,
   } = props;
+  const currentLocation = findLocation();
   const directoryPath = props.directoryPath || currentDirectoryPath;
-  const locations: Array<TS.Location> = useSelector(getLocations);
-  const dispatch: AppDispatch = useDispatch();
 
-  const toggleCreateDirectoryDialog = () => {
-    dispatch(AppActions.toggleCreateDirectoryDialog());
-  };
-
-  const toggleNewFileDialog = () => {
-    dispatch(AppActions.toggleNewFileDialog());
-  };
-
-  const toggleProgressDialog = () => {
-    dispatch(AppActions.toggleProgressDialog());
-  };
-
-  const toggleDeleteMultipleEntriesDialog = () => {
-    dispatch(AppActions.toggleDeleteMultipleEntriesDialog());
-  };
-
-  const toggleProTeaser = (slidePage) => {
-    dispatch(AppActions.toggleProTeaser(slidePage));
-  };
-
-  function generateFolderLink(): Promise<string> {
-    let locationID = currentLocation.uuid;
+  function generateFolderLink(): Promise<any> {
+    let locationID = undefined;
     let entryPath = currentDirectoryPath;
     if (selectedEntries && selectedEntries.length > 0) {
       if (selectedEntries[0]['locationID']) {
@@ -125,26 +127,42 @@ function DirectoryMenu(props: Props) {
       }
       entryPath = selectedEntries[0].path;
     }
-    const tmpLoc = locations.find((location) => location.uuid === locationID);
+    const tmpLoc = findLocation(locationID);
     return getLocationPath(tmpLoc).then((locationPath) => {
       const relativePath = getRelativeEntryPath(locationPath, entryPath);
-      return generateSharingLink(locationID, undefined, relativePath);
+      const folderName = extractDirectoryName(
+        selectedEntries[0].name,
+        currentLocation?.getDirSeparator(),
+      );
+      return getMetadataID(
+        selectedEntries[0].path,
+        selectedEntries[0].uuid,
+        tmpLoc,
+      ).then((id) => {
+        return {
+          url: generateSharingLink(locationID, undefined, relativePath, id),
+          name: folderName,
+        };
+      });
     });
   }
 
   function copySharingLink() {
-    //if (selectedEntries && selectedEntries.length === 1) {
-    generateFolderLink().then((sharingLink) =>
+    generateFolderLink().then((sharingLink) => {
+      const clibboardItem = generateClipboardLink(
+        sharingLink.url,
+        sharingLink.name,
+      );
       navigator.clipboard
-        .writeText(sharingLink)
+        .write(clibboardItem)
         .then(() => {
           showNotification(t('core:sharingLinkCopied'));
           return true;
         })
         .catch(() => {
           showNotification(t('core:sharingLinkFailed'));
-        }),
-    );
+        });
+    });
   }
 
   function openDir() {
@@ -152,7 +170,7 @@ function DirectoryMenu(props: Props) {
   }
 
   function showProperties() {
-    return openEntry(directoryPath);
+    return openEntry(directoryPath, TabNames.propertiesTab);
   }
 
   function perspectiveSwitch(perspectiveId) {
@@ -164,55 +182,50 @@ function DirectoryMenu(props: Props) {
       if (switchPerspective) {
         switchPerspective(perspectiveId);
       } else {
-        setDirectoryPerspective(perspectiveId, undefined, true);
+        setManualDirectoryPerspective(perspectiveId);
       }
     } else if (perspectiveId === PerspectiveIDs.GALLERY) {
-      toggleProTeaser(PerspectiveIDs.GALLERY);
+      openProTeaserDialog(PerspectiveIDs.GALLERY);
     } else if (perspectiveId === PerspectiveIDs.MAPIQUE) {
-      toggleProTeaser(PerspectiveIDs.MAPIQUE);
+      openProTeaserDialog(PerspectiveIDs.MAPIQUE);
     } else if (perspectiveId === PerspectiveIDs.KANBAN) {
-      toggleProTeaser(PerspectiveIDs.KANBAN);
+      openProTeaserDialog(PerspectiveIDs.KANBAN);
     }
   }
 
   function showDeleteDirectoryDialog() {
     if (!selectedEntries.some((entry) => entry.path === directoryPath)) {
-      setSelectedEntries([
-        {
-          isFile: false,
-          name: directoryPath,
-          path: directoryPath,
-          tags: [],
-          size: 0,
-          lmdt: 0,
-        },
-      ]);
+      setSelectedEntries([currentLocation.toFsEntry(directoryPath, false)]);
     }
-    toggleDeleteMultipleEntriesDialog();
+    openDeleteMultipleEntriesDialog();
   }
 
-  function createNewFile() {
-    toggleNewFileDialog();
+  function createNewFile(entryType?: TS.FileType) {
+    openNewFileDialog(entryType);
   }
 
   function createNewAudio() {
-    dispatch(AppActions.toggleNewAudioDialog());
+    openNewAudioDialog();
   }
 
   function showInFileManager() {
-    PlatformIO.openDirectory(directoryPath);
+    openDirectoryMessage(directoryPath);
   }
 
   function openInNewWindow() {
     generateFolderLink().then((sharingLink) => {
-      const newInstanceLink =
-        window.location.href.split('?')[0] + '?' + sharingLink.split('?')[1];
-      PlatformIO.createNewInstance(newInstanceLink);
+      if (sharingLink && sharingLink.url !== undefined) {
+        const newInstanceLink =
+          window.location.href.split('?')[0] +
+          '?' +
+          sharingLink.url.split('?')[1];
+        createNewInstance(newInstanceLink);
+      }
     });
   }
 
   function addExistingFile() {
-    fileUploadContainerRef.current.onFileUpload();
+    openFileUpload(directoryPath);
   }
 
   function importMacTags() {
@@ -224,10 +237,10 @@ Do you want to continue?`)
       ) {
         return false;
       }
-      toggleProgressDialog();
+      openProgressDialog();
 
       const entryCallback = (entry) => {
-        PlatformFacade.readMacOSTags(entry.path)
+        readMacOSTags(entry.path)
           .then((tags) => {
             if (tags.length > 0) {
               addTags([entry.path], tags);
@@ -235,12 +248,16 @@ Do you want to continue?`)
             return tags;
           })
           .catch((err) => {
-            console.warn('Error creating tags: ' + err);
+            console.log('Error creating tags: ' + err);
           });
       };
-      Pro.MacTagsImport.importTags(directoryPath, entryCallback)
+      Pro.MacTagsImport.importTags(
+        directoryPath,
+        currentLocation.listDirectoryPromise,
+        entryCallback,
+      )
         .then(() => {
-          toggleProgressDialog();
+          openProgressDialog();
           console.log('Import tags succeeded ' + directoryPath);
           showNotification(
             'Tags from ' + directoryPath + ' are imported successfully.',
@@ -250,8 +267,8 @@ Do you want to continue?`)
           return true;
         })
         .catch((err) => {
-          console.warn('Error importing tags: ' + err);
-          toggleProgressDialog();
+          console.log('Error importing tags: ' + err);
+          openProgressDialog();
         });
     } else {
       showNotification(
@@ -287,10 +304,22 @@ Do you want to continue?`)
       AppConfig.endTagContainer +
       '.jpg';
     const newFilePath =
-      normalizePath(directoryPath) + PlatformIO.getDirSeparator() + fileName;
+      normalizePath(directoryPath) +
+      currentLocation.getDirSeparator() +
+      fileName;
 
-    renameFilePromise(filePath, newFilePath)
-      .then(() => {
+    renameFilePromise(
+      filePath,
+      newFilePath,
+      currentLocation.uuid,
+      undefined,
+      false,
+    )
+      .then((newEntry) => {
+        setReflectActions({
+          action: 'add',
+          entry: newEntry,
+        });
         showNotification(
           'File ' + newFilePath + ' successfully imported.',
           'default',
@@ -331,27 +360,37 @@ Do you want to continue?`)
   }
 
   function setFolderThumbnail() {
-    const parentDirectoryPath = extractContainingDirectoryPath(
+    const parentDirectoryPath = extractParentDirectoryPath(
       directoryPath,
-      PlatformIO.getDirSeparator(),
+      currentLocation?.getDirSeparator(),
     );
     const parentDirectoryName = extractDirectoryName(
       parentDirectoryPath,
-      PlatformIO.getDirSeparator(),
+      currentLocation?.getDirSeparator(),
+    );
+    const targetThumbPath = getThumbFileLocationForDirectory(
+      parentDirectoryPath,
+      currentLocation?.getDirSeparator(),
     );
 
     copyFilePromise(
       getThumbFileLocationForDirectory(
         directoryPath,
-        PlatformIO.getDirSeparator(),
+        currentLocation?.getDirSeparator(),
       ),
-      getThumbFileLocationForDirectory(
-        parentDirectoryPath,
-        PlatformIO.getDirSeparator(),
-      ),
+      targetThumbPath,
+      currentLocation.uuid,
       t('core:thumbAlreadyExists', { directoryName: parentDirectoryName }),
     )
       .then(() => {
+        const entry: TS.FileSystemEntry = currentLocation.toFsEntry(
+          parentDirectoryPath,
+          false,
+        );
+        setThumbnailImageChange({
+          ...entry,
+          meta: { id: entry.uuid, thumbPath: targetThumbPath },
+        });
         showNotification(
           'Thumbnail created for: ' + parentDirectoryPath,
           'default',
@@ -361,57 +400,62 @@ Do you want to continue?`)
       })
       .catch((error) => {
         showNotification('Thumbnail creation failed.', 'default', true);
-        console.warn('Error setting Thumb for entry: ' + directoryPath, error);
+        console.log('Error setting Thumb for entry: ' + directoryPath, error);
         return true;
       });
   }
 
-  const menuItems = getDirectoryMenuItems(
-    currentLocation,
-    selectedEntries.length,
-    perspectiveMode, // lastSelectedEntryPath !== currentDirectoryPath,
-    readOnlyMode,
-    onClose,
-    t,
-    openDir,
-    openCurrentDirectory,
-    openRenameDirectoryDialog,
-    openMoveCopyFilesDialog,
-    showDeleteDirectoryDialog,
-    showInFileManager,
-    createNewFile,
-    createNewAudio,
-    toggleCreateDirectoryDialog,
-    addExistingFile,
-    setFolderThumbnail,
-    copySharingLink,
-    importMacTags,
-    perspectiveSwitch,
-    showProperties,
-    cameraTakePicture,
-    openAddRemoveTagsDialog,
-    openInNewWindow,
-  );
+  function reloadDirectory() {
+    if (generateThumbnails) {
+      return generateThumbnails(currentDirectoryEntries).then(() =>
+        openCurrentDirectory(),
+      );
+    } else {
+      return openCurrentDirectory();
+    }
+  }
+
+  const menuItems = items
+    ? items
+    : getDirectoryMenuItems(
+        currentLocation,
+        selectedEntries.length,
+        perspectiveMode, // lastSelectedEntryPath !== currentDirectoryPath,
+        readOnlyMode,
+        onClose,
+        t,
+        openDir,
+        reloadDirectory,
+        openRenameDirectoryDialog,
+        openMoveCopyFilesDialog,
+        showDeleteDirectoryDialog,
+        showInFileManager,
+        createNewFile,
+        createNewAudio,
+        openCreateDirectoryDialog,
+        addExistingFile,
+        setFolderThumbnail,
+        copySharingLink,
+        importMacTags,
+        perspectiveSwitch,
+        showProperties,
+        cameraTakePicture,
+        openAddRemoveTagsDialog,
+        openInNewWindow,
+      );
 
   return (
-    <div style={{ overflowY: 'hidden' }}>
-      <Menu
-        anchorEl={anchorEl}
-        open={open}
-        onClose={onClose}
-        anchorReference={mouseY && mouseX ? 'anchorPosition' : undefined}
-        anchorPosition={
-          mouseY && mouseX ? { top: mouseY, left: mouseX } : undefined
-        }
-      >
-        {menuItems}
-      </Menu>
-      <FileUploadContainer
-        id="dirMenuId"
-        ref={fileUploadContainerRef}
-        directoryPath={directoryPath}
-      />
-    </div>
+    <Menu
+      anchorEl={anchorEl}
+      open={open}
+      onClose={onClose}
+      anchorReference={mouseY && mouseX ? 'anchorPosition' : undefined}
+      anchorPosition={
+        mouseY && mouseX ? { top: mouseY, left: mouseX } : undefined
+      }
+    >
+      <TsMenuList>{menuItems}</TsMenuList>
+    </Menu>
   );
 }
 

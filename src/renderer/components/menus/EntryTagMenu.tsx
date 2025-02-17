@@ -1,6 +1,6 @@
 /**
  * TagSpaces - universal file and folder organizer
- * Copyright (C) 2017-present TagSpaces UG (haftungsbeschraenkt)
+ * Copyright (C) 2017-present TagSpaces GmbH
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License (version 3) as
@@ -16,32 +16,29 @@
  *
  */
 
-import React, { useState } from 'react';
-import { useDispatch, useSelector } from 'react-redux';
-import EditIcon from '@mui/icons-material/Edit';
-import DeleteIcon from '@mui/icons-material/DeleteForever';
+import TsMenuList from '-/components/TsMenuList';
+import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
+import { useDirectoryContentContext } from '-/hooks/useDirectoryContentContext';
+import { useTaggingActionsContext } from '-/hooks/useTaggingActionsContext';
+import { getMaxSearchResults } from '-/reducers/settings';
+import { TS } from '-/tagspaces.namespace';
 import AddIcon from '@mui/icons-material/Add';
+import DeleteIcon from '@mui/icons-material/DeleteForever';
+import EditIcon from '@mui/icons-material/Edit';
 import ShowEntriesWithTagIcon from '@mui/icons-material/SearchOutlined';
 import ListItemIcon from '@mui/material/ListItemIcon';
 import ListItemText from '@mui/material/ListItemText';
 import Menu from '@mui/material/Menu';
 import MenuItem from '@mui/material/MenuItem';
-import ConfirmDialog from '../dialogs/ConfirmDialog';
-import { getMaxSearchResults } from '-/reducers/settings';
-import { actions as AppActions, AppDispatch } from '-/reducers/app';
-import { TS } from '-/tagspaces.namespace';
 import { useTranslation } from 'react-i18next';
-import { useTaggingActionsContext } from '-/hooks/useTaggingActionsContext';
-import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
-import { useLocationIndexContext } from '-/hooks/useLocationIndexContext';
-import { useDirectoryContentContext } from '-/hooks/useDirectoryContentContext';
+import { useSelector } from 'react-redux';
 
 interface Props {
   open: boolean;
   onClose: () => void;
   anchorEl: Element | null;
   selectedTag: TS.Tag | null;
-  currentEntryPath: string;
+  currentEntry: TS.FileSystemEntry;
   removeTags?: (paths: Array<string>, tags: Array<TS.Tag>) => void;
   setIsAddTagDialogOpened?: (tag: TS.Tag) => void;
 }
@@ -52,33 +49,20 @@ function EntryTagMenu(props: Props) {
     onClose,
     anchorEl,
     selectedTag,
-    currentEntryPath,
+    currentEntry,
     setIsAddTagDialogOpened,
   } = props;
   const removeTagsProps = props.removeTags;
   const { t } = useTranslation();
 
   const { setSearchQuery } = useDirectoryContentContext();
-  const { removeTags } = useTaggingActionsContext();
+  const { removeTags, openEditEntryTagDialog } = useTaggingActionsContext();
   const { readOnlyMode } = useCurrentLocationContext();
-  const [isDeleteTagDialogOpened, setIsDeleteTagDialogOpened] = useState(false);
-  const dispatch: AppDispatch = useDispatch();
   const maxSearchResults: number = useSelector(getMaxSearchResults);
-
-  const toggleEditTagDialog = (tag) => {
-    dispatch(AppActions.toggleEditTagDialog(tag));
-  };
 
   function showEditTagDialog() {
     onClose();
-    const tag = selectedTag;
-    tag.path = currentEntryPath;
-    toggleEditTagDialog(tag);
-  }
-
-  function showDeleteTagDialog() {
-    onClose();
-    setIsDeleteTagDialogOpened(true);
+    openEditEntryTagDialog([currentEntry], selectedTag);
   }
 
   function showAddTagDialog() {
@@ -97,18 +81,13 @@ function EntryTagMenu(props: Props) {
     onClose();
   }
 
-  function handleCloseDialogs() {
-    setIsDeleteTagDialogOpened(false);
-  }
-
   function confirmRemoveTag() {
     if (removeTagsProps) {
-      removeTagsProps([currentEntryPath], [selectedTag]);
+      removeTagsProps([currentEntry.path], [selectedTag]);
     } else {
-      removeTags([currentEntryPath], [selectedTag]).then(() =>
-        handleCloseDialogs(),
-      );
+      removeTags([currentEntry.path], [selectedTag]);
     }
+    onClose();
   }
 
   const menuItems = [
@@ -154,7 +133,7 @@ function EntryTagMenu(props: Props) {
       <MenuItem
         key="deleteTagMenu"
         data-tid="deleteTagMenu"
-        onClick={showDeleteTagDialog}
+        onClick={confirmRemoveTag}
       >
         <ListItemIcon>
           <DeleteIcon />
@@ -167,9 +146,9 @@ function EntryTagMenu(props: Props) {
   return (
     <div style={{ overflowY: 'hidden' }}>
       <Menu anchorEl={anchorEl} open={open} onClose={onClose}>
-        {menuItems}
+        <TsMenuList>{menuItems}</TsMenuList>
       </Menu>
-      <ConfirmDialog
+      {/* <ConfirmDialog
         open={isDeleteTagDialogOpened}
         onClose={handleCloseDialogs}
         title={t('core:removeTag')}
@@ -182,7 +161,7 @@ function EntryTagMenu(props: Props) {
         cancelDialogTID="cancelDeleteTagDialogTagMenu"
         confirmDialogTID="confirmRemoveTagFromFile"
         confirmDialogContentTID="confirmDialogContent"
-      />
+      /> */}
     </div>
   );
 }

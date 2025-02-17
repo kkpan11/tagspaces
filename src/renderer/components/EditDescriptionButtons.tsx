@@ -1,137 +1,126 @@
-import React, { ForwardedRef, useEffect, useState } from 'react';
-import { styled } from '@mui/material/styles';
-import Button from '@mui/material/Button';
+import AppConfig from '-/AppConfig';
 import { ProTooltip } from '-/components/HelperComponents';
+import TsButton from '-/components/TsButton';
+import AiGenDescButton from '-/components/chat/AiGenDescButton';
+import AiGenTagsButton from '-/components/chat/AiGenTagsButton';
+import { useFilePropertiesContext } from '-/hooks/useFilePropertiesContext';
+import { useOpenedEntryContext } from '-/hooks/useOpenedEntryContext';
 import { Pro } from '-/pro';
-import { convertMarkDown } from '-/services/utils-io';
+import { Box, ButtonGroup } from '@mui/material';
+import React from 'react';
 import { useTranslation } from 'react-i18next';
-import { useDescriptionContext } from '-/hooks/useDescriptionContext';
-import ConfirmDialog from '-/components/dialogs/ConfirmDialog';
-import { useDirectoryContentContext } from '-/hooks/useDirectoryContentContext';
 
-const PREFIX = 'EditDescriptionButtons';
-
-const classes = {
-  button: `${PREFIX}-button`,
-};
-
-const Root = styled('span')(({ theme }) => ({
-  float: 'right',
-  [`& .${classes.button}`]: {
-    position: 'relative',
-    padding: '4px 10px 4px 10px',
-    margin: '0',
-  },
-}));
-
-export interface DescriptionChangedRef {
-  setDescriptionChanged: (changed: boolean) => void;
-}
-
-type Props = {
-  buttonsRef: ForwardedRef<DescriptionChangedRef>;
-  editMode: boolean;
-  setEditMode: (edit: boolean) => void;
-};
-
-const EditDescriptionButtons: React.FC<Props> = ({
-  buttonsRef,
-  editMode,
-  setEditMode,
-}) => {
+const EditDescriptionButtons: React.FC = () => {
   const { t } = useTranslation();
   const {
-    description,
-    isSaveDescriptionConfirmOpened,
-    setSaveDescriptionConfirmOpened,
     saveDescription,
-  } = useDescriptionContext();
-  const { currentDirectoryPath } = useDirectoryContentContext();
-  const [isDescriptionChanged, descriptionChanged] = useState<boolean>(false);
+    isEditMode,
+    isEditDescriptionMode,
+    setEditDescriptionMode,
+  } = useFilePropertiesContext();
+  const { openedEntry } = useOpenedEntryContext();
+  //const [isDescriptionChanged, descriptionChanged] = useState<boolean>(false);
 
-  React.useImperativeHandle(buttonsRef, () => ({
+  /*React.useImperativeHandle(buttonsRef, () => ({
     setDescriptionChanged: (changed) => {
       descriptionChanged(changed);
     },
   }));
 
   useEffect(() => {
-    if (!editMode && isDescriptionChanged) {
+    if (!isEditDescriptionMode && isDescriptionChanged) {
       descriptionChanged(false);
     }
-  }, [editMode]);
+  }, [isEditDescriptionMode]);*/
 
-  const printHTML = () => {
-    const sanitizedDescription = description
-      ? convertMarkDown(description, currentDirectoryPath)
-      : t('core:addMarkdownDescription');
+  // const printHTML = () => {
+  //   const sanitizedDescription = description
+  //     ? convertMarkDown(description, currentDirectoryPath)
+  //     : t('core:addMarkdownDescription');
 
-    const printWin = window.open('', 'PRINT', 'height=400,width=600');
-    printWin.document.write(
-      '<html><head><title>' + currentDirectoryPath + ' description</title>',
-    );
-    printWin.document.write('</head><body >');
-    printWin.document.write(sanitizedDescription);
-    printWin.document.write('</body></html>');
-    printWin.document.close(); // necessary for IE >= 10
-    printWin.focus(); // necessary for IE >= 10*/
-    printWin.print();
-    // printWin.close();
-    return true;
-  };
+  //   const printWin = window.open('', 'PRINT', 'height=400,width=600');
+  //   printWin.document.write(
+  //     '<html><head><title>' + currentDirectoryPath + ' description</title>',
+  //   );
+  //   printWin.document.write('</head><body >');
+  //   printWin.document.write(sanitizedDescription);
+  //   printWin.document.write('</body></html>');
+  //   printWin.document.close(); // necessary for IE >= 10
+  //   printWin.focus(); // necessary for IE >= 10*/
+  //   printWin.print();
+  //   // printWin.close();
+  //   return true;
+  // };
 
   return (
-    <Root>
-      {editMode && (
-        <Button
-          className={classes.button}
-          onClick={() => {
-            setEditMode(false);
-          }}
+    <div
+      style={{
+        float: 'left',
+        display: 'flex',
+        marginBottom: AppConfig.defaultSpaceBetweenButtons,
+      }}
+    >
+      <ButtonGroup>
+        {isEditDescriptionMode && (
+          <TsButton
+            style={{ borderTopRightRadius: 0, borderBottomRightRadius: 0 }}
+            onClick={() => {
+              setEditDescriptionMode(false);
+            }}
+          >
+            {t('core:cancel')}
+            {/* {t(isDescriptionChanged ? 'core:cancel' : 'core:close')} */}
+          </TsButton>
+        )}
+        <ProTooltip tooltip={t('editDescription')}>
+          <TsButton
+            data-tid="editDescriptionTID"
+            disabled={!Pro || isEditMode}
+            style={{
+              borderTopLeftRadius: isEditDescriptionMode
+                ? 0
+                : AppConfig.defaultCSSRadius,
+              borderBottomLeftRadius: isEditDescriptionMode
+                ? 0
+                : AppConfig.defaultCSSRadius,
+            }}
+            onClick={() => {
+              if (isEditDescriptionMode) {
+                saveDescription();
+              }
+              setEditDescriptionMode(!isEditDescriptionMode);
+            }}
+          >
+            {isEditDescriptionMode
+              ? t('core:confirmSaveButton')
+              : t('core:editDescription')}
+          </TsButton>
+        </ProTooltip>
+      </ButtonGroup>
+      <ButtonGroup style={{ marginLeft: AppConfig.defaultSpaceBetweenButtons }}>
+        <ProTooltip
+          tooltip={'Add AI generated description based on the file content'}
         >
-          {t(isDescriptionChanged ? 'core:cancel' : 'core:close')}
-        </Button>
-      )}
-      {!editMode && (
-        <Button className={classes.button} onClick={printHTML}>
-          {t('core:print')}
-        </Button>
-      )}
-      <ProTooltip tooltip={t('editDescription')}>
-        <Button
-          data-tid="editDescriptionTID"
-          color="primary"
-          className={classes.button}
-          disabled={!Pro}
-          onClick={() => {
-            if (editMode) {
-              saveDescription();
-            }
-            setEditMode(!editMode);
-          }}
-        >
-          {editMode ? t('core:confirmSaveButton') : t('core:edit')}
-        </Button>
-      </ProTooltip>
-      <ConfirmDialog
-        open={isSaveDescriptionConfirmOpened}
-        onClose={() => {
-          setSaveDescriptionConfirmOpened(false);
-        }}
-        title={t('core:confirm')}
-        content={t('core:saveFileBeforeClosingFile')}
-        confirmCallback={(result) => {
-          if (result) {
-            saveDescription();
-          } else {
-            setSaveDescriptionConfirmOpened(false);
-          }
-        }}
-        cancelDialogTID="cancelSaveDescCloseDialog"
-        confirmDialogTID="confirmSaveDescCloseDialog"
-        confirmDialogContentTID="confirmDescDialogContent"
-      />
-    </Root>
+          <AiGenDescButton disabled={!Pro} variant="outlined" />
+        </ProTooltip>
+        {openedEntry.meta.description && (
+          <>
+            <Box
+              style={{ marginLeft: AppConfig.defaultSpaceBetweenButtons }}
+            ></Box>
+            <ProTooltip
+              tooltip={'Add AI generated tags based on the description'}
+            >
+              <AiGenTagsButton
+                disabled={!Pro}
+                fromDescription={true}
+                variant="outlined"
+              />
+            </ProTooltip>
+          </>
+        )}
+      </ButtonGroup>
+    </div>
   );
 };
 

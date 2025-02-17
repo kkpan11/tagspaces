@@ -1,6 +1,6 @@
 /**
  * TagSpaces - universal file and folder organizer
- * Copyright (C) 2017-present TagSpaces UG (haftungsbeschraenkt)
+ * Copyright (C) 2017-present TagSpaces GmbH
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License (version 3) as
@@ -15,6 +15,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  */
+import AppConfig from '-/AppConfig';
 import { styled } from '@mui/material/styles';
 
 const PREFIX = 'SidePanel';
@@ -52,23 +53,19 @@ export const SidePanel = styled('div')(({ theme }) => ({
     overflowY: 'auto',
   },
   [`& .${classes.listItem}`]: {
-    paddingLeft: 0,
-    paddingTop: 2,
-    paddingBottom: 2,
-    paddingRight: 0,
-    borderRadius: 5,
-    backgroundColor: 'transparent',
+    padding: 0,
+    paddingRight: 15,
+    borderRadius: AppConfig.defaultCSSRadius,
   },
   [`& .${classes.listItemSelected}`]: {
-    paddingLeft: 0,
-    paddingRight: 0,
-    paddingTop: 2,
-    paddingBottom: 2,
-    borderRadius: 5,
+    padding: 0,
+    paddingRight: 15,
+    borderRadius: AppConfig.defaultCSSRadius,
     backgroundColor: theme.palette.primary.light,
   },
   [`& .${classes.panelTitle}`]: {
     textTransform: 'uppercase',
+    fontSize: '0.9rem',
     flex: 1,
     paddingLeft: 7,
     paddingTop: 12,

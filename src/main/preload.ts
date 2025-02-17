@@ -1,20 +1,34 @@
 // Disable no-unused-vars, broken for spread args
 /* eslint no-unused-vars: off */
-import { contextBridge, ipcRenderer, IpcRendererEvent } from 'electron';
+import {
+  contextBridge,
+  ipcRenderer,
+  IpcRendererEvent,
+  webUtils,
+} from 'electron';
 
 export type Channels =
   | 'isWorkerAvailable'
+  | 'fetchUrl'
+  | 'isDirectory'
   | 'resolveRelativePaths'
   | 'set-language'
   | 'setZoomFactor'
   | 'global-shortcuts-enabled'
   | 'show-main-window'
   | 'create-new-window'
+  | 'file-changed'
+  | 'description-changed'
   | 'quitApp'
   | 'focus-window'
   | 'getDevicePaths'
   | 'readMacOSTags'
+  | 'reloadWindow'
   | 'watchFolder'
+  | 'newChatSession'
+  | 'newChatMessage'
+  | 'ChatMessage'
+  | 'PullModel'
   | 'postRequest'
   | 'listDirectoryPromise'
   | 'listMetaDirectoryPromise'
@@ -47,8 +61,25 @@ export type Channels =
   | 'set_extensions'
   | 'play-pause'
   | 'cmd'
+  | 'toggle-about-dialog'
+  | 'show-create-directory-dialog'
+  | 'toggle-keys-dialog'
+  | 'toggle-license-dialog'
+  | 'toggle-open-link-dialog'
+  | 'new-text-file'
+  | 'toggle-onboarding-dialog'
+  | 'toggle-settings-dialog'
+  | 'toggle-third-party-libs-dialog'
+  | 'perspective'
+  | 'panels'
+  | 'history'
   | 'progress'
-  | 'uploadAbort';
+  | 'uploadAbort'
+  | 'getOllamaModels'
+  | 'newOllamaMessage'
+  | 'pullOllamaModel'
+  | 'deleteOllamaModel'
+  | 'startup-finished';
 
 const electronHandler = {
   ipcRenderer: {
@@ -72,6 +103,10 @@ const electronHandler = {
     },
     removeAllListeners(channel: string) {
       ipcRenderer.removeAllListeners(channel);
+    },
+    startDrag: (fileName) => ipcRenderer.send('ondragstart', fileName),
+    getPathForFile(file: File) {
+      return webUtils.getPathForFile(file);
     },
   },
 };

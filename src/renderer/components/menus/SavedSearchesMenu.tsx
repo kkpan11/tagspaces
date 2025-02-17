@@ -1,6 +1,6 @@
 /**
  * TagSpaces - universal file and folder organizer
- * Copyright (C) 2017-present TagSpaces UG (haftungsbeschraenkt)
+ * Copyright (C) 2017-present TagSpaces GmbH
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License (version 3) as
@@ -17,15 +17,12 @@
  */
 
 import React from 'react';
-import { useSelector, useDispatch } from 'react-redux';
+import { useSelector } from 'react-redux';
 import Menu from '@mui/material/Menu';
 import MenuItem from '@mui/material/MenuItem';
 import { getSearches } from '-/reducers/searches';
-import { getShowUnixHiddenEntries } from '-/reducers/settings';
-import { AppDispatch } from '-/reducers/app';
 import { useTranslation } from 'react-i18next';
-import { useLocationIndexContext } from '-/hooks/useLocationIndexContext';
-import { useDirectoryContentContext } from '-/hooks/useDirectoryContentContext';
+import { useSavedSearchesContext } from '-/hooks/useSavedSearchesContext';
 
 interface Props {
   open: boolean;
@@ -36,7 +33,7 @@ interface Props {
 function SavedSearchesMenu(props: Props) {
   const { open, onClose, anchorEl } = props;
   const { t } = useTranslation();
-  const { findFromSavedSearch } = useDirectoryContentContext();
+  const { findFromSavedSearch } = useSavedSearchesContext();
   const searches = useSelector((state) => getSearches(state));
 
   const menuItems = searches.length ? (

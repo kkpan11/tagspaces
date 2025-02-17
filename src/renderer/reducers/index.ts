@@ -1,6 +1,6 @@
 /**
  * TagSpaces - universal file and folder organizer
- * Copyright (C) 2017-present TagSpaces UG (haftungsbeschraenkt)
+ * Copyright (C) 2017-present TagSpaces GmbH
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License (version 3) as
@@ -23,7 +23,7 @@ import AppConfig from '-/AppConfig';
 import settings from './settings';
 import app from './app';
 import locations from './locations';
-import taglibrary from './taglibrary';
+//import taglibrary from './taglibrary';
 import searches from './searches';
 
 const externalLocations = window.ExtLocations || false;
@@ -110,7 +110,7 @@ const rootReducer = persistCombineReducers(rootPersistConfig, {
   settings,
   app,
   locations: externalLocations ? () => externalLocations : locations,
-  taglibrary, // externalTagLibrary ? () => externalTagLibrary : taglibrary,
+  // taglibrary, // externalTagLibrary ? () => externalTagLibrary : taglibrary,
   searches: externalSearches ? () => externalSearches : searches,
 });
 

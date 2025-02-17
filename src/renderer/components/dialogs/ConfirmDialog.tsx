@@ -1,6 +1,6 @@
 /**
  * TagSpaces - universal file and folder organizer
- * Copyright (C) 2017-present TagSpaces UG (haftungsbeschraenkt)
+ * Copyright (C) 2017-present TagSpaces GmbH
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License (version 3) as
@@ -16,40 +16,54 @@
  *
  */
 
-import React from 'react';
-import Button from '@mui/material/Button';
-import DialogActions from '@mui/material/DialogActions';
-import DialogContent from '@mui/material/DialogContent';
-import DialogTitle from '@mui/material/DialogTitle';
-import DialogContentText from '@mui/material/DialogContentText';
 import DraggablePaper from '-/components/DraggablePaper';
+import TsButton from '-/components/TsButton';
+import TsTextField from '-/components/TsTextField';
+import DialogCloseButton from '-/components/dialogs/DialogCloseButton';
+import TsDialogActions from '-/components/dialogs/components/TsDialogActions';
+import BulletIcon from '@mui/icons-material/Remove';
+import Dialog from '@mui/material/Dialog';
+import DialogContent from '@mui/material/DialogContent';
+import DialogContentText from '@mui/material/DialogContentText';
+import DialogTitle from '@mui/material/DialogTitle';
 import List from '@mui/material/List';
 import ListItem from '@mui/material/ListItem';
-import BulletIcon from '@mui/icons-material/Remove';
 import ListItemIcon from '@mui/material/ListItemIcon';
 import ListItemText from '@mui/material/ListItemText';
-import Dialog from '@mui/material/Dialog';
-import DialogCloseButton from '-/components/dialogs/DialogCloseButton';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 interface Props {
   open: boolean;
   title: string;
-  content: string;
+  content?: string;
+  customConfirmText?: string;
+  customCancelText?: string;
   cancelDialogTID?: string;
   confirmDialogTID?: string;
   confirmDialogContentTID?: string;
+  prompt?: string;
+  helpText?: string;
   list: Array<string>;
-  confirmCallback: (result: boolean) => void;
+  confirmCallback: (result: boolean | string) => void;
   onClose: () => void;
 }
 
 function ConfirmDialog(props: Props) {
-  const { open, onClose, confirmCallback } = props;
+  const {
+    open,
+    onClose,
+    confirmCallback,
+    prompt,
+    helpText,
+    customCancelText,
+    customConfirmText,
+  } = props;
   const { t } = useTranslation();
+  const [promptValue, setPromptValue] = useState<string>('');
 
   function onConfirm(result) {
-    confirmCallback(result);
+    confirmCallback(result && prompt ? promptValue : result);
     onClose();
   }
 
@@ -61,6 +75,7 @@ function ConfirmDialog(props: Props) {
       onClose={onClose}
       keepMounted
       scroll="paper"
+      style={{ zIndex: 1301 }}
     >
       <DialogTitle style={{ cursor: 'move' }} id="draggable-dialog-title">
         {props.title}
@@ -72,6 +87,15 @@ function ConfirmDialog(props: Props) {
           component="span"
         >
           {props.content}
+          {prompt && (
+            <TsTextField
+              fullWidth
+              label={helpText}
+              value={promptValue}
+              onChange={(e) => setPromptValue(e.target.value)}
+              placeholder={prompt}
+            />
+          )}
           {props.list && (
             <List dense>
               {props.list.map((listItem) => (
@@ -86,22 +110,20 @@ function ConfirmDialog(props: Props) {
           )}
         </DialogContentText>
       </DialogContent>
-      <DialogActions>
-        <Button
+      <TsDialogActions>
+        <TsButton
           onClick={() => onConfirm(false)}
-          color="primary"
           data-tid={props.cancelDialogTID}
         >
-          {t('core:no')}
-        </Button>
-        <Button
+          {customCancelText ? customCancelText : t('core:no')}
+        </TsButton>
+        <TsButton
           data-tid={props.confirmDialogTID}
           onClick={() => onConfirm(true)}
-          color="primary"
         >
-          {t('core:yes')}
-        </Button>
-      </DialogActions>
+          {customConfirmText ? customConfirmText : t('core:yes')}
+        </TsButton>
+      </TsDialogActions>
     </Dialog>
   );
 }

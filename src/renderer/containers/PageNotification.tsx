@@ -1,6 +1,6 @@
 /**
  * TagSpaces - universal file and folder organizer
- * Copyright (C) 2017-present TagSpaces UG (haftungsbeschraenkt)
+ * Copyright (C) 2017-present TagSpaces GmbH
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License (version 3) as
@@ -16,32 +16,33 @@
  *
  */
 
-import React from 'react';
-import { bindActionCreators } from 'redux';
-import { useDispatch, useSelector } from 'react-redux';
-import { styled } from '@mui/material/styles';
-import Snackbar from '@mui/material/Snackbar';
-import Button from '@mui/material/Button';
-import IconButton from '@mui/material/IconButton';
-import CloseIcon from '@mui/icons-material/Close';
+import AppConfig from '-/AppConfig';
+import TsButton from '-/components/TsButton';
+import TsIconButton from '-/components/TsIconButton';
+import { useLocationIndexContext } from '-/hooks/useLocationIndexContext';
+import { useNotificationContext } from '-/hooks/useNotificationContext';
 import { getLastPublishedVersion } from '-/reducers/settings';
+import i18n from '-/services/i18n';
+import { openURLExternally } from '-/services/utils-io';
+import CloseIcon from '@mui/icons-material/Close';
+import Snackbar from '@mui/material/Snackbar';
+import { styled } from '@mui/material/styles';
+import Links from 'assets/links';
+import React from 'react';
+import { useTranslation } from 'react-i18next';
+import { useDispatch, useSelector } from 'react-redux';
+import { Pro } from '../pro';
 import {
   actions as AppActions,
   AppDispatch,
   isUpdateAvailable,
 } from '../reducers/app';
-import { Pro } from '../pro';
-import Links from 'assets/links';
-import { openURLExternally } from '-/services/utils-io';
-import { useTranslation } from 'react-i18next';
-import { useNotificationContext } from '-/hooks/useNotificationContext';
-import { useLocationIndexContext } from '-/hooks/useLocationIndexContext';
 
 const TSNotification = styled(Snackbar)(({ theme }) => {
   return {
     root: {
       '& .MuiSnackbarContent-root': {
-        borderRadius: 10,
+        borderRadius: AppConfig.defaultCSSRadius,
       },
     },
   };
@@ -88,16 +89,15 @@ function PageNotification() {
         autoHideDuration={notificationStatus.autohide ? 3000 : undefined}
         message={notificationStatus.text}
         action={[
-          <IconButton
+          <TsIconButton
             data-tid={'close' + notificationStatus.tid}
             key="close"
             aria-label={t('core:closeButton')}
             color="inherit"
             onClick={() => hideNotifications()}
-            size="large"
           >
             <CloseIcon />
-          </IconButton>,
+          </TsIconButton>,
         ]}
       />
       {isGeneratingThumbs && (
@@ -107,33 +107,31 @@ function PageNotification() {
           autoHideDuration={undefined}
           message={t('core:loadingOrGeneratingThumbnails')}
           action={[
-            <IconButton
+            <TsIconButton
               key="closeButton"
               aria-label={t('core:closeButton')}
               color="inherit"
               onClick={() => setGeneratingThumbs(false)}
-              size="large"
             >
               <CloseIcon />
-            </IconButton>,
+            </TsIconButton>,
           ]}
         />
       )}
       <TSNotification
         anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
-        open={isIndexing}
+        open={isIndexing !== undefined}
         autoHideDuration={undefined}
-        message="Indexing"
+        message={i18n.t('indexing') + ': ' + isIndexing}
         action={[
-          <Button
+          <TsButton
             key="cancelIndexButton"
             color="secondary"
-            size="small"
             onClick={() => cancelDirectoryIndexing()}
             data-tid="cancelDirectoryIndexing"
           >
             {t('core:cancelIndexing')}
-          </Button>,
+          </TsButton>,
         ]}
       />
       <TSNotification
@@ -142,30 +140,28 @@ function PageNotification() {
         autoHideDuration={undefined}
         message={'Version ' + lastPublishedVersion + ' available.'}
         action={[
-          <Button
-            key="laterButton"
-            color="secondary"
-            size="small"
-            onClick={skipRelease}
-          >
+          <TsButton key="laterButton" color="secondary" onClick={skipRelease}>
             {t('core:later')}
-          </Button>,
-          <Button
+          </TsButton>,
+          <TsButton
             key="changelogButton"
             color="secondary"
-            size="small"
             onClick={openChangelogPage}
+            style={{
+              marginLeft: AppConfig.defaultSpaceBetweenButtons,
+            }}
           >
             {t('core:releaseNotes')}
-          </Button>,
-          <Button
+          </TsButton>,
+          <TsButton
             key="latestVersionButton"
-            color="primary"
-            size="small"
+            style={{
+              marginLeft: AppConfig.defaultSpaceBetweenButtons,
+            }}
             onClick={getLatestVersion}
           >
             {t('core:getItNow')}
-          </Button>,
+          </TsButton>,
         ]}
       />
     </>

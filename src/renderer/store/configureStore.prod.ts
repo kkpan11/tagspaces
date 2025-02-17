@@ -1,6 +1,6 @@
 /**
  * TagSpaces - universal file and folder organizer
- * Copyright (C) 2017-present TagSpaces UG (haftungsbeschraenkt)
+ * Copyright (C) 2017-present TagSpaces GmbH
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License (version 3) as
@@ -19,9 +19,9 @@
 import { compose, createStore, applyMiddleware } from 'redux';
 import { persistStore } from 'redux-persist';
 import thunk from 'redux-thunk';
+import AppConfig from '-/AppConfig';
 import rootReducer from '../reducers';
 import onlineListener from '../services/onlineListener';
-import PlatformIO from '-/services/platform-facade';
 
 const enhancer = compose(
   applyMiddleware(thunk), // , router)
@@ -35,8 +35,13 @@ function configureStore(initialState) {
     // document.dispatchEvent(new Event('storeLoaded'));
     // console.log('Store rehydrated.');
     setTimeout(() => {
-      // @ts-ignore
-      PlatformIO.setLanguage(store.getState().settings.interfaceLanguage);
+      if (AppConfig.isElectron) {
+        window.electronIO.ipcRenderer.sendMessage(
+          'set-language',
+          // @ts-ignore
+          store.getState().settings.interfaceLanguage,
+        );
+      }
     }, 500);
   });
   return { store, persistor };

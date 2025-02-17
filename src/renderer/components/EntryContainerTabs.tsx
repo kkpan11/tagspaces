@@ -1,6 +1,6 @@
 /**
  * TagSpaces - universal file and folder organizer
- * Copyright (C) 2017-present TagSpaces UG (haftungsbeschraenkt)
+ * Copyright (C) 2017-present TagSpaces GmbH
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License (version 3) as
@@ -16,29 +16,24 @@
  *
  */
 
-import React, { useRef } from 'react';
-import { styled, useTheme } from '@mui/material/styles';
-import { useSelector, useDispatch } from 'react-redux';
-import Tabs from '@mui/material/Tabs';
-import Tab from '@mui/material/Tab';
-import Box from '@mui/material/Box';
-import { AppDispatch, OpenedEntry } from '-/reducers/app';
-import Revisions from '-/components/Revisions';
-import EntryProperties from '-/components/EntryProperties';
+import LoadingLazy from '-/components/LoadingLazy';
+import Tooltip from '-/components/Tooltip';
+import TsTabPanel from '-/components/TsTabPanel';
+import { TabItem, TabNames } from '-/hooks/EntryPropsTabsContextProvider';
+import { useChatContext } from '-/hooks/useChatContext';
+import { useEntryPropsTabsContext } from '-/hooks/useEntryPropsTabsContext';
+import { useOpenedEntryContext } from '-/hooks/useOpenedEntryContext';
+import { AppDispatch } from '-/reducers/app';
 import {
   actions as SettingsActions,
   getEntryContainerTab,
   getMapTileServer,
-  isDesktopMode,
 } from '-/reducers/settings';
-import {
-  FolderPropertiesIcon,
-  DescriptionIcon,
-  RevisionIcon,
-} from '-/components/CommonIcons';
-import EditDescription from '-/components/EditDescription';
+import { Box, Tab, Tabs, useMediaQuery } from '@mui/material';
+import { styled, useTheme } from '@mui/material/styles';
+import React, { useEffect, useReducer, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useOpenedEntryContext } from '-/hooks/useOpenedEntryContext';
+import { useDispatch, useSelector } from 'react-redux';
 
 interface StyledTabsProps {
   children?: React.ReactNode;
@@ -68,20 +63,34 @@ const StyledTabs = styled((props: StyledTabsProps) => (
 }));
 
 interface StyledTabProps {
-  label: string;
+  title: string;
+  tinyMode: any;
   icon: any;
   onClick: (event: React.SyntheticEvent) => void;
 }
 
-const StyledTab = styled((props: StyledTabProps) => (
-  <Tab disableRipple iconPosition="start" {...props} />
-))(({ theme }) => ({
+const StyledTab = styled((props: StyledTabProps) => {
+  const { title, tinyMode, ...tabProps } = props; // Extract title and tinyMode
+
+  return (
+    <Tooltip title={tinyMode && title}>
+      <Tab
+        label={!tinyMode && title}
+        disableRipple
+        iconPosition="start"
+        {...tabProps} // Pass remaining props to Tab
+      />
+    </Tooltip>
+  );
+})(({ theme }) => ({
   textTransform: 'none',
   fontWeight: theme.typography.fontWeightRegular,
   fontSize: theme.typography.pxToRem(15),
-  marginRight: theme.spacing(1),
   minHeight: 50,
   maxHeight: 50,
+  minWidth: 40,
+  marginRight: 5,
+  padding: 5,
 }));
 
 function a11yProps(index: number) {
@@ -91,82 +100,117 @@ function a11yProps(index: number) {
   };
 }
 
+const TabContent1 = React.lazy(
+  () => import(/* webpackChunkName: "EntryProperties" */ './EntryProperties'),
+);
+
+const TabContent2 = React.lazy(
+  () => import(/* webpackChunkName: "EditDescription" */ './EditDescription'),
+);
+const TabContent3 = React.lazy(
+  () => import(/* webpackChunkName: "Revisions" */ './Revisions'),
+);
+const TabContent4 = React.lazy(
+  () => import(/* webpackChunkName: "AiPropertiesTab" */ './AiPropertiesTab'),
+);
+const TabContent5 = React.lazy(
+  () => import(/* webpackChunkName: "AiPropertiesTab" */ './LinksTab'),
+);
+
 interface EntryContainerTabsProps {
   openPanel: () => void;
   toggleProperties: () => void;
-  isEditable: boolean;
   isPanelOpened: boolean;
   marginRight: string;
 }
 
-interface TabPanelProps {
-  children?: React.ReactNode;
-  index: number;
-  value: number;
-}
-
 function EntryContainerTabs(props: EntryContainerTabsProps) {
-  const {
-    openPanel,
-    toggleProperties,
-    marginRight,
-    isEditable,
-    isPanelOpened,
-  } = props;
+  const { openPanel, toggleProperties, marginRight, isPanelOpened } = props;
 
   const { t } = useTranslation();
+  const { initHistory } = useChatContext();
+  const { getTabsArray } = useEntryPropsTabsContext();
   const { openedEntry } = useOpenedEntryContext();
   const theme = useTheme();
-  const tabIndex = useSelector(getEntryContainerTab);
+  //const devMode: boolean = useSelector(isDevMode);
+  const selectedTab: (typeof TabNames)[keyof typeof TabNames] =
+    useSelector(getEntryContainerTab);
   const tileServer = useSelector(getMapTileServer);
-  const desktopMode = useSelector(isDesktopMode);
+  const tabsArray = useRef<TabItem[]>([]);
   const dispatch: AppDispatch = useDispatch();
+  const [ignored, forceUpdate] = useReducer((x) => x + 1, 0, undefined);
+  const isTinyMode = useMediaQuery(theme.breakpoints.down('sm'));
 
-  function TsTabPanel(tprops: TabPanelProps) {
-    const { children, value, index, ...other } = tprops;
+  useEffect(() => {
+    getTabsArray(openedEntry).then((tabs) => {
+      tabsArray.current = tabs;
+      forceUpdate();
+    });
+  }, [openedEntry]);
 
-    return (
-      <div
-        role="tabpanel"
-        hidden={value !== index}
-        id={`simple-tabpanel-${index}`}
-        aria-labelledby={`simple-tab-${index}`}
-        {...other}
-        style={{
-          height: '100%',
-          overflowY: 'auto',
-          overflowX: 'hidden',
-          paddingTop: 5,
-          paddingLeft: 10,
-          paddingRight: 10,
-        }}
-      >
-        {value === index && children}
-      </div>
-    );
-  }
-
-  // Create functions that dispatch actions
   const handleChange = (event: React.SyntheticEvent, newValue: number) => {
-    dispatch(SettingsActions.setEntryContainerTab(newValue));
-    openPanel();
-    console.log('tab changed to:' + newValue);
+    if (tabsArray.current.length > 0) {
+      const tab = tabsArray.current[newValue];
+      if (tab && tab.name === TabNames.aiTab) {
+        initHistory();
+      }
+      dispatch(SettingsActions.setEntryContainerTab(tab.name));
+      openPanel();
+      console.log('tab changed to:' + newValue);
+    }
   };
-  const handleTabClick = (event: React.SyntheticEvent) => {
+
+  function handleTabClick(selectedTabIndex, index: number) {
     if (
       openedEntry.isFile &&
-      tabIndex === parseInt(event.currentTarget.id.split('-')[1], 10)
+      selectedTabIndex === index //parseInt(event.currentTarget.id.split('-')[1], 10)
     ) {
       // when selected tab is clicked...
       dispatch(SettingsActions.setEntryContainerTab(undefined));
       toggleProperties();
-      console.log('tab click:' + tabIndex);
+      console.log('tab click:' + index);
     }
-  };
+  }
 
-  // directories must be always opened
-  const selectedTabIndex =
-    !openedEntry.isFile && tabIndex === undefined ? 0 : tabIndex;
+  function getSelectedTabIndex() {
+    if (!isPanelOpened) {
+      return undefined;
+    }
+    /*if (selectedTab === 0 || selectedTab === undefined) {
+      return 0;
+    }*/
+    const index = tabsArray.current.findIndex(
+      (tab) => tab.name === selectedTab,
+    );
+    if (index > -1) {
+      return index;
+    }
+    return 0;
+    /*const maxTabIndex = tabsArray.current.length - 1;
+    if (tabIndex > maxTabIndex) {
+      return maxTabIndex;
+    }
+    return tabIndex;*/
+  }
+
+  const selectedTabIndex = getSelectedTabIndex();
+
+  function getTabContainer(tabName: string) {
+    if (tabName === TabNames.propertiesTab) {
+      return <TabContent1 key={openedEntry.path} tileServer={tileServer} />;
+    } else if (tabName === TabNames.descriptionTab) {
+      return <TabContent2 />;
+    } else if (tabName === TabNames.revisionsTab) {
+      return <TabContent3 />;
+    } else if (tabName === TabNames.aiTab) {
+      return <TabContent4 />;
+    } else if (tabName === TabNames.linksTab) {
+      return <TabContent5 />;
+    }
+  }
+  if (tabsArray.current.length === 0) {
+    return null;
+  }
 
   return (
     <div
@@ -186,44 +230,28 @@ function EntryContainerTabs(props: EntryContainerTabsProps) {
         <StyledTabs
           value={selectedTabIndex}
           onChange={handleChange}
-          aria-label="basic tabs example"
+          aria-label="Switching among description, revisions entry properties"
         >
-          <StyledTab
-            data-tid="detailsTabTID"
-            icon={<FolderPropertiesIcon />}
-            label={desktopMode && t('core:details')}
-            {...a11yProps(0)}
-            onClick={handleTabClick}
-          />
-          <StyledTab
-            data-tid="descriptionTabTID"
-            icon={<DescriptionIcon />}
-            label={desktopMode && t('core:filePropertiesDescription')}
-            {...a11yProps(1)}
-            onClick={handleTabClick}
-          />
-          {isEditable && (
+          {tabsArray.current.map((tab, index) => (
             <StyledTab
-              data-tid="revisionsTabTID"
-              icon={<RevisionIcon />}
-              label={desktopMode && t('core:revisions')}
-              {...a11yProps(2)}
-              onClick={handleTabClick}
+              key={'key' + tab.name + index}
+              data-tid={tab.name + 'TID'}
+              icon={tab.icon}
+              title={tab.title}
+              tinyMode={isTinyMode}
+              {...a11yProps(index)}
+              onClick={() => handleTabClick(selectedTabIndex, index)}
             />
-          )}
+          ))}
         </StyledTabs>
       </Box>
-      <TsTabPanel value={selectedTabIndex} index={0}>
-        <EntryProperties key={openedEntry.path} tileServer={tileServer} />
-      </TsTabPanel>
-      <TsTabPanel value={selectedTabIndex} index={1}>
-        <EditDescription />
-      </TsTabPanel>
-      {isEditable && (
-        <TsTabPanel value={selectedTabIndex} index={2}>
-          <Revisions />
-        </TsTabPanel>
-      )}
+      <React.Suspense fallback={<LoadingLazy />}>
+        {tabsArray.current.map((tab, index) => (
+          <TsTabPanel key={tab.name} value={selectedTabIndex} index={index}>
+            {getTabContainer(tab.name)}
+          </TsTabPanel>
+        ))}
+      </React.Suspense>
     </div>
   );
 }

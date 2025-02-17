@@ -1,6 +1,6 @@
 /**
  * TagSpaces - universal file and folder organizer
- * Copyright (C) 2017-present TagSpaces UG (haftungsbeschraenkt)
+ * Copyright (C) 2017-present TagSpaces GmbH
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License (version 3) as
@@ -19,9 +19,10 @@
 import React from 'react';
 import ListItemText from '@mui/material/ListItemText';
 import ListItemIcon from '@mui/material/ListItemIcon';
-import { Menu, MenuList, MenuItem } from '@mui/material';
+import { Menu, MenuItem } from '@mui/material';
 import { DeleteIcon, ReloadIcon } from '-/components/CommonIcons';
-import { Pro } from '../../pro';
+import TsMenuList from '-/components/TsMenuList';
+import { Pro } from '-/pro';
 import { useTranslation } from 'react-i18next';
 
 interface Props {
@@ -71,7 +72,7 @@ function BookmarksMenu(props: Props) {
 
   return (
     <Menu anchorEl={props.anchorEl} open={props.open} onClose={props.onClose}>
-      <MenuList>{menuItems}</MenuList>
+      <TsMenuList>{menuItems}</TsMenuList>
     </Menu>
   );
 }

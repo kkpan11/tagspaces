@@ -1,6 +1,6 @@
 /**
  * TagSpaces - universal file and folder organizer
- * Copyright (C) 2017-present TagSpaces UG (haftungsbeschraenkt)
+ * Copyright (C) 2017-present TagSpaces GmbH
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License (version 3) as
@@ -17,10 +17,12 @@
  */
 
 import React, { useEffect } from 'react';
-import Button from '@mui/material/Button';
-import DialogActions from '@mui/material/DialogActions';
+import { useTheme } from '@mui/material/styles';
+import useMediaQuery from '@mui/material/useMediaQuery';
+import TsButton from '-/components/TsButton';
+import TsDialogActions from '-/components/dialogs/components/TsDialogActions';
+import TsDialogTitle from '-/components/dialogs/components/TsDialogTitle';
 import DialogContent from '@mui/material/DialogContent';
-import DialogTitle from '@mui/material/DialogTitle';
 import Dialog from '@mui/material/Dialog';
 import CloseIcon from '@mui/icons-material/Close';
 import { useSelector, useDispatch } from 'react-redux';
@@ -29,7 +31,6 @@ import Typography from '@mui/material/Typography';
 import Box from '@mui/material/Box';
 import { LinearProgress, Grid, Tooltip } from '@mui/material';
 import WarningIcon from '@mui/icons-material/Warning';
-import PlatformIO from '-/services/platform-facade';
 import DraggablePaper from '-/components/DraggablePaper';
 import {
   actions as AppActions,
@@ -37,16 +38,16 @@ import {
   getProgress,
 } from '-/reducers/app';
 import { extractFileName } from '@tagspaces/tagspaces-common/paths';
-import DialogCloseButton from '-/components/dialogs/DialogCloseButton';
-import { PerspectiveIDs } from '-/perspectives';
 import { useTranslation } from 'react-i18next';
 import { useDirectoryContentContext } from '-/hooks/useDirectoryContentContext';
 import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
 import AppConfig from '-/AppConfig';
+import { uploadAbort } from '-/services/utils-io';
 
 interface Props {
   open: boolean;
   title: string;
+  targetPath?: string;
   onClose: () => void;
 }
 
@@ -54,24 +55,18 @@ function FileUploadDialog(props: Props) {
   const { open = false, title, onClose } = props;
   const { t } = useTranslation();
   const dispatch: AppDispatch = useDispatch();
-
-  const {
-    loadDirectoryContent,
-    currentDirectoryPerspective,
-    currentDirectoryPath,
-  } = useDirectoryContentContext();
-  const { currentLocation } = useCurrentLocationContext();
+  const theme = useTheme();
+  const smallScreen = useMediaQuery(theme.breakpoints.down('md'));
+  const { currentDirectoryPath } = useDirectoryContentContext();
+  const { findLocation } = useCurrentLocationContext();
   const progress = useSelector(getProgress);
 
-  const targetPath = React.useRef<string>(getTargetPath());
+  const targetPath = React.useRef<string>(getTargetPath()); // todo ContextProvider
+  const currentLocation = findLocation();
 
   useEffect(() => {
     if (AppConfig.isElectron) {
       window.electronIO.ipcRenderer.on('progress', (fileName, newProgress) => {
-        /*const { path, filePath, loaded, total, key } = newProgress;
-        const progressPercentage = Math.round(
-          (loaded / total) * 100,
-        );*/
         dispatch(AppActions.onUploadProgress(newProgress, undefined));
       });
 
@@ -98,20 +93,24 @@ function FileUploadDialog(props: Props) {
 
   const stopAll = () => {
     if (progress) {
-      return PlatformIO.uploadAbort();
-      /*progress.map((fileProgress) => {
-        const { abort } = fileProgress;
-        if (abort !== undefined && typeof abort === 'function') {
-          abort();
-        }
-        return true;
-      });*/
+      if (currentLocation.haveObjectStoreSupport()) {
+        const progresses = progress.map((fileProgress) => {
+          fileProgress.abort();
+          return { ...fileProgress, state: 'finished' };
+        });
+        dispatch(AppActions.setProgresses(progresses));
+      } else {
+        return uploadAbort();
+      }
     }
   };
 
   let haveProgress = false;
 
   function getTargetPath() {
+    if (props.targetPath) {
+      return props.targetPath;
+    }
     const pathProgress = progress.find((fileProgress) => fileProgress.path);
     if (pathProgress) {
       return pathProgress.path;
@@ -120,6 +119,9 @@ function FileUploadDialog(props: Props) {
   }
 
   function getTargetURL() {
+    if (props.targetPath) {
+      return props.targetPath;
+    }
     if (currentLocation) {
       if (currentLocation.endpointURL) {
         return (
@@ -163,19 +165,19 @@ function FileUploadDialog(props: Props) {
       keepMounted
       scroll="paper"
       fullWidth={true}
+      fullScreen={smallScreen}
       maxWidth="sm"
       aria-labelledby="draggable-dialog-title"
       PaperComponent={DraggablePaper}
-      BackdropProps={{ style: { backgroundColor: 'transparent' } }}
+      slotProps={{ backdrop: { style: { backgroundColor: 'transparent' } } }}
     >
-      <DialogTitle
-        data-tid="importDialogTitle"
-        style={{ cursor: 'move' }}
-        id="draggable-dialog-title"
-      >
-        {t('core:' + (title && title.length > 0 ? title : 'importDialogTitle'))}
-        <DialogCloseButton testId="closeFileUploadTID" onClose={onClose} />
-      </DialogTitle>
+      <TsDialogTitle
+        dialogTitle={t(
+          'core:' + (title && title.length > 0 ? title : 'importDialogTitle'),
+        )}
+        closeButtonTestId="closeFileUploadTID"
+        onClose={onClose}
+      />
       <DialogContent
         style={{
           marginLeft: 'auto',
@@ -193,7 +195,11 @@ function FileUploadDialog(props: Props) {
               const { path, filePath } = fileProgress;
               targetPath.current = path.split('?')[0];
               let { abort } = fileProgress;
-              if (percentage > -1 && percentage < 100) {
+              if (
+                percentage > -1 &&
+                percentage < 100 &&
+                fileProgress.state !== 'finished'
+              ) {
                 haveProgress = true;
               } /*else {
                 abort = undefined;
@@ -219,7 +225,7 @@ function FileUploadDialog(props: Props) {
                       ? filePath
                       : extractFileName(
                           targetPath.current,
-                          PlatformIO.getDirSeparator(),
+                          currentLocation?.getDirSeparator(),
                         )}
                     {percentage === -1 && (
                       <Tooltip
@@ -235,9 +241,12 @@ function FileUploadDialog(props: Props) {
                   </Grid>
                   <Grid item xs={2}>
                     {abort && typeof abort === 'function' && (
-                      <Button onClick={() => abort()}>
+                      <TsButton
+                        tooltip={t('core:abort')}
+                        onClick={() => abort()}
+                      >
                         <CloseIcon />
-                      </Button>
+                      </TsButton>
                     )}
                   </Grid>
                   <Grid item xs={12}>
@@ -249,35 +258,27 @@ function FileUploadDialog(props: Props) {
               );
             })}
       </DialogContent>
-      <DialogActions style={{ padding: '10px 30px 30px 30px' }}>
+      <TsDialogActions>
         {!haveProgress && (
-          <Button
+          <TsButton
             data-tid="uploadCloseAndClearTID"
             onClick={() => {
               onClose();
-              dispatch(AppActions.clearUploadDialog());
-              if (currentDirectoryPerspective === PerspectiveIDs.GRID) {
-                loadDirectoryContent(currentDirectoryPath, false);
-              }
+              dispatch(AppActions.resetProgress());
             }}
-            color="primary"
           >
             {t('core:closeAndClear')}
-          </Button>
+          </TsButton>
         )}
-        <Button
-          data-tid="uploadMinimizeDialogTID"
-          onClick={onClose}
-          color="primary"
-        >
+        <TsButton data-tid="uploadMinimizeDialogTID" onClick={onClose}>
           {t('core:minimize')}
-        </Button>
+        </TsButton>
         {haveProgress && (
-          <Button data-tid="uploadStopAllTID" onClick={stopAll} color="primary">
+          <TsButton data-tid="uploadStopAllTID" onClick={stopAll}>
             {t('core:stopAll')}
-          </Button>
+          </TsButton>
         )}
-      </DialogActions>
+      </TsDialogActions>
     </Dialog>
   );
 }

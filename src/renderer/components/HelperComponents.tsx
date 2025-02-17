@@ -1,6 +1,6 @@
 /**
  * TagSpaces - universal file and folder organizer
- * Copyright (C) 2021-present TagSpaces UG (haftungsbeschraenkt)
+ * Copyright (C) 2021-present TagSpaces GmbH
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License (version 3) as
@@ -16,10 +16,9 @@
  *
  */
 
-import React from 'react';
+import { Pro } from '-/pro';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
-import { Pro } from '-/pro';
 import { useTranslation } from 'react-i18next';
 
 export function BetaLabel() {
@@ -71,7 +70,7 @@ export function ProSign() {
 }
 
 export function ProTooltip(props) {
-  const { tooltip, placement } = props;
+  const { tooltip, placement, children } = props;
   const { t } = useTranslation();
   const proTooltip = tooltip && tooltip;
   const tooltipPlacement = placement || 'top';
@@ -84,7 +83,7 @@ export function ProTooltip(props) {
       placement={tooltipPlacement}
       title={Pro ? proTooltip : noProTooltip}
     >
-      <span {...props} />
+      <div style={{ display: 'flex' }} children={children}></div>
     </Tooltip>
   );
 }

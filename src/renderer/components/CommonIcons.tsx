@@ -1,6 +1,6 @@
 /**
  * TagSpaces - universal file and folder organizer
- * Copyright (C) 2017-present TagSpaces UG (haftungsbeschraenkt)
+ * Copyright (C) 2017-present TagSpaces GmbH
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License (version 3) as
@@ -16,12 +16,15 @@
  *
  */
 
-import React from 'react';
 import KeyboardReturnIcon from '@mui/icons-material/KeyboardReturn';
+import MarkdownRawIcon from '@mui/icons-material/SimCardDownload';
 
 export const ParentFolderIcon = (props) => (
-  <KeyboardReturnIcon style={{ transform: 'rotate(90deg)' }} />
-  // <ParentFolder {...props} />
+  <KeyboardReturnIcon style={{ transform: 'rotate(90deg)' }} {...props} />
+);
+
+export const MarkdownFileIcon = (props) => (
+  <MarkdownRawIcon style={{ transform: 'scaleX(-1)' }} />
 );
 
 export const NavigateToFolderIcon = (props) => <KeyboardReturnIcon />;
@@ -41,7 +44,6 @@ export { default as GoBackIcon } from '@mui/icons-material/ArrowBack';
 export { default as GoForwardIcon } from '@mui/icons-material/ArrowForward';
 
 export { default as HelpIcon } from '@mui/icons-material/Help';
-
 export { default as InfoIcon } from '@mui/icons-material/InfoOutlined';
 
 export { default as FolderPropertiesIcon } from '@mui/icons-material/Info';
@@ -72,7 +74,7 @@ export { default as OpenNewWindowIcon } from '@mui/icons-material/OpenInBrowser'
 
 export { default as ReloadIcon } from '@mui/icons-material/Refresh';
 
-export { default as DeleteIcon } from '@mui/icons-material/DeleteForever';
+export { default as DeleteIcon } from '@mui/icons-material/Delete';
 
 export { default as LinkIcon } from '@mui/icons-material/Link';
 
@@ -106,7 +108,11 @@ export { default as SearchIcon } from '@mui/icons-material/Search';
 
 export { default as CloseIcon } from '@mui/icons-material/Close';
 
+export { default as ArrowBackIcon } from '@mui/icons-material/ArrowBackIos';
+
 export { default as SelectedIcon } from '@mui/icons-material/CheckCircle';
+
+export { default as CheckIcon } from '@mui/icons-material/Check';
 
 export { default as UnSelectedIcon } from '@mui/icons-material/RadioButtonUnchecked';
 
@@ -115,6 +121,8 @@ export { default as MoreMenuIcon } from '@mui/icons-material/MoreVert';
 export { default as RevisionIcon } from '@mui/icons-material/Restore';
 
 export { default as DescriptionIcon } from '@mui/icons-material/Subject';
+
+export { default as EditDescriptionIcon } from '@mui/icons-material/EditNote';
 
 export { default as AudioRecordIcon } from '@mui/icons-material/KeyboardVoice';
 
@@ -133,3 +141,48 @@ export { default as PauseIcon } from '@mui/icons-material/Pause';
 export { default as SaveIcon } from '@mui/icons-material/Save';
 
 export { default as DownloadIcon } from '@mui/icons-material/DownloadForOffline';
+
+export { default as TagIcon } from '@mui/icons-material/LocalOffer';
+
+export { default as IDIcon } from '@mui/icons-material/Abc';
+
+export { default as AudioFileIcon } from '@mui/icons-material/AudioFile';
+
+export { default as HTMLFileIcon } from '@mui/icons-material/Description';
+
+export { default as LinkFileIcon } from '@mui/icons-material/FileOpen';
+
+export { default as AccountIcon } from '@mui/icons-material/AccountCircle';
+
+export { default as PreviewIcon } from '@mui/icons-material/Preview';
+
+export { default as RestoreIcon } from '@mui/icons-material/SettingsBackupRestore';
+
+export { default as CloseEntryIcon } from '@mui/icons-material/HighlightOffOutlined';
+
+import ExpandCircleDownOutlined from '@mui/icons-material/ExpandCircleDownOutlined';
+
+export const PrevDocumentIcon = (props) => (
+  <ExpandCircleDownOutlined
+    style={{ transform: 'rotate(180deg)' }}
+    {...props}
+  />
+);
+
+export { default as NextDocumentIcon } from '@mui/icons-material/ExpandCircleDownOutlined';
+
+export { default as ThemingIcon } from '@mui/icons-material/InvertColors';
+
+export { default as TagLibraryIcon } from '@mui/icons-material/LocalOfferOutlined';
+
+export { default as RecentThingsIcon } from '@mui/icons-material/BookmarksOutlined';
+
+export { default as AIIcon } from '@mui/icons-material/AutoFixHigh'; // AutoAwesome AutoFixHigh
+
+export { default as ExtensionIcon } from '@mui/icons-material/Extension';
+
+export { default as KeyboardIcon } from '@mui/icons-material/Keyboard';
+
+export { default as OptionsIcon } from '@mui/icons-material/FactCheck';
+
+export { default as AdvancedSettingsIcon } from '@mui/icons-material/DisplaySettings';

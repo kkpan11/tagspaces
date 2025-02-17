@@ -1,6 +1,6 @@
 /**
  * TagSpaces - universal file and folder organizer
- * Copyright (C) 2017-present TagSpaces UG (haftungsbeschraenkt)
+ * Copyright (C) 2017-present TagSpaces GmbH
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License (version 3) as
@@ -47,8 +47,8 @@ function TagsPreview(props: Props) {
   let firstTagColor: string;
   let firstTagTextColor: string;
   if (tags[0].color && tags[0].textcolor) {
-    firstTagColor = tags[0].textcolor;
-    firstTagTextColor = tags[0].color;
+    firstTagColor = tags[0].color;
+    firstTagTextColor = tags[0].textcolor;
   } else {
     const tagColors = getTagColors(
       tags[0].title,
@@ -79,6 +79,7 @@ function TagsPreview(props: Props) {
       <span
         style={{
           display: 'inline-block',
+          minWidth: 15,
           width: 18,
           height: 15,
           marginLeft: 5,

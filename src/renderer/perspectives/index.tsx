@@ -1,6 +1,6 @@
 /**
  * TagSpaces - universal file and folder organizer
- * Copyright (C) 2017-present TagSpaces UG (haftungsbeschraenkt)
+ * Copyright (C) 2017-present TagSpaces GmbH
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License (version 3) as
@@ -15,13 +15,12 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  */
-import React from 'react';
-import KanbanPerspectiveIcon from '@mui/icons-material/ViewKanban';
-import MapiquePerspectiveIcon from '@mui/icons-material/Map';
 import GalleryPerspectiveIcon from '@mui/icons-material/Camera';
+import FolderVizPerspectiveIcon from '@mui/icons-material/Hub';
+import MapiquePerspectiveIcon from '@mui/icons-material/Map';
+import KanbanPerspectiveIcon from '@mui/icons-material/ViewKanban';
 import ListPerspectiveIcon from '@mui/icons-material/ViewList';
 import GridPerspectiveIcon from '@mui/icons-material/ViewModule';
-import FolderVizPerspectiveIcon from '@mui/icons-material/Hub';
 
 export const PerspectiveIDs = {
   UNSPECIFIED: 'unspecified',
@@ -97,4 +96,3 @@ AvailablePerspectives.push(GalleryPerspectiveMeta);
 AvailablePerspectives.push(MapiquePerspectiveMeta);
 AvailablePerspectives.push(KanbanPerspectiveMeta);
 AvailablePerspectives.push(FolderVizPerspectiveMeta);
-// AvailablePerspectives.push(WikiPerspectiveMeta);

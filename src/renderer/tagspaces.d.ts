@@ -1,6 +1,6 @@
 /**
  * TagSpaces - universal file and folder organizer
- * Copyright (C) 2017-present TagSpaces UG (haftungsbeschraenkt)
+ * Copyright (C) 2017-present TagSpaces GmbH
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License (version 3) as
@@ -26,10 +26,15 @@ declare module '*.woff';
 declare module '*.woff2';
 declare module '*.xml';
 
+type ExternalAI = {
+  defaultEngine: string;
+  engines: Array<any>;
+};
+
 declare interface Window {
   // interface TSCustomWindow extends Window {
-  ExtMapTileServers?: Array<TS.MapTileServer>;
-  walkCanceled?: boolean;
+  ExtMapTileServers?: Array<any>; //TS.MapTileServer>;
+  //walkCanceled?: boolean;
   ExtLogoURL?: string;
   ExtDefaultVerticalPanel?: string;
   ExtDisplayMode?: string;
@@ -57,12 +62,17 @@ declare interface Window {
   ExtPrivacyURL?: string;
   ExtImprintURL?: string;
   ExtCheckForUpdatesOnStartup?: boolean;
+  ExtFilenameTagPlacedAtEnd?: boolean;
   ExtRevisionsEnabled?: boolean;
   ExtAutoSaveEnabled?: boolean;
+  ExtAI?: ExternalAI;
   __REDUX_DEVTOOLS_EXTENSION_COMPOSE__?: any;
   plugins?: any; // needed for Cordova
   resolveLocalFileSystemURL?: any; // needed for Cordova
   device?: any; // needed for Cordova
+  ExtSupportedFileTypes?: Array<any>;
+  ExtExtensionsFound?: Array<any>;
+  ExtSearchTypeGroups?: any;
 }
 
 declare interface NodeModule {

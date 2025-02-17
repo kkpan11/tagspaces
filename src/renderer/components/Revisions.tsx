@@ -1,6 +1,6 @@
 /**
  * TagSpaces - universal file and folder organizer
- * Copyright (C) 2017-present TagSpaces UG (haftungsbeschraenkt)
+ * Copyright (C) 2017-present TagSpaces GmbH
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License (version 3) as
@@ -20,16 +20,11 @@ import React, { useEffect, useState } from 'react';
 import {
   getBackupFileLocation,
   extractContainingDirectoryPath,
+  extractFileNameWithoutExt,
 } from '@tagspaces/tagspaces-common/paths';
-import Tooltip from '-/components/Tooltip';
-import { OpenedEntry } from '-/reducers/app';
-import PlatformIO from '-/services/platform-facade';
 import { TS } from '-/tagspaces.namespace';
 import { format, formatDistanceToNow } from 'date-fns';
-import DeleteIcon from '@mui/icons-material/Delete';
-import PreviewIcon from '@mui/icons-material/Preview';
-import RestoreIcon from '@mui/icons-material/SettingsBackupRestore';
-import IconButton from '@mui/material/IconButton';
+import TsIconButton from '-/components/TsIconButton';
 import AppConfig from '-/AppConfig';
 import {
   Paper,
@@ -42,22 +37,24 @@ import {
   TableRow,
 } from '@mui/material';
 import { Pro } from '-/pro';
+import { DeleteIcon, PreviewIcon, RestoreIcon } from '-/components/CommonIcons';
 import FilePreviewDialog from '-/components/dialogs/FilePreviewDialog';
 import { useTranslation } from 'react-i18next';
 import { useOpenedEntryContext } from '-/hooks/useOpenedEntryContext';
 import { usePlatformFacadeContext } from '-/hooks/usePlatformFacadeContext';
 import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
+import { useIOActionsContext } from '-/hooks/useIOActionsContext';
 
 const initialRowsPerPage = 10;
 
 function Revisions() {
   const { t } = useTranslation();
-  // const dispatch: AppDispatch = useDispatch();
-  const { switchLocationTypeByID, switchCurrentLocationType } =
-    useCurrentLocationContext();
-  const { openedEntry, updateOpenedFile } = useOpenedEntryContext();
-  const { copyFilePromiseOverwrite } = usePlatformFacadeContext();
-  const [rows, setRows] = useState<Array<TS.FileSystemEntry>>([]);
+  const { findLocation } = useCurrentLocationContext();
+  const { getMetadataID } = useIOActionsContext();
+  const { openedEntry, reloadOpenedFile } = useOpenedEntryContext();
+  const { copyFilePromiseOverwrite, deleteEntriesPromise } =
+    usePlatformFacadeContext();
+  const [rows, setRows] = useState<TS.FileSystemEntry[]>([]);
   const [page, setPage] = useState<number>(0);
   const [rowsPerPage, setRowsPerPage] =
     React.useState<number>(initialRowsPerPage);
@@ -73,32 +70,32 @@ function Revisions() {
     }
   }, [openedEntry]);
 
-  function loadHistoryItems(openedFile: OpenedEntry) {
+  function getLmdt(fileName) {
+    return parseInt(extractFileNameWithoutExt(fileName));
+  }
+
+  function loadHistoryItems(openedFile: TS.OpenedEntry) {
     if (Pro) {
-      Pro.MetaOperations.getMetadataID(openedFile.path, openedFile.uuid).then(
-        (id) => {
+      const location = findLocation(openedFile.locationID);
+      if (location) {
+        getMetadataID(openedFile.path, openedFile.uuid, location).then((id) => {
           openedFile.uuid = id;
           const backupFilePath = getBackupFileLocation(
             openedFile.path,
             openedFile.uuid,
-            PlatformIO.getDirSeparator(),
+            location.getDirSeparator(),
           );
           const backupPath = extractContainingDirectoryPath(
             backupFilePath,
-            PlatformIO.getDirSeparator(),
+            location.getDirSeparator(),
           );
-          switchLocationTypeByID(openedFile.locationId)
-            .then(() => {
-              PlatformIO.listDirectoryPromise(backupPath, []).then((h) => {
-                setRows(h.sort((a, b) => (a.lmdt < b.lmdt ? 1 : -1)));
-                return switchCurrentLocationType();
-              });
-            })
-            .catch(() => {
-              return switchCurrentLocationType();
-            });
-        },
-      );
+          location.listDirectoryPromise(backupPath, []).then((h) => {
+            setRows(
+              h.sort((a, b) => (getLmdt(a.name) < getLmdt(b.name) ? 1 : -1)),
+            );
+          });
+        });
+      }
     }
   }
 
@@ -114,36 +111,32 @@ function Revisions() {
   };
 
   function deleteRevision(path) {
-    PlatformIO.deleteFilePromise(path, true).then(() =>
+    const location = findLocation(openedEntry.locationID);
+    deleteEntriesPromise(location.toFsEntry(path, true)).then(() =>
       loadHistoryItems(openedEntry),
     );
   }
 
   function deleteRevisions() {
     if (rows.length > 0) {
-      const promises = rows.map((row) =>
-        PlatformIO.deleteFilePromise(row.path, true),
-      );
-      Promise.all(promises).then(() => loadHistoryItems(openedEntry));
+      const location = findLocation(openedEntry.locationID);
+      deleteEntriesPromise(
+        ...rows.map((entry) => location.toFsEntry(entry.path, entry.isFile)),
+      ).then(() => loadHistoryItems(openedEntry));
     }
   }
 
   function restoreRevision(revisionPath) {
+    const location = findLocation(openedEntry.locationID);
     const targetPath = getBackupFileLocation(
       openedEntry.path,
       openedEntry.uuid,
-      PlatformIO.getDirSeparator(),
+      location.getDirSeparator(),
     );
     return copyFilePromiseOverwrite(openedEntry.path, targetPath).then(() =>
-      copyFilePromiseOverwrite(revisionPath, openedEntry.path).then(() => {
-        const fsMeta = {
-          id: '',
-          ...openedEntry,
-          editMode: false,
-          shouldReload: !openedEntry.shouldReload,
-        };
-        updateOpenedFile(openedEntry.path, fsMeta);
-      }),
+      copyFilePromiseOverwrite(revisionPath, openedEntry.path).then(() =>
+        reloadOpenedFile(),
+      ),
     );
   }
   function titleFormat(lmdt) {
@@ -198,20 +191,18 @@ function Revisions() {
             <TableRow>
               <TableCell>
                 {t('revisions')}
-                <Tooltip title={t('core:deleteAllRevisions')}>
-                  <IconButton
-                    aria-label="delete all revisions"
-                    onClick={() =>
-                      confirm(
-                        'The all revisions will be deleted. Do you want to continue?',
-                      ) && deleteRevisions()
-                    }
-                    data-tid="deleteRevisionsTID"
-                    size="large"
-                  >
-                    <DeleteIcon color="primary" />
-                  </IconButton>
-                </Tooltip>
+                <TsIconButton
+                  tooltip={t('core:deleteAllRevisions')}
+                  aria-label="delete all revisions"
+                  onClick={() =>
+                    confirm(
+                      'The all revisions will be deleted. Do you want to continue?',
+                    ) && deleteRevisions()
+                  }
+                  data-tid="deleteRevisionsTID"
+                >
+                  <DeleteIcon />
+                </TsIconButton>
               </TableCell>
               <TableCell align="right">{t('created')}</TableCell>
               <TableCell align="right">{t('actions')}</TableCell>
@@ -232,39 +223,33 @@ function Revisions() {
                   {row.name}
                 </TableCell>
                 <TableCell align="right" title={titleFormat(row.lmdt)}>
-                  {cellFormat(row.lmdt)}
+                  {cellFormat(getLmdt(row.name))}
                 </TableCell>
                 <TableCell align="right">
-                  <Tooltip title={t('core:view')}>
-                    <IconButton
-                      aria-label="view revision"
-                      onClick={() => setPreviewDialogEntry(row)}
-                      data-tid="viewRevisionTID"
-                      size="large"
-                    >
-                      <PreviewIcon color="primary" />
-                    </IconButton>
-                  </Tooltip>
-                  <Tooltip title={t('core:restore')}>
-                    <IconButton
-                      aria-label="restore revision"
-                      onClick={() => restoreRevision(row.path)}
-                      data-tid="restoreRevisionTID"
-                      size="large"
-                    >
-                      <RestoreIcon color="primary" />
-                    </IconButton>
-                  </Tooltip>
-                  <Tooltip title={t('core:delete')}>
-                    <IconButton
-                      aria-label="delete revision"
-                      onClick={() => deleteRevision(row.path)}
-                      data-tid="deleteRevisionTID"
-                      size="large"
-                    >
-                      <DeleteIcon color="primary" />
-                    </IconButton>
-                  </Tooltip>
+                  <TsIconButton
+                    tooltip={t('core:view')}
+                    aria-label="view revision"
+                    onClick={() => setPreviewDialogEntry(row)}
+                    data-tid="viewRevisionTID"
+                  >
+                    <PreviewIcon />
+                  </TsIconButton>
+                  <TsIconButton
+                    tooltip={t('core:restore')}
+                    aria-label="restore revision"
+                    onClick={() => restoreRevision(row.path)}
+                    data-tid="restoreRevisionTID"
+                  >
+                    <RestoreIcon />
+                  </TsIconButton>
+                  <TsIconButton
+                    tooltip={t('core:delete')}
+                    aria-label="delete revision"
+                    onClick={() => deleteRevision(row.path)}
+                    data-tid="deleteRevisionTID"
+                  >
+                    <DeleteIcon />
+                  </TsIconButton>
                 </TableCell>
               </TableRow>
             ))}

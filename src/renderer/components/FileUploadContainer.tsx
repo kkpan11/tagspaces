@@ -1,6 +1,6 @@
 /**
  * TagSpaces - universal file and folder organizer
- * Copyright (C) 2017-present TagSpaces UG (haftungsbeschraenkt)
+ * Copyright (C) 2017-present TagSpaces GmbH
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License (version 3) as
@@ -16,34 +16,48 @@
  *
  */
 
-import React, { forwardRef, Ref, useImperativeHandle, useRef } from 'react';
+import React, {
+  ChangeEvent,
+  forwardRef,
+  Ref,
+  useImperativeHandle,
+  useRef,
+} from 'react';
 import { useDispatch } from 'react-redux';
 import { TS } from '-/tagspaces.namespace';
+import AppConfig from '-/AppConfig';
 import { actions as AppActions, AppDispatch } from '-/reducers/app';
 import { useIOActionsContext } from '-/hooks/useIOActionsContext';
+import { useEditedEntryMetaContext } from '-/hooks/useEditedEntryMetaContext';
+import { useFileUploadDialogContext } from '-/components/dialogs/hooks/useFileUploadDialogContext';
+import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
 
 interface Props {
-  id: string;
-  directoryPath: string;
-  //toggleProgressDialog: () => void;
+  id?: string;
+  //directoryPath: string;
 }
 
 export interface FileUploadContainerRef {
-  onFileUpload: () => void;
+  onFileUpload: (directoryPath: string) => void;
 }
 
 const FileUploadContainer = forwardRef(
   (props: Props, ref: Ref<FileUploadContainerRef>) => {
     const dispatch: AppDispatch = useDispatch();
-    const { id, directoryPath } = props;
+    const { id } = props;
+    const { findLocalLocation } = useCurrentLocationContext();
+    const { openFileUploadDialog } = useFileUploadDialogContext();
     const { uploadFilesAPI } = useIOActionsContext();
+    const { setReflectMetaActions } = useEditedEntryMetaContext();
+    const directoryPath = useRef<string>(undefined);
 
     const onUploadProgress = (progress, abort, fileName) => {
       dispatch(AppActions.onUploadProgress(progress, abort, fileName));
     };
 
     useImperativeHandle(ref, () => ({
-      onFileUpload() {
+      onFileUpload(dirPath: string) {
+        directoryPath.current = dirPath;
         /* if (AppConfig.isCordovaAndroid) {
           PlatformIO.selectFileDialog()
             .then(file => {
@@ -82,32 +96,49 @@ const FileUploadContainer = forwardRef(
 
     const fileInput = useRef<HTMLInputElement>(null);
 
-    function handleFileInputChange(selection: any) {
+    function handleFileInputChange(selection: ChangeEvent<HTMLInputElement>) {
       // console.log("Selected File: "+JSON.stringify(selection.currentTarget.files[0]));
       // const file = selection.currentTarget.files[0];
       dispatch(AppActions.resetProgress());
-      dispatch(AppActions.toggleUploadDialog());
+      openFileUploadDialog();
+      const localLocation = findLocalLocation();
+      const sourceLocationId = localLocation ? localLocation.uuid : undefined;
+
+      let files = Array.from(selection.currentTarget.files);
+      if (AppConfig.isElectron) {
+        files = files.map((file) => {
+          if (!file.path) {
+            file.path = window.electronIO.ipcRenderer.getPathForFile(file);
+          }
+          return file;
+        });
+      }
       uploadFilesAPI(
-        Array.from(selection.currentTarget.files),
-        directoryPath,
+        files,
+        directoryPath.current,
         onUploadProgress,
+        true,
+        true,
+        undefined,
+        sourceLocationId,
       )
         .then((fsEntries: Array<TS.FileSystemEntry>) => {
-          /*if (directoryPath === currentDirectoryPath) {
-            addDirectoryEntries(fsEntries);
-            dispatch(AppActions.reflectCreateEntries(fsEntries));
-            setSelectedEntries(fsEntries);
-          }*/
+          const actions: TS.EditMetaAction[] = fsEntries.map((entry) => ({
+            action: 'thumbGenerate',
+            entry: entry,
+          }));
+          setReflectMetaActions(...actions);
           return true;
         })
         .catch((error) => {
           console.log('uploadFiles', error);
         });
     }
+    const inputId = id || `id-${Math.random().toString(36).substr(2, 9)}`;
 
     return (
       <input
-        id={id}
+        id={inputId}
         style={{ display: 'none' }}
         ref={fileInput}
         accept="*"

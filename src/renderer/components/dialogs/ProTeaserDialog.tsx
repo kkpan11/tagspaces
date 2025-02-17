@@ -1,6 +1,6 @@
 /**
  * TagSpaces - universal file and folder organizer
- * Copyright (C) 2017-present TagSpaces UG (haftungsbeschraenkt)
+ * Copyright (C) 2017-present TagSpaces GmbH
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License (version 3) as
@@ -16,28 +16,29 @@
  *
  */
 
-import React, { useRef } from 'react';
-import Button from '@mui/material/Button';
-import DialogContent from '@mui/material/DialogContent';
-import DialogTitle from '@mui/material/DialogTitle';
-import Typography from '@mui/material/Typography';
+import React from 'react';
+import DraggablePaper from '-/components/DraggablePaper';
+import TsButton from '-/components/TsButton';
+import TsDialogTitle from '-/components/dialogs/components/TsDialogTitle';
 import Dialog from '@mui/material/Dialog';
-import DialogCloseButton from '-/components/dialogs/DialogCloseButton';
+import DialogContent from '@mui/material/DialogContent';
+import Paper from '@mui/material/Paper';
+import Typography from '@mui/material/Typography';
+
+import AppConfig from '-/AppConfig';
+import { getProTeaserSlides } from '-/content/ProTeaserSlides';
+import { openURLExternally } from '-/services/utils-io';
+import NavigateBeforeIcon from '@mui/icons-material/NavigateBefore';
+import NavigateNextIcon from '@mui/icons-material/NavigateNext';
 import { useTheme } from '@mui/material/styles';
 import useMediaQuery from '@mui/material/useMediaQuery';
-import { getProTeaserIndex } from '-/reducers/app';
-import { useSelector } from 'react-redux';
-import { getProTeaserSlides } from '-/content/ProTeaserSlides';
 import Links from 'assets/links';
-import { openURLExternally } from '-/services/utils-io';
-import { register } from 'swiper/element/bundle';
-import { Navigation, Pagination } from 'swiper/modules';
 import { useTranslation } from 'react-i18next';
-
-register();
+import Slider from 'react-slick';
 
 interface Props {
   open: boolean;
+  slideIndex: number;
   onClose: () => void;
 }
 
@@ -46,7 +47,7 @@ interface SlideProps {
   description?: '';
   ctaURL?: string;
   ctaTitle?: string;
-  items?: Array<string>;
+  items?: Array<React.ReactNode>;
   pictureURL?: string;
   pictureShadow?: boolean;
   videoURL?: string;
@@ -68,102 +69,101 @@ function Slide(props: SlideProps) {
     pictureShadow,
   } = props;
   return (
-    <swiper-slide>
-      <div
-        style={{
-          padding: 50,
-          textAlign: 'left',
-        }}
+    <div
+      style={{
+        padding: 15,
+        textAlign: 'left',
+        overflowY: 'hidden',
+        overflowX: 'hidden',
+      }}
+    >
+      <Typography
+        variant="h5"
+        style={{ textAlign: 'center', paddingBottom: 10 }}
       >
-        <Typography
-          variant="h5"
-          style={{ textAlign: 'center', paddingBottom: 10 }}
-        >
-          {title}
-        </Typography>
-        {description && (
-          <Typography variant="subtitle1">{description}</Typography>
-        )}
-        {items &&
-          items.map((item) => (
-            <Typography variant="subtitle1">&#x2605;&nbsp;{item}</Typography>
-          ))}
-        <Typography variant="subtitle1">&nbsp;</Typography>
-        <div style={{ textAlign: 'center' }}>
-          {pictureURL && (
-            <a
-              href="#"
-              onClick={() => {
-                openURLExternally(ctaURL, true);
-              }}
-            >
-              <img
-                style={{
-                  cursor: 'pointer',
-                  maxHeight: pictureHeight,
-                  marginTop: 15,
-                  marginBottom: 15,
-                  boxShadow: pictureShadow
-                    ? '2px 2px 13px 0 rgb(0 0 0 / 75%'
-                    : 'none',
-                  maxWidth: '95%',
-                }}
-                src={pictureURL}
-                alt=""
-              />
-            </a>
-          )}
-          {videoURL && (
-            <video
-              src={videoURL}
-              poster={videoPosterUrl}
-              autoPlay={true}
-              loop
-              controls
-              style={{ width: '100%', marginBottom: 15 }}
-            />
-          )}
-          <br />
-          <Button
+        {title}
+      </Typography>
+      {description && (
+        <Typography variant="subtitle1">{description}</Typography>
+      )}
+      {items &&
+        items.map((item, index) => (
+          <Typography key={index} variant="subtitle1">
+            &#x2605;&nbsp;{item}
+          </Typography>
+        ))}
+      <div style={{ textAlign: 'center', paddingTop: 10 }}>
+        {pictureURL && (
+          <a
+            href="#"
             onClick={() => {
-              openURLExternally(Links.links.productsOverview, true);
+              openURLExternally(ctaURL, true);
             }}
-            // variant="contained"
-            color="primary"
-            size="small"
+            style={{
+              paddingTop: 15,
+              paddingBottom: 15,
+            }}
           >
-            Compare TagSpaces Products
-          </Button>
-          {ctaTitle && (
-            <Button
-              onClick={() => {
-                openURLExternally(ctaURL, true);
+            <img
+              style={{
+                cursor: 'pointer',
+                maxHeight: pictureHeight,
+                margin: 'auto',
+                display: 'block',
+                boxShadow: pictureShadow
+                  ? '2px 2px 13px 0 rgb(0 0 0 / 75%'
+                  : 'none',
+                maxWidth: '95%',
               }}
-              style={{ marginLeft: 10 }}
-              // variant="contained"
-              color="primary"
-              size="small"
-            >
-              {ctaTitle}
-            </Button>
-          )}
-        </div>
+              src={pictureURL}
+              alt=""
+            />
+          </a>
+        )}
+        {videoURL && (
+          <video
+            src={videoURL}
+            poster={videoPosterUrl}
+            autoPlay={true}
+            loop
+            controls
+            style={{ width: '100%', marginBottom: 15 }}
+          />
+        )}
+        <br />
+        <TsButton
+          onClick={() => {
+            openURLExternally(Links.links.productsOverview, true);
+          }}
+        >
+          Compare & Upgrade
+        </TsButton>
+        {ctaTitle && (
+          <TsButton
+            onClick={() => {
+              openURLExternally(ctaURL, true);
+            }}
+            style={{ marginLeft: AppConfig.defaultSpaceBetweenButtons }}
+          >
+            {ctaTitle}
+          </TsButton>
+        )}
       </div>
-    </swiper-slide>
+    </div>
   );
 }
 
 function ProTeaserDialog(props: Props) {
   const { t } = useTranslation();
-  const swiperElRef = useRef(null); //<SwiperRef>
-  const slideIndex = useSelector(getProTeaserIndex);
+  //const swiperElRef = useRef(null); //<SwiperRef>
+  //const slideIndex = useSelector(getProTeaserIndex);
 
   const slidesEN = getProTeaserSlides(t);
 
-  const { open, onClose } = props;
+  const { open, onClose, slideIndex } = props;
 
   const theme = useTheme();
-  const fullScreen = useMediaQuery(theme.breakpoints.down('md'));
+  const smallScreen = useMediaQuery(theme.breakpoints.down('md'));
 
   const slides = [];
   for (let index in slidesEN) {
@@ -172,53 +172,77 @@ function ProTeaserDialog(props: Props) {
 
   const initialSlide = slideIndex && slideIndex > -1 ? Number(slideIndex) : 0;
 
+  function NextArrow(props) {
+    const { className, style, onClick } = props;
+    return (
+      <div className={className} onClick={onClick}>
+        <NavigateNextIcon fontSize="large" color="primary" />
+      </div>
+    );
+  }
+
+  function PrevArrow(props) {
+    const { className, style, onClick } = props;
+    return (
+      <div className={className} onClick={onClick}>
+        <NavigateBeforeIcon fontSize="large" color="primary" />
+      </div>
+    );
+  }
+
+  const sliderSettings = {
+    className: 'center',
+    centerMode: true,
+    // dots: true,
+    infinite: false,
+    initialSlide: initialSlide,
+    centerPadding: '0px',
+    speed: 500,
+    slidesToShow: 1,
+    slidesToScroll: 1,
+    adaptiveHeight: true,
+    nextArrow: <NextArrow />,
+    prevArrow: <PrevArrow />,
+  };
+
   return (
     <Dialog
       open={open}
       onClose={onClose}
-      fullScreen={fullScreen}
+      fullScreen={smallScreen}
       keepMounted
       scroll="paper"
+      PaperComponent={smallScreen ? Paper : DraggablePaper}
+      aria-labelledby="draggable-dialog-title"
     >
-      <DialogTitle style={{ justifyContent: 'center', textAlign: 'center' }}>
-        <DialogCloseButton testId="closeProTeaserTID" onClose={onClose} />
-      </DialogTitle>
+      <TsDialogTitle
+        closeButtonTestId="closeProTeaserTID"
+        onClose={onClose}
+        dialogTitle={''}
+      />
       <DialogContent
         style={{
-          paddingBottom: 0,
           overflowY: 'auto',
+          overflowX: 'hidden',
         }}
       >
         <style>
           {`
-        swiper-container::part(bullet-active) {
-          background-color: ${theme.palette.primary.main};
-        }
-        swiper-container::part(button-prev) {
-          color: ${theme.palette.primary.main};
-        }
-        swiper-container::part(button-next) {
-          color: ${theme.palette.primary.main};
-        }
+            .slick-arrow {
+              height: 200px;
+              width: 50px;
+              display: flex;
+              align-items: center;
+            } 
+            .slick-next:before {
+              content: '';
+            }
+            .slick-prev:before {
+              content: '';
+            }
         `}
         </style>
-        <swiper-container
-          ref={swiperElRef}
-          initialSlide={initialSlide}
-          slidesPerView={1}
-          navigation={true}
-          /*scrollbar={true}*/
-          pagination={{
-            clickable: true,
-          }}
-          cssMode={false}
-          /*keyboard={{
-            enabled: true
-          }}*/
-          modules={[Pagination, Navigation]}
-        >
-          {slides}
-        </swiper-container>
+        <Slider {...sliderSettings}>{slides}</Slider>
       </DialogContent>
     </Dialog>
   );

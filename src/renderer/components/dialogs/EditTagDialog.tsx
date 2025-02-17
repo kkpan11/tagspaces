@@ -1,6 +1,6 @@
 /**
  * TagSpaces - universal file and folder organizer
- * Copyright (C) 2017-present TagSpaces UG (haftungsbeschraenkt)
+ * Copyright (C) 2017-present TagSpaces GmbH
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License (version 3) as
@@ -16,37 +16,45 @@
  *
  */
 
-import React, { useEffect, useState } from 'react';
-import Button from '@mui/material/Button';
-import TextField from '@mui/material/TextField';
-import format from 'date-fns/format';
-import DialogActions from '@mui/material/DialogActions';
+import Tag from '-/components/Tag';
+import TsButton from '-/components/TsButton';
+import TsTextField from '-/components/TsTextField';
+import TsDialogActions from '-/components/dialogs/components/TsDialogActions';
+import TsDialogTitle from '-/components/dialogs/components/TsDialogTitle';
+import { useTaggingActionsContext } from '-/hooks/useTaggingActionsContext';
+import { TS } from '-/tagspaces.namespace';
+import { useTheme } from '@mui/material';
+import Dialog from '@mui/material/Dialog';
 import DialogContent from '@mui/material/DialogContent';
-import DialogTitle from '@mui/material/DialogTitle';
 import FormControl from '@mui/material/FormControl';
 import FormHelperText from '@mui/material/FormHelperText';
-import Dialog from '@mui/material/Dialog';
-import ColorPickerDialog from './ColorPickerDialog';
-import TransparentBackground from '../TransparentBackground';
-import { TS } from '-/tagspaces.namespace';
-import DialogCloseButton from '-/components/dialogs/DialogCloseButton';
+import ListItem from '@mui/material/ListItem';
+import ListItemText from '@mui/material/ListItemText/ListItemText';
+import useMediaQuery from '@mui/material/useMediaQuery';
+import format from 'date-fns/format';
+import React, { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import TransparentBackground from '../TransparentBackground';
+import ColorPickerDialog from './ColorPickerDialog';
 
 interface Props {
   open: boolean;
   onClose: () => void;
-  editTag: (tag: TS.Tag, tagGroupId: string, origTitle: string) => void;
   selectedTag: TS.Tag;
   selectedTagGroupEntry: TS.TagGroup;
 }
 
 function EditTagDialog(props: Props) {
   const { t } = useTranslation();
+  const { editTag } = useTaggingActionsContext();
   const [displayColorPicker, setDisplayColorPicker] = useState<boolean>(false);
   const [displayTextColorPicker, setDisplayTextColorPicker] =
     useState<boolean>(false);
   const [inputError, setInputError] = useState<boolean>(false);
   const [title, setTitle] = useState<string>(props.selectedTag.title);
+  const [description, setDescription] = useState<string>(
+    props.selectedTag.description,
+  );
   const [color, setColor] = useState<string>(props.selectedTag.color);
   const [textcolor, setTextcolor] = useState<string>(
     props.selectedTag.textcolor,
@@ -65,6 +73,17 @@ function EditTagDialog(props: Props) {
     }
   };
 
+  const handleTagDescriptionChange = (
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const { target } = event;
+    const { value, name } = target;
+
+    if (name === 'description') {
+      setDescription(value);
+    }
+  };
+
   const handleValidation = () => {
     const tagCheck = RegExp(/^[^#/\\ [\]]{1,}$/);
     if (title && tagCheck.test(title)) {
@@ -75,18 +94,14 @@ function EditTagDialog(props: Props) {
   };
 
   const onConfirm = () => {
-    if (
-      !inputError &&
-      props.editTag &&
-      props.selectedTagGroupEntry &&
-      props.selectedTag
-    ) {
-      props.editTag(
+    if (!inputError && props.selectedTagGroupEntry && props.selectedTag) {
+      editTag(
         {
           ...props.selectedTag,
           title,
           color,
           textcolor,
+          description,
         },
         props.selectedTagGroupEntry.uuid,
         props.selectedTag.title,
@@ -96,39 +111,28 @@ function EditTagDialog(props: Props) {
   };
 
   const { open, onClose } = props;
-  const styles = {
-    color: {
-      width: '100%',
-      height: 30,
-      borderRadius: 2,
-      borderWidth: 1,
-      borderStyle: 'solid',
-      borderColor: 'gray',
-      padding: '5px',
-      background: color,
-    },
-    textcolor: {
-      width: '100%',
-      height: 30,
-      borderRadius: 2,
-      borderWidth: 1,
-      borderStyle: 'solid',
-      borderColor: 'gray',
-      padding: '5px',
-      background: textcolor,
-    },
-    helpText: {
-      marginBottom: '5px',
-      fontSize: '1rem',
-    },
-  };
+  const theme = useTheme();
+  const smallScreen = useMediaQuery(theme.breakpoints.down('md'));
 
-  // const theme = useTheme();
-  // const fullScreen = useMediaQuery(theme.breakpoints.down('md'));
+  const okButton = (
+    <TsButton
+      disabled={inputError}
+      onClick={onConfirm}
+      data-tid="editTagConfirm"
+      variant="contained"
+      style={{
+        // @ts-ignore
+        WebkitAppRegion: 'no-drag',
+      }}
+    >
+      {t('core:ok')}
+    </TsButton>
+  );
+
   return (
     <Dialog
       open={open}
-      // fullScreen={fullScreen}
+      fullScreen={smallScreen}
       onClose={onClose}
       keepMounted
       scroll="paper"
@@ -142,12 +146,13 @@ function EditTagDialog(props: Props) {
         }*/
       }}
     >
-      <DialogTitle style={{ overflow: 'visible' }}>
-        {t('core:editTagTitle')}
-        {` '${title}'`}
-        <DialogCloseButton testId="closeEditTagTID" onClose={onClose} />
-      </DialogTitle>
-      <DialogContent style={{ overflow: 'visible' }}>
+      <TsDialogTitle
+        dialogTitle={t('core:editTagTitle')}
+        closeButtonTestId="closeEditTagTID"
+        onClose={onClose}
+        actionSlot={okButton}
+      />
+      <DialogContent>
         <FormControl
           fullWidth={true}
           error={inputError}
@@ -174,36 +179,47 @@ function EditTagDialog(props: Props) {
               </time>
             </div>
           )}
-          <TextField
+          <TsTextField
             error={inputError}
-            margin="dense"
             name="title"
             autoFocus
             label={t('core:editTag')}
             onChange={handleTagTitleChange}
             value={title}
             data-tid="editTagInput"
-            fullWidth={true}
           />
           {inputError && (
-            <FormHelperText style={styles.helpText}>
-              {t('core:tagTitleHelper')}
-            </FormHelperText>
+            <FormHelperText>{t('core:tagTitleHelper')}</FormHelperText>
           )}
         </FormControl>
         <FormControl fullWidth={true}>
-          <FormHelperText style={styles.helpText}>
-            {t('core:tagBackgroundColor')}
-          </FormHelperText>
+          <TsTextField
+            name="description"
+            label={t('core:editDescription')}
+            onChange={handleTagDescriptionChange}
+            value={description}
+            data-tid="editTagDescription"
+          />
+        </FormControl>
+        <ListItem style={{ paddingLeft: 0, paddingRight: 0 }}>
+          <ListItemText primary={t('core:tagBackgroundColor')} />
           <TransparentBackground>
-            <Button
+            <TsButton
               onClick={() => setDisplayColorPicker(!displayColorPicker)}
               data-tid="tagBackgroundColorEditTagDialog"
-              style={styles.color}
+              style={{
+                height: 30,
+                borderRadius: 2,
+                borderWidth: 1,
+                borderStyle: 'solid',
+                borderColor: 'gray',
+                padding: '5px',
+                background: color,
+              }}
               role="presentation"
             >
               &nbsp;
-            </Button>
+            </TsButton>
           </TransparentBackground>
           {displayColorPicker && (
             <ColorPickerDialog
@@ -213,20 +229,26 @@ function EditTagDialog(props: Props) {
               color={color}
             />
           )}
-        </FormControl>
-        <FormControl fullWidth={true}>
-          <FormHelperText style={styles.helpText}>
-            {t('core:tagForegroundColor')}
-          </FormHelperText>
+        </ListItem>
+        <ListItem style={{ paddingLeft: 0, paddingRight: 0 }}>
+          <ListItemText primary={t('core:tagForegroundColor')} />
           <TransparentBackground>
-            <Button
+            <TsButton
               onClick={() => setDisplayTextColorPicker(!displayTextColorPicker)}
               data-tid="tagForegroundColorEditTagDialog"
-              style={styles.textcolor}
+              style={{
+                height: 30,
+                borderRadius: 2,
+                borderWidth: 1,
+                borderStyle: 'solid',
+                borderColor: 'gray',
+                padding: '5px',
+                background: textcolor,
+              }}
               role="presentation"
             >
               &nbsp;
-            </Button>
+            </TsButton>
           </TransparentBackground>
           {displayTextColorPicker && (
             <ColorPickerDialog
@@ -236,22 +258,25 @@ function EditTagDialog(props: Props) {
               color={textcolor}
             />
           )}
-        </FormControl>
+        </ListItem>
+        <ListItem style={{ paddingLeft: 0, paddingRight: 0 }}>
+          <ListItemText primary={t('core:tagPreview')} />
+          <Tag backgroundColor={color} textColor={textcolor} isDragging={false}>
+            <span style={{ textTransform: 'lowercase' }}>
+              {t('core:tagPreview')}
+            </span>
+            <span style={{ margin: 3 }} />
+          </Tag>
+        </ListItem>
       </DialogContent>
-      <DialogActions>
-        <Button onClick={props.onClose} data-tid="closeEditTagDialog">
-          {t('core:cancel')}
-        </Button>
-        <Button
-          disabled={inputError}
-          onClick={onConfirm}
-          data-tid="editTagConfirm"
-          color="primary"
-          variant="contained"
-        >
-          {t('core:ok')}
-        </Button>
-      </DialogActions>
+      {!smallScreen && (
+        <TsDialogActions>
+          <TsButton onClick={props.onClose} data-tid="closeEditTagDialog">
+            {t('core:cancel')}
+          </TsButton>
+          {okButton}
+        </TsDialogActions>
+      )}
     </Dialog>
   );
 }

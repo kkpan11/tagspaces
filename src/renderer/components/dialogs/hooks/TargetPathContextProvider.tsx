@@ -1,6 +1,6 @@
 /**
  * TagSpaces - universal file and folder organizer
- * Copyright (C) 2017-present TagSpaces UG (haftungsbeschraenkt)
+ * Copyright (C) 2017-present TagSpaces GmbH
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License (version 3) as
@@ -17,9 +17,7 @@
  */
 
 import React, { createContext, useMemo } from 'react';
-import { useSelector } from 'react-redux';
 import { locationType } from '@tagspaces/tagspaces-common/misc';
-import { getFirstRWLocation } from '-/reducers/locations';
 import { PerspectiveIDs } from '-/perspectives';
 import { useDirectoryContentContext } from '-/hooks/useDirectoryContentContext';
 import { useSelectedEntriesContext } from '-/hooks/useSelectedEntriesContext';
@@ -40,12 +38,11 @@ export type TargetPathContextProviderProps = {
 export const TargetPathContextProvider = ({
   children,
 }: TargetPathContextProviderProps) => {
-  const { currentLocation } = useCurrentLocationContext();
+  const { findLocation, getFirstRWLocation } = useCurrentLocationContext();
   const { selectedEntries } = useSelectedEntriesContext();
-  const { currentDirectoryPerspective, currentDirectoryPath, getPerspective } =
-    useDirectoryContentContext();
+  const { currentDirectoryPath, getPerspective } = useDirectoryContentContext();
 
-  const firstRWLocation = useSelector(getFirstRWLocation);
+  const firstRWLocation = getFirstRWLocation();
 
   const context = useMemo(() => {
     let targetDirectoryPath = currentDirectoryPath;
@@ -59,6 +56,7 @@ export const TargetPathContextProvider = ({
     }
 
     if (!targetDirectoryPath) {
+      const currentLocation = findLocation();
       const isCloudLocation =
         currentLocation && currentLocation.type === locationType.TYPE_CLOUD;
       if (isCloudLocation) {
@@ -70,12 +68,7 @@ export const TargetPathContextProvider = ({
     return {
       targetDirectoryPath,
     };
-  }, [
-    firstRWLocation,
-    selectedEntries,
-    currentDirectoryPath,
-    currentDirectoryPerspective,
-  ]);
+  }, [firstRWLocation, selectedEntries, currentDirectoryPath]);
 
   return (
     <TargetPathContext.Provider value={context}>

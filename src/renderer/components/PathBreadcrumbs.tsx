@@ -1,6 +1,6 @@
 /**
  * TagSpaces - universal file and folder organizer
- * Copyright (C) 2021-present TagSpaces UG (haftungsbeschraenkt)
+ * Copyright (C) 2021-present TagSpaces GmbH
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License (version 3) as
@@ -23,7 +23,6 @@ import Breadcrumbs from '@mui/material/Breadcrumbs';
 import Tooltip from '-/components/Tooltip';
 import Chip from '@mui/material/Chip';
 import ExpandMoreIcon from '@mui/icons-material/MoreVert';
-import PlatformIO from '../services/platform-facade';
 import {
   normalizePath,
   extractShortDirectoryName,
@@ -35,6 +34,7 @@ import { useTranslation } from 'react-i18next';
 import { useDirectoryContentContext } from '-/hooks/useDirectoryContentContext';
 import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
 import { useSelectedEntriesContext } from '-/hooks/useSelectedEntriesContext';
+import AppConfig from '-/AppConfig';
 
 const StyledBreadcrumb = styled(Chip)(({ theme }) => {
   const backgroundColor =
@@ -43,6 +43,7 @@ const StyledBreadcrumb = styled(Chip)(({ theme }) => {
       : theme.palette.grey[800];
   return {
     backgroundColor,
+    borderRadius: AppConfig.defaultCSSRadius,
     height: theme.spacing(4),
     color: theme.palette.text.primary,
     fontWeight: theme.typography.fontWeightRegular,
@@ -80,8 +81,9 @@ interface Props {
 function PathBreadcrumbs(props: Props) {
   const { t } = useTranslation();
   const { openDirectory, currentDirectoryPath } = useDirectoryContentContext();
-  const { currentLocation } = useCurrentLocationContext();
+  const { findLocation } = useCurrentLocationContext();
   const { setSelectedEntries } = useSelectedEntriesContext();
+  const currentLocation = findLocation();
   let pathParts: Array<string> = [];
 
   const [directoryContextMenuAnchorEl, setDirectoryContextMenuAnchorEl] =
@@ -115,7 +117,8 @@ function PathBreadcrumbs(props: Props) {
 
   if (currentDirectoryPath) {
     // Make the path unix like ending always with /
-    const addSlash = PlatformIO.haveObjectStoreSupport() ? '//' : '/';
+    const addSlash =
+      currentLocation && currentLocation.haveObjectStoreSupport() ? '//' : '/';
     let normalizedCurrentPath =
       addSlash + normalizePath(currentDirectoryPath.split('\\').join('/'));
 
@@ -126,14 +129,15 @@ function PathBreadcrumbs(props: Props) {
     }
 
     while (
+      currentLocation &&
       normalizedCurrentPath.lastIndexOf('/') > 0 &&
       normalizedCurrentPath.startsWith(normalizedCurrentLocationPath)
     ) {
       pathParts.push(
         normalizedCurrentPath
-          .substring(PlatformIO.haveObjectStoreSupport() ? 2 : 1)
+          .substring(currentLocation.haveObjectStoreSupport() ? 2 : 1)
           .split('/')
-          .join(PlatformIO.getDirSeparator()),
+          .join(currentLocation.getDirSeparator()),
       ); // TODO: optimization needed
       normalizedCurrentPath = normalizedCurrentPath.substring(
         0,
@@ -141,7 +145,8 @@ function PathBreadcrumbs(props: Props) {
       );
     }
 
-    currentFolderChipIcon = pathParts.length === 1 && locationTypeIcon;
+    currentFolderChipIcon =
+      pathParts.length === 1 ? locationTypeIcon : undefined;
 
     if (pathParts.length >= 1) {
       pathParts = pathParts.slice(1, pathParts.length); // remove current directory
@@ -163,15 +168,16 @@ function PathBreadcrumbs(props: Props) {
       breadcrumbs = pathParts.map((pathPart, index) => {
         const folderName = extractShortDirectoryName(
           pathPart,
-          PlatformIO.getDirSeparator(),
+          currentLocation?.getDirSeparator(),
         );
+        const icon = index === 0 ? locationTypeIcon : undefined;
         return (
           <Tooltip key={pathPart} title={t('core:navigateTo') + ' ' + pathPart}>
             <StyledBreadcrumb
               component="a"
               href="#"
               label={folderName}
-              icon={index === 0 && locationTypeIcon}
+              icon={icon}
               onClick={() => openDirectory(pathPart)}
             />
           </Tooltip>

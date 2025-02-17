@@ -1,6 +1,6 @@
 /**
  * TagSpaces - universal file and folder organizer
- * Copyright (C) 2017-present TagSpaces UG (haftungsbeschraenkt)
+ * Copyright (C) 2017-present TagSpaces GmbH
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License (version 3) as
@@ -16,32 +16,31 @@
  *
  */
 
-import React from 'react';
-import DialogContent from '@mui/material/DialogContent';
-import DialogTitle from '@mui/material/DialogTitle';
-import Dialog from '@mui/material/Dialog';
-import Paper from '@mui/material/Paper';
 import DraggablePaper from '-/components/DraggablePaper';
-import DialogCloseButton from '-/components/dialogs/DialogCloseButton';
+import TsDialogTitle from '-/components/dialogs/components/TsDialogTitle';
+import { TargetPathContextProvider } from '-/components/dialogs/hooks/TargetPathContextProvider';
+import { Pro } from '-/pro';
+import Dialog from '@mui/material/Dialog';
+import DialogContent from '@mui/material/DialogContent';
+import Paper from '@mui/material/Paper';
 import { useTheme } from '@mui/material/styles';
 import useMediaQuery from '@mui/material/useMediaQuery';
-import { TargetPathContextProvider } from '-/components/dialogs/hooks/TargetPathContextProvider';
 import { useTranslation } from 'react-i18next';
-import { Pro } from '-/pro';
 
 interface Props {
   open: boolean;
   onClose: () => void;
+  title?: string;
 }
 
 const CreateAudio = Pro && Pro.UI ? Pro.UI.CreateAudio : false;
 
 function NewAudioDialog(props: Props) {
-  const { open, onClose } = props;
+  const { open, onClose, title } = props;
   const { t } = useTranslation();
 
   const theme = useTheme();
-  const fullScreen = useMediaQuery(theme.breakpoints.down('md'));
+  const smallScreen = useMediaQuery(theme.breakpoints.down('md'));
 
   function intOnClose(event?: any, reason?: any) {
     if (reason === 'escapeKeyDown' || reason === 'backdropClick') {
@@ -56,21 +55,19 @@ function NewAudioDialog(props: Props) {
       <Dialog
         open={open}
         onClose={intOnClose}
-        fullScreen={fullScreen}
+        fullScreen={smallScreen}
         keepMounted
         aria-labelledby="draggable-dialog-title"
-        PaperComponent={fullScreen ? Paper : DraggablePaper}
+        PaperComponent={smallScreen ? Paper : DraggablePaper}
         scroll="paper"
       >
-        <DialogTitle style={{ cursor: 'move' }} id="draggable-dialog-title">
-          {t('core:audioRecorder')}
-          <DialogCloseButton
-            testId="closeCreateDialogTID"
-            onClose={() => {
-              intOnClose(undefined, 'escapeKeyDown');
-            }}
-          />
-        </DialogTitle>
+        <TsDialogTitle
+          dialogTitle={t('core:audioRecorder')}
+          closeButtonTestId="closeNewAudioDialogTID"
+          onClose={() => {
+            intOnClose(undefined, 'escapeKeyDown');
+          }}
+        />
         <DialogContent
           style={{
             minWidth: 200,
@@ -80,7 +77,7 @@ function NewAudioDialog(props: Props) {
           }}
           data-tid="keyboardShortCutsDialog"
         >
-          <CreateAudio onClose={intOnClose} />
+          {CreateAudio && <CreateAudio onClose={intOnClose} title={title} />}
         </DialogContent>
       </Dialog>
     </TargetPathContextProvider>

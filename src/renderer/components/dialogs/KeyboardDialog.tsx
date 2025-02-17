@@ -1,6 +1,6 @@
 /**
  * TagSpaces - universal file and folder organizer
- * Copyright (C) 2017-present TagSpaces UG (haftungsbeschraenkt)
+ * Copyright (C) 2017-present TagSpaces GmbH
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License (version 3) as
@@ -16,27 +16,32 @@
  *
  */
 
-import React from 'react';
-import { useSelector } from 'react-redux';
-import Button from '@mui/material/Button';
-import DialogActions from '@mui/material/DialogActions';
+import AppConfig from '-/AppConfig';
+import DraggablePaper from '-/components/DraggablePaper';
+import TsButton from '-/components/TsButton';
+import TsDialogActions from '-/components/dialogs/components/TsDialogActions';
+import TsDialogTitle from '-/components/dialogs/components/TsDialogTitle';
+import { getKeyBindingObject } from '-/reducers/settings';
+import Box from '@mui/material/Box';
+import Dialog from '@mui/material/Dialog';
 import DialogContent from '@mui/material/DialogContent';
-import DialogTitle from '@mui/material/DialogTitle';
 import List from '@mui/material/List';
 import ListItem from '@mui/material/ListItem';
-import ListItemSecondaryAction from '@mui/material/ListItemSecondaryAction';
 import ListItemText from '@mui/material/ListItemText';
-import Dialog from '@mui/material/Dialog';
-import { getKeyBindingObject } from '-/reducers/settings';
-import DialogCloseButton from '-/components/dialogs/DialogCloseButton';
+import Paper from '@mui/material/Paper';
 import { useTheme } from '@mui/material/styles';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import { useTranslation } from 'react-i18next';
-import AppConfig from '-/AppConfig';
+import { useSelector } from 'react-redux';
 
 export function adjustKeyBinding(keyBinding: string) {
-  if (!keyBinding) return '';
-  let adjKB = keyBinding.toLowerCase();
+  if (!keyBinding || !keyBinding.length) return '';
+  let adjKB = '';
+  if (Array.isArray(keyBinding)) {
+    adjKB = keyBinding.join(', ');
+  } else {
+    adjKB = keyBinding?.toLowerCase();
+  }
   if (AppConfig.isMacLike) {
     adjKB = adjKB
       .replaceAll('+', ' ')
@@ -65,19 +70,36 @@ function KeyboardDialog(props: Props) {
   const { t } = useTranslation();
   const keyBindings = useSelector(getKeyBindingObject);
   const theme = useTheme();
-  const fullScreen = useMediaQuery(theme.breakpoints.down('md'));
+  const smallScreen = useMediaQuery(theme.breakpoints.down('md'));
+  const okButton = (
+    <TsButton
+      data-tid="closeKeyboardDialog"
+      onClick={onClose}
+      variant="outlined"
+      style={{
+        // @ts-ignore
+        WebkitAppRegion: 'no-drag',
+      }}
+    >
+      {t('core:ok')}
+    </TsButton>
+  );
+
   return (
     <Dialog
       open={open}
       onClose={onClose}
-      fullScreen={fullScreen}
+      fullScreen={smallScreen}
+      PaperComponent={smallScreen ? Paper : DraggablePaper}
       keepMounted
       scroll="paper"
     >
-      <DialogTitle>
-        {t('core:shortcutKeys')}
-        <DialogCloseButton testId="closeKeyboardTID" onClose={onClose} />
-      </DialogTitle>
+      <TsDialogTitle
+        dialogTitle={t('core:shortcutKeys')}
+        closeButtonTestId="closeKeyboardTID"
+        onClose={onClose}
+        actionSlot={okButton}
+      />
       <DialogContent
         data-tid="keyboardShortCutsDialog"
         style={{
@@ -90,7 +112,7 @@ function KeyboardDialog(props: Props) {
             Object.keys(keyBindings).map((shortcutKey) => (
               <ListItem key={shortcutKey}>
                 <ListItemText primary={t('core:' + shortcutKey)} />
-                <ListItemSecondaryAction
+                <Box
                   style={{
                     backgroundColor: 'gray',
                     color: 'white',
@@ -101,23 +123,12 @@ function KeyboardDialog(props: Props) {
                   }}
                 >
                   {adjustKeyBinding(keyBindings[shortcutKey])}
-                </ListItemSecondaryAction>
+                </Box>
               </ListItem>
             ))}
         </List>
       </DialogContent>
-      <DialogActions
-        style={fullScreen ? { padding: '10px 30px 30px 30px' } : {}}
-      >
-        <Button
-          data-tid="closeKeyboardDialog"
-          onClick={onClose}
-          color="primary"
-          variant="contained"
-        >
-          {t('core:ok')}
-        </Button>
-      </DialogActions>
+      {!smallScreen && <TsDialogActions>{okButton}</TsDialogActions>}
     </Dialog>
   );
 }
