@@ -1,6 +1,6 @@
 /**
  * TagSpaces - universal file and folder organizer
- * Copyright (C) 2017-present TagSpaces UG (haftungsbeschraenkt)
+ * Copyright (C) 2017-present TagSpaces GmbH
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License (version 3) as
@@ -16,30 +16,30 @@
  *
  */
 
-import React, { useReducer, useRef, useState } from 'react';
-import { useDispatch, useSelector } from 'react-redux';
-import Button from '@mui/material/Button';
-import TextField from '@mui/material/TextField';
-import DialogActions from '@mui/material/DialogActions';
+import AppConfig from '-/AppConfig';
+import DraggablePaper from '-/components/DraggablePaper';
+import TsButton from '-/components/TsButton';
+import TsTextField from '-/components/TsTextField';
+import TsDialogActions from '-/components/dialogs/components/TsDialogActions';
+import TsDialogTitle from '-/components/dialogs/components/TsDialogTitle';
+import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
+import { useDirectoryContentContext } from '-/hooks/useDirectoryContentContext';
+import { useIOActionsContext } from '-/hooks/useIOActionsContext';
+import { useSelectedEntriesContext } from '-/hooks/useSelectedEntriesContext';
+import { dirNameValidation, fileNameValidation } from '-/services/utils-io';
+import Dialog from '@mui/material/Dialog';
 import DialogContent from '@mui/material/DialogContent';
-import DialogTitle from '@mui/material/DialogTitle';
 import FormControl from '@mui/material/FormControl';
 import FormHelperText from '@mui/material/FormHelperText';
-import Dialog from '@mui/material/Dialog';
+import { useTheme } from '@mui/material/styles';
+import useMediaQuery from '@mui/material/useMediaQuery';
 import {
   extractContainingDirectoryPath,
   extractDirectoryName,
   extractFileName,
 } from '@tagspaces/tagspaces-common/paths';
-import DraggablePaper from '-/components/DraggablePaper';
-import AppConfig from '-/AppConfig';
-import PlatformIO from '-/services/platform-facade';
-import DialogCloseButton from '-/components/dialogs/DialogCloseButton';
-import { dirNameValidation, fileNameValidation } from '-/services/utils-io';
+import React, { useReducer, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useIOActionsContext } from '-/hooks/useIOActionsContext';
-import { useDirectoryContentContext } from '-/hooks/useDirectoryContentContext';
-import { useSelectedEntriesContext } from '-/hooks/useSelectedEntriesContext';
 
 interface Props {
   open: boolean;
@@ -50,11 +50,15 @@ function RenameEntryDialog(props: Props) {
   const { open, onClose } = props;
   const { t } = useTranslation();
   const { renameDirectory, renameFile } = useIOActionsContext();
+  const { findLocation } = useCurrentLocationContext();
   const { currentDirectoryPath } = useDirectoryContentContext();
   const { selectedEntries } = useSelectedEntriesContext();
   const lastSelectedEntry = selectedEntries[selectedEntries.length - 1];
   const [inputError, setInputError] = useState<boolean>(false);
   const disableConfirmButton = useRef<boolean>(true);
+  const theme = useTheme();
+  const smallScreen = useMediaQuery(theme.breakpoints.down('md'));
+  const currentLocation = findLocation();
 
   let defaultName = '';
   let originPath;
@@ -64,12 +68,12 @@ function RenameEntryDialog(props: Props) {
     if (isFile) {
       defaultName = extractFileName(
         lastSelectedEntry.path,
-        PlatformIO.getDirSeparator(),
+        currentLocation?.getDirSeparator(),
       );
     } else {
       defaultName = extractDirectoryName(
         lastSelectedEntry.path,
-        PlatformIO.getDirSeparator(),
+        currentLocation?.getDirSeparator(),
       );
     }
     originPath = lastSelectedEntry.path;
@@ -77,15 +81,9 @@ function RenameEntryDialog(props: Props) {
     isFile = false;
     defaultName = extractDirectoryName(
       currentDirectoryPath,
-      PlatformIO.getDirSeparator(),
+      currentLocation?.getDirSeparator(),
     );
     originPath = currentDirectoryPath;
-  } else {
-    return (
-      <Dialog open={open} onClose={onClose}>
-        <DialogTitle>{t('core:noSelectedEntryError')}</DialogTitle>
-      </Dialog>
-    );
   }
   const name = useRef<string>(defaultName);
 
@@ -137,23 +135,42 @@ function RenameEntryDialog(props: Props) {
     if (!disableConfirmButton.current) {
       onClose();
       if (isFile) {
+        const dirSeparator = currentLocation?.getDirSeparator();
         const fileDirectory = extractContainingDirectoryPath(
           lastSelectedEntry.path,
-          PlatformIO.getDirSeparator(),
+          dirSeparator,
         );
         const newFilePath =
-          fileDirectory + PlatformIO.getDirSeparator() + name.current;
-        return renameFile(originPath, newFilePath);
+          (fileDirectory && fileDirectory !== dirSeparator
+            ? fileDirectory + dirSeparator
+            : '') + name.current;
+        return renameFile(originPath, newFilePath, currentLocation.uuid);
       } else {
-        return renameDirectory(originPath, name.current);
+        return renameDirectory(originPath, name.current, currentLocation.uuid);
       }
     }
   };
+
+  const okButton = (
+    <TsButton
+      disabled={disableConfirmButton.current}
+      onClick={onConfirm}
+      data-tid="confirmRenameEntry"
+      variant="contained"
+      style={{
+        // @ts-ignore
+        WebkitAppRegion: 'no-drag',
+      }}
+    >
+      {t('core:ok')}
+    </TsButton>
+  );
 
   return (
     <Dialog
       open={open}
       onClose={onClose}
+      fullScreen={smallScreen}
       keepMounted
       scroll="paper"
       aria-labelledby="draggable-dialog-title"
@@ -168,17 +185,18 @@ function RenameEntryDialog(props: Props) {
         }*/
       }}
     >
-      <DialogTitle style={{ cursor: 'move' }} id="draggable-dialog-title">
-        {t('core:' + (isFile ? 'renameFile' : 'renameDirectory'))}
-        <DialogCloseButton testId="closeRenameEntryTID" onClose={onClose} />
-      </DialogTitle>
+      <TsDialogTitle
+        dialogTitle={t('core:' + (isFile ? 'renameFile' : 'renameDirectory'))}
+        closeButtonTestId="closeRenameEntryTID"
+        onClose={onClose}
+        actionSlot={okButton}
+      />
       <DialogContent>
         <FormControl fullWidth={true} error={inputError}>
-          <TextField
+          <TsTextField
             autoFocus
             required
             error={inputError}
-            margin="dense"
             name="entryName"
             label={t(
               'core:' +
@@ -187,7 +205,6 @@ function RenameEntryDialog(props: Props) {
             onChange={handleInputChange}
             onFocus={onInputFocus}
             defaultValue={name.current}
-            fullWidth={true}
             data-tid="renameEntryDialogInput"
           />
           <FormHelperText>
@@ -195,20 +212,14 @@ function RenameEntryDialog(props: Props) {
           </FormHelperText>
         </FormControl>
       </DialogContent>
-      <DialogActions>
-        <Button data-tid="closeRenameEntryDialog" onClick={onClose}>
-          {t('core:cancel')}
-        </Button>
-        <Button
-          disabled={disableConfirmButton.current}
-          onClick={onConfirm}
-          data-tid="confirmRenameEntry"
-          color="primary"
-          variant="contained"
-        >
-          {t('core:ok')}
-        </Button>
-      </DialogActions>
+      {!smallScreen && (
+        <TsDialogActions>
+          <TsButton data-tid="closeRenameEntryDialog" onClick={onClose}>
+            {t('core:cancel')}
+          </TsButton>
+          {okButton}
+        </TsDialogActions>
+      )}
     </Dialog>
   );
 }

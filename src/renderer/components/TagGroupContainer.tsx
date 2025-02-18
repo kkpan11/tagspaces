@@ -1,6 +1,6 @@
 /**
  * TagSpaces - universal file and folder organizer
- * Copyright (C) 2017-present TagSpaces UG (haftungsbeschraenkt)
+ * Copyright (C) 2017-present TagSpaces GmbH
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License (version 3) as
@@ -20,6 +20,7 @@ import React, { ReactNode, useRef } from 'react';
 import { DropTargetMonitor, useDrop } from 'react-dnd';
 import DragItemTypes from './DragItemTypes';
 import { TS } from '-/tagspaces.namespace';
+import { dataTidFormat } from '-/services/test';
 
 interface Props {
   children: ReactNode;
@@ -72,7 +73,7 @@ function TagGroupContainer(props: Props) {
         border,
         backgroundColor,
       }}
-      data-tid={'tagGroupContainer_' + props.taggroup.title}
+      data-tid={'tagGroupContainer_' + dataTidFormat(props.taggroup.title)}
     >
       {props.children}
     </div>

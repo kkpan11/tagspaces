@@ -1,6 +1,6 @@
 /**
  * TagSpaces - universal file and folder organizer
- * Copyright (C) 2017-present TagSpaces UG (haftungsbeschraenkt)
+ * Copyright (C) 2017-present TagSpaces GmbH
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License (version 3) as
@@ -16,30 +16,34 @@
  *
  */
 
-import React, { useEffect, useState } from 'react';
-import Button from '@mui/material/Button';
-import TextField from '@mui/material/TextField';
-import DialogActions from '@mui/material/DialogActions';
+import DraggablePaper from '-/components/DraggablePaper';
+import TsButton from '-/components/TsButton';
+import TsTextField from '-/components/TsTextField';
+import TsDialogActions from '-/components/dialogs/components/TsDialogActions';
+import TsDialogTitle from '-/components/dialogs/components/TsDialogTitle';
+import { useTaggingActionsContext } from '-/hooks/useTaggingActionsContext';
+import { parseNewTags } from '-/services/utils-io';
+import { TS } from '-/tagspaces.namespace';
+import useFirstRender from '-/utils/useFirstRender';
+import { Paper, useTheme } from '@mui/material';
+import Dialog from '@mui/material/Dialog';
 import DialogContent from '@mui/material/DialogContent';
-import DialogTitle from '@mui/material/DialogTitle';
 import FormControl from '@mui/material/FormControl';
 import FormHelperText from '@mui/material/FormHelperText';
-import Dialog from '@mui/material/Dialog';
-import useFirstRender from '-/utils/useFirstRender';
-import { TS } from '-/tagspaces.namespace';
-import DialogCloseButton from '-/components/dialogs/DialogCloseButton';
+import useMediaQuery from '@mui/material/useMediaQuery';
+import React, { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 interface Props {
   open: boolean;
   onClose: () => void;
-  addTag: (tags: string, uuid: string) => void;
   selectedTagGroupEntry: TS.TagGroup;
 }
 
 function CreateTagsDialog(props: Props) {
-  const { open, onClose, addTag, selectedTagGroupEntry } = props;
+  const { open, onClose, selectedTagGroupEntry } = props;
   const { t } = useTranslation();
+  const { addTag } = useTaggingActionsContext();
   const [inputError, setInputError] = useState<boolean>(false);
   const [tagTitle, setTagTitle] = useState<string>('');
 
@@ -74,18 +78,36 @@ function CreateTagsDialog(props: Props) {
 
   const onConfirm = () => {
     if (!inputError) {
-      addTag(tagTitle, selectedTagGroupEntry.uuid);
+      const newTags = parseNewTags(tagTitle, selectedTagGroupEntry);
+      addTag(newTags, selectedTagGroupEntry.uuid);
       onClose();
     }
   };
 
-  // const theme = useTheme();
-  // const fullScreen = useMediaQuery(theme.breakpoints.down('md'));
+  const theme = useTheme();
+  const smallScreen = useMediaQuery(theme.breakpoints.down('md'));
+
+  const okButton = (
+    <TsButton
+      disabled={inputError}
+      onClick={onConfirm}
+      data-tid="createTagsConfirmButton"
+      variant="contained"
+      style={{
+        // @ts-ignore
+        WebkitAppRegion: 'no-drag',
+      }}
+    >
+      {t('core:ok')}
+    </TsButton>
+  );
+
   return (
     <Dialog
       open={open}
       onClose={onClose}
-      // fullScreen={fullScreen}
+      fullScreen={smallScreen}
+      PaperComponent={smallScreen ? Paper : DraggablePaper}
       keepMounted
       scroll="paper"
       onKeyDown={(event) => {
@@ -96,13 +118,15 @@ function CreateTagsDialog(props: Props) {
         }
       }}
     >
-      <DialogTitle>
-        {t('core:addTagsToGroupTitle')}
-        <DialogCloseButton testId="closeCreateTagTID" onClose={onClose} />
-      </DialogTitle>
-      <DialogContent style={{ minWidth: 350, paddingTop: 10 }}>
+      <TsDialogTitle
+        dialogTitle={t('core:addTagsToGroupTitle')}
+        closeButtonTestId="closeCreateTagTID"
+        onClose={onClose}
+        actionSlot={okButton}
+      />
+      <DialogContent style={{ minWidth: 300, paddingTop: 10 }}>
         <FormControl fullWidth={true} error={inputError}>
-          <TextField
+          <TsTextField
             error={inputError}
             name="tagTitle"
             autoFocus
@@ -110,25 +134,18 @@ function CreateTagsDialog(props: Props) {
             onChange={handleTagTitleChange}
             value={tagTitle}
             data-tid="addTagsInput"
-            fullWidth={true}
           />
           {inputError && (
             <FormHelperText>{t('core:tagTitleHelper')}</FormHelperText>
           )}
         </FormControl>
       </DialogContent>
-      <DialogActions>
-        <Button onClick={onClose}>{t('core:cancel')}</Button>
-        <Button
-          disabled={inputError}
-          onClick={onConfirm}
-          data-tid="createTagsConfirmButton"
-          color="primary"
-          variant="contained"
-        >
-          {t('core:ok')}
-        </Button>
-      </DialogActions>
+      {!smallScreen && (
+        <TsDialogActions>
+          <TsButton onClick={onClose}>{t('core:cancel')}</TsButton>
+          {okButton}
+        </TsDialogActions>
+      )}
     </Dialog>
   );
 }

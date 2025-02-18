@@ -1,6 +1,6 @@
 /**
  * TagSpaces - universal file and folder organizer
- * Copyright (C) 2017-present TagSpaces UG (haftungsbeschraenkt)
+ * Copyright (C) 2017-present TagSpaces GmbH
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License (version 3) as
@@ -17,6 +17,7 @@
  */
 
 import { getUuid } from '@tagspaces/tagspaces-common/utils-io';
+import { TS } from '-/tagspaces.namespace';
 
 export default [
   {
@@ -99,6 +100,76 @@ export default [
     ],
   },
   {
+    title: 'Emojis 🎨',
+    // description: '',
+    uuid: getUuid(),
+    color: '#d2d1d19e',
+    textcolor: '#000000',
+    children: [
+      {
+        title: '💡',
+        description: 'lightbulb',
+        color: '#d2d1d19e',
+        textcolor: '#000000',
+      },
+      {
+        title: '⭐',
+        description: 'star',
+        color: '#d2d1d19e',
+        textcolor: '#000000',
+      },
+      {
+        title: '💎',
+        description: 'diamond',
+        color: '#d2d1d19e',
+        textcolor: '#000000',
+      },
+      {
+        title: '🧬',
+        description: 'dna',
+        color: '#d2d1d19e',
+        textcolor: '#000000',
+      },
+      {
+        title: '🚲',
+        description: 'bicycle',
+        color: '#d2d1d19e',
+        textcolor: '#000000',
+      },
+
+      {
+        title: '🎁',
+        description: 'gift',
+        color: '#d2d1d19e',
+        textcolor: '#000000',
+      },
+      {
+        title: '🥝',
+        description: 'kiwi',
+        color: '#d2d1d19e',
+        textcolor: '#000000',
+      },
+      {
+        title: '🥥',
+        description: 'coconut',
+        color: '#d2d1d19e',
+        textcolor: '#000000',
+      },
+      {
+        title: '📖',
+        description: 'book',
+        color: '#d2d1d19e',
+        textcolor: '#000000',
+      },
+      {
+        title: '🥨',
+        description: 'pretzel',
+        color: '#d2d1d19e',
+        textcolor: '#000000',
+      },
+    ],
+  },
+  {
     title: 'Ratings',
     uuid: getUuid(),
     color: '#ffcc24',
@@ -131,4 +202,4 @@ export default [
       },
     ],
   },
-] as any;
+] as TS.TagGroup[];

@@ -1,6 +1,6 @@
 /**
  * TagSpaces - universal file and folder organizer
- * Copyright (C) 2017-present TagSpaces UG (haftungsbeschraenkt)
+ * Copyright (C) 2017-present TagSpaces GmbH
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License (version 3) as
@@ -99,7 +99,7 @@ export default (state: Array<TS.SearchQuery> = initialState, action: any) => {
   }
 };
 
-export const actions = {
+/*export const actions = {
   addSearch: (search: TS.SearchQuery) => ({
     type: types.ADD_SEARCH,
     search,
@@ -132,11 +132,7 @@ export const actions = {
     type: types.REMOVE_SEARCH,
     uuid,
   }),
-  /* getSearch: (uuid: string) => (
-      dispatch: (actions: Object) => void,
-      getState: () => any
-  ) => getState().searches.find(search => search.uuid === uuid) */
-};
+};*/
 
 // Selectors
 export const getSearches = (state: any): Array<TS.SearchQuery> =>

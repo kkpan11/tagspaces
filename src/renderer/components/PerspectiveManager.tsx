@@ -1,6 +1,6 @@
 /**
  * TagSpaces - universal file and folder organizer
- * Copyright (C) 2017-present TagSpaces UG (haftungsbeschraenkt)
+ * Copyright (C) 2017-present TagSpaces GmbH
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License (version 3) as
@@ -30,7 +30,7 @@ function PerspectiveManager(props: Props) {
       <Typography className={classes.panelTitle}>Perspectives</Typography>
     </SidePanel>
   );
-  //         <Button onClick={() => history.push('/login')}>Login</Button>
+  //         <TsButton onClick={() => history.push('/login')}>Login</TsButton>
 }
 
 export default PerspectiveManager;

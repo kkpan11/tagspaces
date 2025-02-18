@@ -1,6 +1,6 @@
 /**
  * TagSpaces - universal file and folder organizer
- * Copyright (C) 2021-present TagSpaces UG (haftungsbeschraenkt)
+ * Copyright (C) 2021-present TagSpaces GmbH
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License (version 3) as
@@ -17,27 +17,29 @@
  */
 
 import React from 'react';
+import { useSelector } from 'react-redux';
 import ListItemIcon from '@mui/material/ListItemIcon';
 import LayersClearIcon from '@mui/icons-material/LayersClear';
 import ListItemText from '@mui/material/ListItemText';
-import TextField from '@mui/material/TextField';
+import TsSelect from '-/components/TsSelect';
 import MenuItem from '@mui/material/MenuItem';
 import { AvailablePerspectives, PerspectiveIDs } from '-/perspectives';
 import { Pro } from '-/pro';
 import { BetaLabel, ProLabel } from '-/components/HelperComponents';
 import { useTranslation } from 'react-i18next';
+import { isDesktopMode } from '-/reducers/settings';
 
 interface Props {
-  //language: string;
   defaultValue: string;
   onChange: (event: any) => void;
+  fullWidth?: boolean;
   testId: string;
   label?: string;
 }
 
 function PerspectiveSelector(props: Props) {
-  const { defaultValue, onChange, testId, label } = props;
-
+  const { defaultValue, onChange, testId, label, fullWidth = true } = props;
+  const desktopMode = useSelector(isDesktopMode);
   const { t } = useTranslation();
 
   const perspectiveSelectorMenuItems = [];
@@ -79,17 +81,15 @@ function PerspectiveSelector(props: Props) {
   });
 
   return (
-    <TextField
+    <TsSelect
       data-tid={testId}
       defaultValue={defaultValue}
       onChange={onChange}
-      select
       label={label}
-      fullWidth
-      // input={<Input id="changePerspectiveId" />}
+      fullWidth={fullWidth}
     >
       {perspectiveSelectorMenuItems}
-    </TextField>
+    </TsSelect>
   );
 }
 

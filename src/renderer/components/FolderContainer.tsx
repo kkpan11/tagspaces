@@ -1,6 +1,6 @@
 /**
  * TagSpaces - universal file and folder organizer
- * Copyright (C) 2017-present TagSpaces UG (haftungsbeschraenkt)
+ * Copyright (C) 2017-present TagSpaces GmbH
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License (version 3) as
@@ -16,61 +16,70 @@
  *
  */
 
-import React, { useCallback, useState } from 'react';
-import { useTheme } from '@mui/material/styles';
-import { useDispatch, useSelector } from 'react-redux';
-import IconButton from '@mui/material/IconButton';
+import AppConfig from '-/AppConfig';
+import RenderPerspective from '-/components/RenderPerspective';
+import SearchBox from '-/components/SearchBox';
+import Tooltip from '-/components/Tooltip';
+import TsButton from '-/components/TsButton';
+import TsIconButton from '-/components/TsIconButton';
+import { AIProvider } from '-/components/chat/ChatTypes';
+import { adjustKeyBinding } from '-/components/dialogs/KeyboardDialog';
+import RenameEntryDialog from '-/components/dialogs/RenameEntryDialog';
+import { useFileUploadDialogContext } from '-/components/dialogs/hooks/useFileUploadDialogContext';
+import { useProTeaserDialogContext } from '-/components/dialogs/hooks/useProTeaserDialogContext';
+import { TabNames } from '-/hooks/EntryPropsTabsContextProvider';
+import { useBrowserHistoryContext } from '-/hooks/useBrowserHistoryContext';
+import { useDirectoryContentContext } from '-/hooks/useDirectoryContentContext';
+import { useOpenedEntryContext } from '-/hooks/useOpenedEntryContext';
+import { AvailablePerspectives, PerspectiveIDs } from '-/perspectives';
+import { Pro } from '-/pro';
+import { getProgress } from '-/reducers/app';
+import {
+  getDefaultAIProvider,
+  getDesktopMode,
+  getKeyBindingObject,
+} from '-/reducers/settings';
+import ChatIcon from '@mui/icons-material/Chat';
 import Box from '@mui/material/Box';
 import CircularProgress from '@mui/material/CircularProgress';
-import Tooltip from '-/components/Tooltip';
-import Typography from '@mui/material/Typography';
 import ToggleButton from '@mui/material/ToggleButton';
 import ToggleButtonGroup from '@mui/material/ToggleButtonGroup';
-import AppConfig from '-/AppConfig';
-import { getDesktopMode } from '-/reducers/settings';
-import {
-  actions as AppActions,
-  AppDispatch,
-  getProgress,
-} from '../reducers/app';
+import Typography from '@mui/material/Typography';
+import { useTheme } from '@mui/material/styles';
+import useMediaQuery from '@mui/material/useMediaQuery';
+import { useCallback, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import { useSelector } from 'react-redux';
 import {
   GoBackIcon,
   GoForwardIcon,
   MainMenuIcon,
   SearchIcon,
 } from './CommonIcons';
-import { Pro } from '../pro';
-import RenameEntryDialog from '-/components/dialogs/RenameEntryDialog';
 import PathBreadcrumbs from './PathBreadcrumbs';
-import { PerspectiveIDs, AvailablePerspectives } from '-/perspectives';
-// import LoadingAnimation from '-/components/LoadingAnimation';
-import SearchBox from '-/components/SearchBox';
-import { useTranslation } from 'react-i18next';
-import { useDirectoryContentContext } from '-/hooks/useDirectoryContentContext';
-import RenderPerspective from '-/components/RenderPerspective';
-import { adjustKeyBinding } from '-/components/dialogs/KeyboardDialog';
 
 interface Props {
   toggleDrawer?: () => void;
-  toggleProTeaser: (slidePage?: string) => void;
   drawerOpened: boolean;
-  goBack: () => void;
-  goForward: () => void;
+  style?: any;
 }
 
 function FolderContainer(props: Props) {
-  const { toggleDrawer, toggleProTeaser, goBack, goForward, drawerOpened } =
-    props;
-
+  const { toggleDrawer, drawerOpened, style } = props;
   const { t } = useTranslation();
-  const dispatch: AppDispatch = useDispatch();
   const theme = useTheme();
+  const keyBindings = useSelector(getKeyBindingObject);
+  const { goForward, goBack, historyIndex } = useBrowserHistoryContext();
+  const { openFileUploadDialog } = useFileUploadDialogContext();
+  const { openProTeaserDialog } = useProTeaserDialogContext();
+  const { openEntry } = useOpenedEntryContext();
+  const aiDefaultProvider: AIProvider = useSelector(getDefaultAIProvider);
   const {
     setSearchQuery,
     currentDirectoryEntries,
     currentDirectoryPath,
-    perspective,
-    setDirectoryPerspective,
+    getPerspective,
+    setManualDirectoryPerspective,
     enterSearchMode,
     isSearchMode,
   } = useDirectoryContentContext();
@@ -80,13 +89,6 @@ function FolderContainer(props: Props) {
 
   const isDesktopMode = useSelector(getDesktopMode);
   const progress = useSelector(getProgress);
-
-  //let currentPerspective = getPerspective();
-  // currentDirectoryPerspective || defaultPerspective || PerspectiveIDs.GRID;
-
-  /*if (currentPerspective === PerspectiveIDs.UNSPECIFIED) {
-    currentPerspective = defaultPerspective;
-  }*/
 
   const showWelcomePanel =
     !currentDirectoryPath && currentDirectoryEntries.length < 1;
@@ -139,15 +141,15 @@ function FolderContainer(props: Props) {
       perspectiveId === PerspectiveIDs.GRID ||
       perspectiveId === PerspectiveIDs.LIST
     ) {
-      setDirectoryPerspective(perspectiveId, undefined, true);
+      setManualDirectoryPerspective(perspectiveId);
     } else if (perspectiveId === PerspectiveIDs.GALLERY) {
-      toggleProTeaser(PerspectiveIDs.GALLERY);
+      openProTeaserDialog(PerspectiveIDs.GALLERY);
     } else if (perspectiveId === PerspectiveIDs.MAPIQUE) {
-      toggleProTeaser(PerspectiveIDs.MAPIQUE);
+      openProTeaserDialog(PerspectiveIDs.MAPIQUE);
     } else if (perspectiveId === PerspectiveIDs.KANBAN) {
-      toggleProTeaser(PerspectiveIDs.KANBAN);
+      openProTeaserDialog(PerspectiveIDs.KANBAN);
     } else if (perspectiveId === PerspectiveIDs.FOLDERVIZ) {
-      toggleProTeaser(PerspectiveIDs.FOLDERVIZ);
+      openProTeaserDialog(PerspectiveIDs.FOLDERVIZ);
     }
   };
 
@@ -160,6 +162,11 @@ function FolderContainer(props: Props) {
         key={perspective.id}
         data-tid={perspective.key}
         onClick={() => switchPerspective(perspective.id)}
+        style={{
+          opacity: 0.9,
+          backgroundColor: theme.palette.background.default,
+          borderColor: theme.palette.divider,
+        }}
       >
         <Tooltip
           title={
@@ -174,18 +181,12 @@ function FolderContainer(props: Props) {
   });
 
   const openSearchMode = () => {
-    setSearchQuery({ textQuery: '' });
+    // setSearchQuery({ textQuery: '' });
     enterSearchMode();
   };
 
-  const openSearchKeyBinding = AppConfig.isElectron
-    ? ' (' +
-      adjustKeyBinding(
-        AppConfig.isMacLike ? 'Command+Shift+F' : 'Ctrl+Shift+F',
-      ) +
-      ')'
-    : '';
-  // keyBindings['openSearch'].toUpperCase()
+  const openSearchKeyBinding = `${adjustKeyBinding(keyBindings.openSearch)}`;
+  const smallScreen = useMediaQuery(theme.breakpoints.down('md'));
 
   return (
     <div
@@ -196,6 +197,7 @@ function FolderContainer(props: Props) {
         display: 'flex',
         flexDirection: 'column',
         position: 'relative',
+        ...style,
       }}
       data-tid="folderContainerTID"
     >
@@ -217,7 +219,7 @@ function FolderContainer(props: Props) {
               : 0,
         }}
       >
-        <IconButton
+        <TsIconButton
           id="mobileMenuButton"
           style={{
             // @ts-ignore
@@ -227,38 +229,34 @@ function FolderContainer(props: Props) {
           onClick={toggleDrawer}
         >
           <MainMenuIcon />
-        </IconButton>
-        <Tooltip
-          title={
+        </TsIconButton>
+        <TsIconButton
+          tooltip={
             t('core:goback') + ' - BETA - ' + t('core:gobackClarification')
           }
+          id="goBackButton"
+          disabled={historyIndex === 0}
+          onClick={goBack}
+          style={{
+            // @ts-ignore
+            WebkitAppRegion: 'no-drag',
+          }}
         >
-          <IconButton
-            id="goBackButton"
-            disabled={window.history.length < 2}
-            onClick={goBack}
+          <GoBackIcon />
+        </TsIconButton>
+        {smallScreen && (
+          <TsIconButton
+            tooltip={t('core:goforward') + ' - BETA'}
+            id="goForwardButton"
+            disabled={historyIndex === 0}
+            onClick={goForward}
             style={{
               // @ts-ignore
               WebkitAppRegion: 'no-drag',
             }}
           >
-            <GoBackIcon />
-          </IconButton>
-        </Tooltip>
-        {isDesktopMode && (
-          <Tooltip title={t('core:goforward') + ' - BETA'}>
-            <IconButton
-              id="goForwardButton"
-              disabled={window.history.length < 2}
-              onClick={goForward}
-              style={{
-                // @ts-ignore
-                WebkitAppRegion: 'no-drag',
-              }}
-            >
-              <GoForwardIcon />
-            </IconButton>
-          </Tooltip>
+            <GoForwardIcon />
+          </TsIconButton>
         )}
         {isSearchMode ? (
           /* todo rethink if open props is needed */
@@ -272,8 +270,11 @@ function FolderContainer(props: Props) {
                 flexDirection: 'column',
               }}
             />
-            <Tooltip title={t('core:searchTitle') + openSearchKeyBinding}>
-              <IconButton
+            {smallScreen ? (
+              <TsIconButton
+                tooltip={
+                  t('core:openSearch') + ' (' + openSearchKeyBinding + ')'
+                }
                 data-tid="toggleSearch"
                 onClick={openSearchMode}
                 style={{
@@ -282,14 +283,32 @@ function FolderContainer(props: Props) {
                 }}
               >
                 <SearchIcon />
-              </IconButton>
-            </Tooltip>
+              </TsIconButton>
+            ) : (
+              <TsButton
+                data-tid="toggleSearch"
+                onClick={openSearchMode}
+                startIcon={<SearchIcon />}
+                style={{
+                  // @ts-ignore
+                  WebkitAppRegion: 'no-drag',
+                  marginRight: 5,
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                }}
+              >
+                {t('core:searchTitle')}
+                <span style={{ width: 10 }} />
+                {openSearchKeyBinding}
+              </TsButton>
+            )}
+
             {progress?.length > 0 && (
-              <IconButton
+              <TsIconButton
                 id="progressButton"
                 title={t('core:progress')}
                 data-tid="uploadProgress"
-                onClick={() => dispatch(AppActions.toggleUploadDialog())}
+                onClick={() => openFileUploadDialog()}
                 style={{
                   position: 'relative',
                   padding: '8px 12px 6px 8px',
@@ -299,7 +318,7 @@ function FolderContainer(props: Props) {
                 }}
               >
                 <CircularProgressWithLabel value={getProgressValue()} />
-              </IconButton>
+              </TsIconButton>
             )}
             <PathBreadcrumbs
               switchPerspective={switchPerspective}
@@ -309,13 +328,10 @@ function FolderContainer(props: Props) {
           </>
         )}
       </div>
-      <div
-        style={{
-          minHeight: '100%',
-          width: '100%',
-        }}
-      >
+      <div style={{ minHeight: '100%', width: '100%', overflowY: 'auto' }}>
         {/*<LoadingAnimation />*/}
+        {/* eslint-disable-next-line jsx-a11y/anchor-has-content,jsx-a11y/anchor-is-valid */}
+        <a href="#" id="downloadFile" />
         <RenderPerspective openRenameEntryDialog={openRenameEntryDialog} />
         {isRenameEntryDialogOpened && (
           <RenameEntryDialog
@@ -326,7 +342,7 @@ function FolderContainer(props: Props) {
       </div>
       {isDesktopMode && (
         <ToggleButtonGroup
-          value={perspective}
+          value={getPerspective()}
           size="small"
           data-tid="floatingPerspectiveSwitcher"
           disabled={showWelcomePanel}
@@ -334,14 +350,33 @@ function FolderContainer(props: Props) {
           exclusive
           style={{
             bottom: -40,
-            right: 15,
+            right: 20,
             zIndex: 1000,
-            opacity: 0.9,
+            // opacity: 0.9,
             position: 'absolute',
-            backgroundColor: theme.palette.background.default,
           }}
         >
           {perspectiveToggleButtons}
+          {aiDefaultProvider && (
+            <ToggleButton
+              value=""
+              aria-label="chat-label"
+              data-tid="chatTID"
+              style={{
+                marginLeft: 5,
+                borderColor: theme.palette.divider,
+                color: theme.palette.primary.main,
+                backgroundColor: theme.palette.background.default,
+              }}
+              onClick={() => {
+                openEntry(currentDirectoryPath, TabNames.aiTab);
+              }}
+            >
+              <Tooltip title="AI Chat for this folder">
+                <ChatIcon />
+              </Tooltip>
+            </ToggleButton>
+          )}
         </ToggleButtonGroup>
       )}
     </div>

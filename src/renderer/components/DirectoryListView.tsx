@@ -1,7 +1,7 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { useDispatch, useSelector } from 'react-redux';
-import Button from '@mui/material/Button';
-import Select from '@mui/material/Select';
+import { useSelector } from 'react-redux';
+import TsButton from '-/components/TsButton';
+import TsSelect from '-/components/TsSelect';
 import MenuItem from '@mui/material/MenuItem';
 import FormControl from '@mui/material/FormControl';
 import List from '@mui/material/List';
@@ -13,20 +13,16 @@ import { extractContainingDirectoryPath } from '@tagspaces/tagspaces-common/path
 import { getShowUnixHiddenEntries } from '-/reducers/settings';
 import AppConfig from '-/AppConfig';
 import { TS } from '-/tagspaces.namespace';
-import { actions as AppActions, AppDispatch } from '-/reducers/app';
 import {
   ParentFolderIcon,
   NewFolderIcon,
   FolderOutlineIcon as FolderIcon,
 } from '-/components/CommonIcons';
-import { getLocations } from '-/reducers/locations';
-import PlatformIO from '-/services/platform-facade';
 import { useTranslation } from 'react-i18next';
 import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
-import { useLocationIndexContext } from '-/hooks/useLocationIndexContext';
-import { useFSWatcherContext } from '-/hooks/useFSWatcherContext';
-import i18n from '-/services/i18n';
 import Typography from '@mui/material/Typography';
+import { CommonLocation } from '-/utils/CommonLocation';
+import { useCreateDirectoryDialogContext } from '-/components/dialogs/hooks/useCreateDirectoryDialogContext';
 
 interface Props {
   setTargetDir: (dirPath: string) => void;
@@ -35,9 +31,10 @@ interface Props {
 function DirectoryListView(props: Props) {
   const { currentDirectoryPath, setTargetDir } = props;
   const { t } = useTranslation();
-  const { currentLocation } = useCurrentLocationContext();
-  const locations: Array<TS.Location> = useSelector(getLocations);
+  const { findLocation, locations } = useCurrentLocationContext();
+  const { openCreateDirectoryDialog } = useCreateDirectoryDialogContext();
   const showUnixHiddenEntries: boolean = useSelector(getShowUnixHiddenEntries);
+  const currentLocation = findLocation();
   const chosenLocationId = useRef<string>(
     currentLocation ? currentLocation.uuid : undefined,
   );
@@ -47,9 +44,7 @@ function DirectoryListView(props: Props) {
   >([]);
 
   useEffect(() => {
-    const chosenLocation = locations.find(
-      (location) => location.uuid === chosenLocationId.current,
-    );
+    const chosenLocation = findLocation(chosenLocationId.current);
     if (chosenLocation) {
       const path =
         currentLocation &&
@@ -61,13 +56,9 @@ function DirectoryListView(props: Props) {
     }
   }, [chosenLocationId.current]);
 
-  const dispatch: AppDispatch = useDispatch();
-
   const handleLocationChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     chosenLocationId.current = event.target.value;
-    const chosenLocation = locations.find(
-      (location) => location.uuid === chosenLocationId.current,
-    );
+    const chosenLocation = findLocation(chosenLocationId.current);
     if (chosenLocation) {
       listDirectory(chosenLocation.path);
       setTargetDir(chosenLocation.path);
@@ -75,9 +66,7 @@ function DirectoryListView(props: Props) {
   };
 
   function getDirLocations() {
-    const chosenLocation = locations.find(
-      (location) => location.uuid === chosenLocationId.current,
-    );
+    const chosenLocation = findLocation(chosenLocationId.current);
     if (chosenLocation.type !== locationType.TYPE_LOCAL) {
       return null;
     }
@@ -91,33 +80,34 @@ function DirectoryListView(props: Props) {
         }}
       >
         <Typography style={{ display: 'inline' }} variant="subtitle2">
-          {t('location')}:&nbsp;
+          {t('targetLocation')}:&nbsp;
         </Typography>
-        <Select
-          fullWidth
-          style={{ display: 'inline' }}
+        <TsSelect
+          fullWidth={true}
+          // style={{ display: 'inline' }}
           onChange={handleLocationChange}
           value={chosenLocationId.current}
         >
           {locations
             .filter((loc) => loc.type === locationType.TYPE_LOCAL)
-            .map((location: TS.Location) => (
+            .map((location: CommonLocation) => (
               <MenuItem key={location.uuid} value={location.uuid}>
                 <span style={{ width: '100%' }}>{location.name}</span>
               </MenuItem>
             ))}
-        </Select>
+        </TsSelect>
       </FormControl>
     );
   }
 
   function listDirectory(directoryPath) {
     chosenDirectory.current = directoryPath;
-    PlatformIO.listDirectoryPromise(
-      directoryPath,
-      [], // mode,
-      [],
-    )
+    currentLocation
+      .listDirectoryPromise(
+        directoryPath,
+        [], // mode,
+        [],
+      )
       .then((results) => {
         if (results !== undefined) {
           setDirectoryContent(
@@ -167,15 +157,14 @@ function DirectoryListView(props: Props) {
   return (
     <div style={{ marginTop: 10 }}>
       {getDirLocations()}
-      <Button
-        variant="text"
+      <TsButton
         startIcon={<ParentFolderIcon />}
-        style={{ margin: 5 }}
+        style={{ marginTop: 10, marginBottom: 10 }}
         data-tid="navigateToParentTID"
         onClick={() => {
           if (chosenDirectory.current) {
             let currentPath = chosenDirectory.current;
-            if (currentPath.endsWith(PlatformIO.getDirSeparator())) {
+            if (currentPath.endsWith(currentLocation?.getDirSeparator())) {
               currentPath = currentPath.slice(0, -1);
             }
             const parentDir = extractContainingDirectoryPath(currentPath);
@@ -185,33 +174,25 @@ function DirectoryListView(props: Props) {
         }}
       >
         {t('core:navigateToParentDirectory')}
-      </Button>
-      <Button
-        variant="text"
+      </TsButton>
+      <TsButton
         startIcon={<NewFolderIcon />}
-        style={{ margin: 5 }}
+        style={{ marginLeft: 5, marginTop: 10, marginBottom: 10 }}
         data-tid="newSubdirectoryTID"
         onClick={() => {
-          //stopWatching();
-          dispatch(
-            AppActions.toggleCreateDirectoryDialog({
-              rootDirPath: chosenDirectory.current,
-              callback: (newDirPath) => {
-                listDirectory(chosenDirectory.current);
-                setTargetDir(newDirPath);
-                //watchForChanges();
-              },
-              reflect: false,
-            }),
-          );
+          openCreateDirectoryDialog(chosenDirectory.current, (newDirPath) => {
+            listDirectory(chosenDirectory.current);
+            setTargetDir(newDirPath);
+          });
+          //reflect: false,
         }}
       >
         {t('core:newSubdirectory')}
-      </Button>
+      </TsButton>
       <List
         dense
         style={{
-          borderRadius: 5,
+          borderRadius: AppConfig.defaultCSSRadius,
           border: '1px solid gray',
           maxHeight: 300,
           overflowY: 'auto',

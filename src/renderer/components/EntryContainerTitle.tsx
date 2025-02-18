@@ -1,6 +1,6 @@
 /**
  * TagSpaces - universal file and folder organizer
- * Copyright (C) 2017-present TagSpaces UG (haftungsbeschraenkt)
+ * Copyright (C) 2017-present TagSpaces GmbH
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License (version 3) as
@@ -16,32 +16,39 @@
  *
  */
 
-import React, { useReducer } from 'react';
+import AppConfig from '-/AppConfig';
+import {
+  ArrowBackIcon,
+  FolderIcon,
+  MoreMenuIcon,
+} from '-/components/CommonIcons';
+import EntryContainerMenu from '-/components/EntryContainerMenu';
+import { ProTooltip } from '-/components/HelperComponents';
+import TagsPreview from '-/components/TagsPreview';
+import Tooltip from '-/components/Tooltip';
+import TsIconButton from '-/components/TsIconButton';
+import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
+import { useNotificationContext } from '-/hooks/useNotificationContext';
+import { useOpenedEntryContext } from '-/hooks/useOpenedEntryContext';
+import { Pro } from '-/pro';
+import { getSupportedFileTypes } from '-/reducers/settings';
+import { dataTidFormat } from '-/services/test';
+import { findColorForEntry, getAllTags } from '-/services/utils-io';
+import { TS } from '-/tagspaces.namespace';
+import BookmarkAddIcon from '@mui/icons-material/BookmarkAddTwoTone';
+import BookmarkIcon from '@mui/icons-material/BookmarkTwoTone';
+import HttpsIcon from '@mui/icons-material/Https';
+import Box from '@mui/material/Box';
 import { styled, useTheme } from '@mui/material/styles';
 import {
-  extractTitle,
+  extractDirectoryName,
   extractFileExtension,
   extractFileName,
-  extractDirectoryName,
+  extractTitle,
 } from '@tagspaces/tagspaces-common/paths';
-import Tooltip from '-/components/Tooltip';
-import PlatformIO from '-/services/platform-facade';
-import { FolderIcon, MoreMenuIcon } from '-/components/CommonIcons';
-import AppConfig from '-/AppConfig';
-import EntryContainerMenu from '-/components/EntryContainerMenu';
-import { useSelector } from 'react-redux';
-import { getLocations } from '-/reducers/locations';
-import Box from '@mui/material/Box';
-import { dataTidFormat } from '-/services/test';
-import { ProTooltip } from '-/components/HelperComponents';
-import IconButton from '@mui/material/IconButton';
-import BookmarkIcon from '@mui/icons-material/BookmarkTwoTone';
-import BookmarkAddIcon from '@mui/icons-material/BookmarkAddTwoTone';
-import TagsPreview from '-/components/TagsPreview';
-import { Pro } from '-/pro';
+import React, { useContext, useReducer } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useOpenedEntryContext } from '-/hooks/useOpenedEntryContext';
-import { useNotificationContext } from '-/hooks/useNotificationContext';
+import { useSelector } from 'react-redux';
 
 const FileBadge = styled('span')(({ theme }) => ({
   color: 'white',
@@ -54,41 +61,46 @@ const FileBadge = styled('span')(({ theme }) => ({
 }));
 
 interface Props {
-  isFileChanged: boolean;
   toggleFullScreen: () => void;
   reloadDocument: () => void;
   startClosingEntry: (event) => void;
   isEntryInFullWidth: boolean;
   desktopMode: boolean;
+  smallScreen: boolean;
 }
 
 function EntryContainerTitle(props: Props) {
   const {
-    isFileChanged,
     reloadDocument,
     toggleFullScreen,
     startClosingEntry,
     isEntryInFullWidth,
     desktopMode,
+    smallScreen,
   } = props;
   const { t } = useTranslation();
   const theme = useTheme();
-  const { openedEntry, sharingLink, sharingParentFolderLink } =
-    useOpenedEntryContext();
+  const { openedEntry, sharingLink, fileChanged } = useOpenedEntryContext();
+  const { findLocation } = useCurrentLocationContext();
   const { showNotification } = useNotificationContext();
-  const locations = useSelector(getLocations);
+  //const locations = useSelector(getLocations);
   const [anchorEl, setAnchorEl] = React.useState<null | HTMLElement>(null);
   const [ignored, forceUpdate] = useReducer((x) => x + 1, 0, undefined);
-
-  const haveBookmark =
-    Pro && Pro.bookmarks && Pro.bookmarks.haveBookmark(openedEntry.path);
+  const supportedFileTypes = useSelector(getSupportedFileTypes);
+  const fileSystemEntryColor = findColorForEntry(
+    openedEntry,
+    supportedFileTypes,
+  );
+  const bookmarksContext = Pro?.contextProviders?.BookmarksContext
+    ? useContext<TS.BookmarksContextData>(Pro.contextProviders.BookmarksContext)
+    : undefined;
 
   const bookmarkClick = () => {
-    if (Pro) {
-      if (haveBookmark) {
-        Pro.bookmarks.delBookmark(openedEntry.path);
+    if (Pro && bookmarksContext) {
+      if (bookmarksContext.haveBookmark(openedEntry.path)) {
+        bookmarksContext.delBookmark(openedEntry.path);
       } else {
-        Pro.bookmarks.setBookmark(openedEntry.path, sharingLink);
+        bookmarksContext.setBookmark(openedEntry.path, sharingLink);
       }
       forceUpdate();
     } else {
@@ -100,11 +112,12 @@ function EntryContainerTitle(props: Props) {
     }
   };
 
+  const currentLocation = findLocation(openedEntry.locationID);
   let fileTitle: string = openedEntry.path
     ? extractTitle(
         openedEntry.path,
         !openedEntry.isFile,
-        PlatformIO.getDirSeparator(),
+        currentLocation?.getDirSeparator(),
       )
     : '';
 
@@ -113,23 +126,25 @@ function EntryContainerTitle(props: Props) {
     if (openedEntry.isFile) {
       fileName = extractFileName(
         openedEntry.path,
-        PlatformIO.getDirSeparator(),
+        currentLocation?.getDirSeparator(),
       );
     } else {
       fileName = extractDirectoryName(
         openedEntry.path,
-        PlatformIO.getDirSeparator(),
+        currentLocation?.getDirSeparator(),
       );
     }
   }
   if (!fileName) {
-    const currentLocation = locations.find(
-      (location) => location.uuid === openedEntry.locationId,
-    );
     if (currentLocation) {
       fileName = currentLocation.name;
     }
   }
+
+  const addMacMargin =
+    AppConfig.isMacLike && desktopMode && (smallScreen || isEntryInFullWidth);
+
+  const rightMargin = smallScreen ? 35 : 70;
 
   return (
     <div
@@ -137,20 +152,34 @@ function EntryContainerTitle(props: Props) {
         paddingLeft: 5,
         display: 'flex',
         alignItems: 'center',
-        marginRight: openedEntry.isFile ? 100 : 0,
+        marginRight: openedEntry.isFile ? rightMargin : 0,
         flexDirection: 'row',
         flex: '1 1',
         overflowX: 'auto',
         overflowY: 'hidden',
-        marginLeft:
-          AppConfig.isMacLike && desktopMode && isEntryInFullWidth ? 60 : 0,
+        marginLeft: addMacMargin ? 60 : 0,
         // @ts-ignore
         WebkitAppRegion: 'drag',
       }}
     >
+      {smallScreen && (
+        <TsIconButton
+          title={t('closeButtonDialog')}
+          aria-label="close"
+          tabIndex={-1}
+          style={{
+            // @ts-ignore
+            WebkitAppRegion: 'no-drag',
+          }}
+          data-tid="fileContainerCloseOpenedFile"
+          onClick={startClosingEntry}
+        >
+          <ArrowBackIcon />
+        </TsIconButton>
+      )}
       {openedEntry.isFile ? (
         <>
-          {isFileChanged ? (
+          {fileChanged ? (
             <Tooltip title={t('core:fileChanged')}>
               <span
                 style={{
@@ -175,7 +204,7 @@ function EntryContainerTitle(props: Props) {
               setAnchorEl(event.currentTarget);
             }}
             style={{
-              backgroundColor: openedEntry.color,
+              backgroundColor: fileSystemEntryColor,
               display: 'flex',
               alignItems: 'center',
               textTransform: 'uppercase',
@@ -188,7 +217,7 @@ function EntryContainerTitle(props: Props) {
               //'.' +
               extractFileExtension(
                 openedEntry.path,
-                PlatformIO.getDirSeparator(),
+                currentLocation?.getDirSeparator(),
               )
             }
             <MoreMenuIcon style={{ fontSize: 20 }} />
@@ -235,17 +264,17 @@ function EntryContainerTitle(props: Props) {
         </Box>
       </Tooltip>
       <ProTooltip tooltip={t('core:toggleBookmark')}>
-        <IconButton
+        <TsIconButton
           data-tid="toggleBookmarkTID"
           aria-label="bookmark"
-          size="small"
           onClick={bookmarkClick}
           style={{
             // @ts-ignore
             WebkitAppRegion: 'no-drag',
           }}
         >
-          {haveBookmark ? (
+          {bookmarksContext &&
+          bookmarksContext.haveBookmark(openedEntry.path) ? (
             <BookmarkIcon
               style={{
                 color: theme.palette.primary.main,
@@ -258,9 +287,18 @@ function EntryContainerTitle(props: Props) {
               }}
             />
           )}
-        </IconButton>
+        </TsIconButton>
       </ProTooltip>
-      <TagsPreview tags={openedEntry.tags} />
+      <TagsPreview tags={getAllTags(openedEntry)} />
+      {openedEntry.isEncrypted && (
+        <Tooltip title={t('core:encryptedTooltip')}>
+          <HttpsIcon
+            style={{
+              color: theme.palette.primary.main,
+            }}
+          />
+        </Tooltip>
+      )}
       <EntryContainerMenu
         anchorEl={anchorEl}
         startClosingEntry={startClosingEntry}

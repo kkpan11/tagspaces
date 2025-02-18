@@ -8,7 +8,7 @@
   ],
   "includeSubNodeModules": true,
   "files": ["dist/", "node_modules/", "package.json", ".env", "extconfig.js"],
-  "copyright": "Copyright © 2024 TagSpaces GmbH",
+  "copyright": "Copyright © 2025 TagSpaces GmbH",
   "artifactName": "${name}-${os}-${arch}-${version}.${ext}",
   "dmg": {
     "sign": false
@@ -23,10 +23,7 @@
     "gatekeeperAssess": false,
     "entitlements": "assets/entitlements.mac.plist",
     "entitlementsInherit": "assets/entitlements.mac.plist",
-    "icon": "resources/icon.icns",
-    "notarize": {
-      "teamId": "DLK22E2679"
-    }
+    "icon": "resources/icon.icns"
   },
   "linux": {
     "target": ["deb", "tar.gz", "appImage"],
@@ -36,7 +33,6 @@
   "nsis": {
     "oneClick": false,
     "allowToChangeInstallationDirectory": true,
-    "license": "src/renderer/LICENSE.txt",
     "include": "resources/installer.nsh"
   },
   "directories": {

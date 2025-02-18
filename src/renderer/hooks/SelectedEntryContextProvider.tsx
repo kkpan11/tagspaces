@@ -1,6 +1,6 @@
 /**
  * TagSpaces - universal file and folder organizer
- * Copyright (C) 2023-present TagSpaces UG (haftungsbeschraenkt)
+ * Copyright (C) 2023-present TagSpaces GmbH
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License (version 3) as
@@ -23,10 +23,10 @@ import React, {
   useReducer,
   useRef,
 } from 'react';
+import { extractContainingDirectoryPath } from '@tagspaces/tagspaces-common/paths';
 import { TS } from '-/tagspaces.namespace';
 import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
 import useFirstRender from '-/utils/useFirstRender';
-import { useEditedEntryContext } from '-/hooks/useEditedEntryContext';
 
 type SelectedEntryContextData = {
   selectedEntries: TS.FileSystemEntry[];
@@ -49,46 +49,16 @@ export type SelectedEntryContextProviderProps = {
 export const SelectedEntryContextProvider = ({
   children,
 }: SelectedEntryContextProviderProps) => {
-  const { currentLocation } = useCurrentLocationContext();
-  const { actions } = useEditedEntryContext();
+  const { currentLocationId } = useCurrentLocationContext();
   const selectedEntries = useRef<TS.FileSystemEntry[]>([]);
   const firstRender = useFirstRender();
   const [ignored, forceUpdate] = useReducer((x) => x + 1, 0, undefined);
 
   useEffect(() => {
-    if (!firstRender && !currentLocation) {
+    if (!firstRender && !currentLocationId) {
       setSelectedEntries([]);
     }
-  }, [currentLocation]);
-
-  useEffect(() => {
-    if (actions && actions.length > 0) {
-      let selected = [...selectedEntries.current];
-      for (const action of actions) {
-        if (action.action === 'add') {
-          selected.push(action.entry);
-        } else if (action.action === 'delete') {
-          let index = selectedEntries.current.findIndex(
-            (e) => e.path === action.entry.path,
-          );
-          if (index !== -1) {
-            selectedEntries.current.splice(index, 1);
-            selected = [...selectedEntries.current];
-          }
-        } else if (action.action === 'update') {
-          let index = selectedEntries.current.findIndex(
-            (e) => e.path === action.oldEntryPath,
-          );
-          if (index !== -1) {
-            selectedEntries.current[index] = action.entry;
-            selected = [...selectedEntries.current];
-          }
-        }
-      }
-      selectedEntries.current = selected;
-      forceUpdate();
-    }
-  }, [actions]);
+  }, [currentLocationId]);
 
   //const lastSelectedEntry = useRef<TS.FileSystemEntry>(undefined);
 
@@ -99,14 +69,20 @@ export const SelectedEntryContextProvider = ({
     return undefined;
   }*/
   const setSelectedEntries = (entries: TS.FileSystemEntry[]) => {
-    selectedEntries.current = entries;
+    selectedEntries.current = entries ? entries : [];
     forceUpdate();
   };
 
   const selectEntry = (entry: TS.FileSystemEntry, select: boolean = true) => {
     if (select) {
       if (!selectedEntries.current.some((e) => e.path === entry.path)) {
-        selectedEntries.current = [...selectedEntries.current, entry];
+        // exclude current folder from selection
+        const currentFolder = extractContainingDirectoryPath(entry.path);
+        const currentSelected = selectedEntries.current.filter((data) => {
+          const parentFolder = extractContainingDirectoryPath(data.path);
+          return parentFolder === currentFolder;
+        });
+        selectedEntries.current = [...currentSelected, entry];
       }
     } else {
       //deselect

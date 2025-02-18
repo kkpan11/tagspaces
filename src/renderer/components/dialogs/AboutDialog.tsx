@@ -1,6 +1,6 @@
 /**
  * TagSpaces - universal file and folder organizer
- * Copyright (C) 2017-present TagSpaces UG (haftungsbeschraenkt)
+ * Copyright (C) 2017-present TagSpaces GmbH
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License (version 3) as
@@ -16,33 +16,32 @@
  *
  */
 
-import React, { useState } from 'react';
-import Button from '@mui/material/Button';
-import Paper from '@mui/material/Paper';
-import Typography from '@mui/material/Typography';
-import DialogActions from '@mui/material/DialogActions';
-import DialogContent from '@mui/material/DialogContent';
-import DialogTitle from '@mui/material/DialogTitle';
-import Tooltip from '-/components/Tooltip';
-import Dialog from '@mui/material/Dialog';
-import semver from 'semver';
-import DraggablePaper from '-/components/DraggablePaper';
+import AppConfig from '-/AppConfig';
 import LogoIcon from '-/assets/images/icon100x100.svg';
-import versionMeta from '-/version.json';
+import DraggablePaper from '-/components/DraggablePaper';
+import Tooltip from '-/components/Tooltip';
+import TsButton from '-/components/TsButton';
+import TranslucentDialog from '-/components/dialogs/components/TranslucentDialog';
+import TsDialogActions from '-/components/dialogs/components/TsDialogActions';
+import TsDialogTitle from '-/components/dialogs/components/TsDialogTitle';
+import { useLicenseDialogContext } from '-/components/dialogs/hooks/useLicenseDialogContext';
+import { useThirdPartyLibsDialogContext } from '-/components/dialogs/hooks/useThirdPartyLibsDialogContext';
 import { Pro } from '-/pro';
 import { getLastVersionPromise } from '-/reducers/settings';
-import DialogCloseButton from '-/components/dialogs/DialogCloseButton';
-import Links from 'assets/links';
-import useMediaQuery from '@mui/material/useMediaQuery';
-import { useTheme } from '@mui/material/styles';
-import AppConfig from '-/AppConfig';
 import { openURLExternally } from '-/services/utils-io';
+import versionMeta from '-/version.json';
+import DialogContent from '@mui/material/DialogContent';
+import Paper from '@mui/material/Paper';
+import Typography from '@mui/material/Typography';
+import { useTheme } from '@mui/material/styles';
+import useMediaQuery from '@mui/material/useMediaQuery';
+import Links from 'assets/links';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import semver from 'semver';
 
 interface Props {
   open: boolean;
-  toggleLicenseDialog: () => void;
-  toggleThirdPartyLibsDialog: () => void;
   onClose: () => void;
 }
 
@@ -56,6 +55,8 @@ document.title = productName + ' ' + versionMeta.version;
 
 function AboutDialog(props: Props) {
   const { t } = useTranslation();
+  const { openLicenseDialog } = useLicenseDialogContext();
+  const { openThirdPartyLibsDialog } = useThirdPartyLibsDialogContext();
   const [updateAvailable, setUpdateAvailable] = useState(false);
   const [newVersion, setNewVersion] = useState('');
   const { open, onClose } = props;
@@ -82,7 +83,7 @@ function AboutDialog(props: Props) {
           return true;
         })
         .catch((error) => {
-          console.warn('Error while checking for update: ' + error);
+          console.log('Error while checking for update: ' + error);
         });
     }
   }
@@ -113,21 +114,22 @@ function AboutDialog(props: Props) {
   }
 
   const theme = useTheme();
-  const fullScreen = useMediaQuery(theme.breakpoints.down('md'));
+  const smallScreen = useMediaQuery(theme.breakpoints.down('md'));
   return (
-    <Dialog
+    <TranslucentDialog
       open={open}
       onClose={onClose}
-      fullScreen={fullScreen}
+      fullScreen={smallScreen}
       keepMounted
       scroll="paper"
-      PaperComponent={fullScreen ? Paper : DraggablePaper}
+      PaperComponent={smallScreen ? Paper : DraggablePaper}
       aria-labelledby="draggable-dialog-title"
     >
-      <DialogTitle style={{ cursor: 'move' }} id="draggable-dialog-title">
-        {productName}
-        <DialogCloseButton testId="closeAboutDialogTID" onClose={onClose} />
-      </DialogTitle>
+      <TsDialogTitle
+        dialogTitle={productName}
+        onClose={onClose}
+        closeButtonTestId="closeAboutDialogTID"
+      />
       <DialogContent style={{ overflowY: 'auto' }}>
         <img
           alt="TagSpaces logo"
@@ -158,15 +160,12 @@ function AboutDialog(props: Props) {
           </strong>
           is made possible by the TagSpaces project and other open source
           software listed in the:
-          <br />
-          <Button
-            size="small"
-            color="primary"
-            style={{ marginLeft: -5 }}
-            onClick={props.toggleThirdPartyLibsDialog}
+          <TsButton
+            style={{ marginTop: 5 }}
+            onClick={() => openThirdPartyLibsDialog()}
           >
             Software Acknowledgements
-          </Button>
+          </TsButton>
           <br />
           {!Pro && (
             <span>
@@ -183,93 +182,73 @@ function AboutDialog(props: Props) {
           <br />
           <br />
           {imprintURL && (
-            <Button
-              size="small"
-              color="primary"
+            <TsButton
+              style={{ marginRight: AppConfig.defaultSpaceBetweenButtons }}
+              variant="text"
               onClick={() => {
                 openURLExternally(imprintURL, true);
               }}
             >
               Imprint
-            </Button>
+            </TsButton>
           )}
           {privacyURL && (
-            <Button
-              size="small"
-              color="primary"
+            <TsButton
+              style={{ marginRight: AppConfig.defaultSpaceBetweenButtons }}
+              variant="text"
               onClick={() => {
                 openURLExternally(privacyURL, true);
               }}
             >
               Privacy Policy
-            </Button>
+            </TsButton>
           )}
-          <Button
-            size="small"
-            color="primary"
+          <TsButton
+            style={{ marginRight: AppConfig.defaultSpaceBetweenButtons }}
+            variant="text"
             onClick={() => {
               openURLExternally(Links.links.changelogURL, true);
             }}
           >
             Changelog
-          </Button>
-          <Button
-            size="small"
-            color="primary"
+          </TsButton>
+          <TsButton
+            style={{ marginRight: AppConfig.defaultSpaceBetweenButtons }}
+            variant="text"
             data-tid="openLicenseDialog"
-            onClick={props.toggleLicenseDialog}
+            onClick={() => openLicenseDialog()}
           >
-            License Agreement
-          </Button>
+            {t('core:license')}
+          </TsButton>
         </Typography>
       </DialogContent>
-      <DialogActions
-        style={fullScreen ? { padding: '10px 30px 30px 30px' } : {}}
-      >
-        {!Pro && (
-          <Button
+      <TsDialogActions style={{ justifyContent: 'space-between' }}>
+        <span>
+          {!Pro && (
+            <TsButton
+              data-tid="checkForUpdates"
+              title={t('core:checkForNewVersion')}
+              onClick={() => {
+                openURLExternally(Links.links.productsOverview, true);
+              }}
+              style={{ marginRight: AppConfig.defaultSpaceBetweenButtons }}
+            >
+              Upgrade to PRO
+            </TsButton>
+          )}
+          <TsButton
             data-tid="checkForUpdates"
             title={t('core:checkForNewVersion')}
-            onClick={() => {
-              openURLExternally(Links.links.productsOverview, true);
-            }}
-            color="primary"
-            // variant="outlined"
+            onClick={checkForUpdates}
           >
-            Upgrade to PRO
-          </Button>
-        )}
-        <Button
-          data-tid="checkForUpdates"
-          title={t('core:checkForNewVersion')}
-          onClick={checkForUpdates}
-          // variant="outlined"
-          color="primary"
-        >
-          {versionInfo}
-        </Button>
-        {/* <Button
-        data-tid="openLicenseDialog"
-        onClick={this.props.toggleLicenseDialog}
-      >
-        {t('core:license')}
-      </Button>
-      <Button
-        data-tid="openThirdPartyLibsDialog"
-        onClick={this.props.toggleThirdPartyLibsDialog}
-      >
-        {t('core:thirdPartyLibs')}
-      </Button> */}
-        <Button
-          data-tid="closeAboutDialog"
-          onClick={onClose}
-          variant="contained"
-          color="primary"
-        >
+            {versionInfo}
+          </TsButton>
+        </span>
+        <TsButton data-tid="closeAboutDialog" onClick={onClose}>
           {t('core:ok')}
-        </Button>
-      </DialogActions>
-    </Dialog>
+        </TsButton>
+      </TsDialogActions>
+    </TranslucentDialog>
   );
 }
 

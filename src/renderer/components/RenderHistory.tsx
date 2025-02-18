@@ -1,6 +1,6 @@
 /**
  * TagSpaces - universal file and folder organizer
- * Copyright (C) 2017-present TagSpaces UG (haftungsbeschraenkt)
+ * Copyright (C) 2017-present TagSpaces GmbH
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License (version 3) as
@@ -18,10 +18,9 @@
 
 import { TS } from '-/tagspaces.namespace';
 import Grid from '@mui/material/Grid';
-import React from 'react';
-import Button from '@mui/material/Button';
+import React, { useContext } from 'react';
+import TsButton from '-/components/TsButton';
 import ListItem from '@mui/material/ListItem';
-import PlatformIO from '-/services/platform-facade';
 import { Tooltip } from '@mui/material';
 import { Pro } from '-/pro';
 import BookmarkTwoToneIcon from '@mui/icons-material/BookmarkTwoTone';
@@ -29,12 +28,13 @@ import {
   extractDirectoryName,
   extractFileName,
 } from '@tagspaces/tagspaces-common/paths';
-import IconButton from '@mui/material/IconButton';
+import TsIconButton from '-/components/TsIconButton';
 import { RemoveIcon, HistoryIcon } from '-/components/CommonIcons';
 import { dataTidFormat } from '-/services/test';
 import { useTranslation } from 'react-i18next';
-import { useOpenedEntryContext } from '-/hooks/useOpenedEntryContext';
-import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
+import AppConfig from '-/AppConfig';
+import TooltipTS from '-/components/Tooltip';
+import { useBrowserHistoryContext } from '-/hooks/useBrowserHistoryContext';
 
 interface Props {
   historyKey: string;
@@ -45,20 +45,22 @@ interface Props {
 }
 function RenderHistory(props: Props) {
   const { t } = useTranslation();
-  // const dispatch: AppDispatch = useDispatch();
-  const { openEntry, openLink } = useOpenedEntryContext();
-  const { openLocationById, currentLocation } = useCurrentLocationContext();
+  const { openHistoryItem } = useBrowserHistoryContext();
+  const bookmarksContext = Pro?.contextProviders?.BookmarksContext
+    ? useContext<TS.BookmarksContextData>(Pro.contextProviders.BookmarksContext)
+    : undefined;
+  const historyContext = Pro?.contextProviders?.HistoryContext
+    ? useContext<TS.HistoryContextData>(Pro.contextProviders.HistoryContext)
+    : undefined;
   const { historyKey, items, update, maxItems, showDelete = true } = props;
-
-  const openLinkDispatch = (link) => openLink(link, { fullWidth: false });
 
   return (
     <>
       {items &&
         items.slice(0, maxItems || items.length).map((item) => {
-          const itemName = item.path.endsWith(PlatformIO.getDirSeparator())
-            ? extractDirectoryName(item.path, PlatformIO.getDirSeparator())
-            : extractFileName(item.path, PlatformIO.getDirSeparator());
+          const itemName = item.path.endsWith(AppConfig.dirSeparator)
+            ? extractDirectoryName(item.path, AppConfig.dirSeparator)
+            : extractFileName(item.path, AppConfig.dirSeparator);
           return (
             <ListItem
               dense
@@ -66,22 +68,15 @@ function RenderHistory(props: Props) {
               key={item.creationTimeStamp}
             >
               <Grid item xs={10} style={{ minWidth: 245, maxWidth: 245 }}>
-                <Button
+                <TsButton
                   data-tid={historyKey + 'TID' + dataTidFormat(itemName)}
+                  variant="text"
                   style={{
                     textTransform: 'none',
                     fontWeight: 'normal',
                     justifyContent: 'start',
                   }}
-                  onClick={() =>
-                    Pro.history.openItem(
-                      item,
-                      currentLocation && currentLocation.uuid,
-                      openLinkDispatch,
-                      openLocationById,
-                      openEntry,
-                    )
-                  }
+                  onClick={() => openHistoryItem(item as TS.HistoryItem)}
                 >
                   <Tooltip
                     title={
@@ -98,10 +93,10 @@ function RenderHistory(props: Props) {
                       </span>
                     }
                   >
-                    {historyKey === Pro.bookmarks.bookmarksKey ? (
-                      <BookmarkTwoToneIcon fontSize="small" />
+                    {historyKey === Pro.keys.bookmarksKey ? (
+                      <BookmarkTwoToneIcon />
                     ) : (
-                      <HistoryIcon fontSize="small" />
+                      <HistoryIcon />
                     )}
                   </Tooltip>
                   &nbsp;
@@ -115,21 +110,29 @@ function RenderHistory(props: Props) {
                   >
                     {itemName}
                   </span>
-                </Button>
+                </TsButton>
               </Grid>
               {showDelete && (
                 <Grid item xs={2}>
-                  <IconButton
+                  <TsIconButton
+                    tooltip={t('delete')}
                     aria-label={t('core:clearHistory')}
                     onClick={() => {
-                      Pro.history.delItem(item, historyKey);
+                      if (historyKey === Pro.keys.bookmarksKey) {
+                        //del bookmarks
+                        bookmarksContext.delBookmark(item.path);
+                      } else {
+                        historyContext.delHistory(
+                          historyKey,
+                          item.creationTimeStamp,
+                        );
+                      }
                       update();
                     }}
                     data-tid="deleteHistoryItemTID"
-                    size="small"
                   >
                     <RemoveIcon />
-                  </IconButton>
+                  </TsIconButton>
                 </Grid>
               )}
             </ListItem>

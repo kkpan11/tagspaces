@@ -1,6 +1,6 @@
 /**
  * TagSpaces - universal file and folder organizer
- * Copyright (C) 2017-present TagSpaces UG (haftungsbeschraenkt)
+ * Copyright (C) 2017-present TagSpaces GmbH
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License (version 3) as
@@ -16,13 +16,14 @@
  *
  */
 
-import React, { MutableRefObject } from 'react';
+import React, { MutableRefObject, useEffect } from 'react';
 import { rgbToHex, useTheme } from '@mui/material/styles';
 import CloseIcon from '@mui/icons-material/Close';
-import useEventListener from '-/utils/useEventListener';
 import { useTranslation } from 'react-i18next';
 import { useDirectoryContentContext } from '-/hooks/useDirectoryContentContext';
 import { useOpenedEntryContext } from '-/hooks/useOpenedEntryContext';
+import { useFilePropertiesContext } from '-/hooks/useFilePropertiesContext';
+import AppConfig from '-/AppConfig';
 
 interface Props {
   isFullscreen?: boolean;
@@ -37,6 +38,7 @@ function FileView(props: Props) {
   const { i18n } = useTranslation();
   const theme = useTheme();
   const { openedEntry } = useOpenedEntryContext();
+  const { isEditMode } = useFilePropertiesContext();
   const {
     fileViewer,
     isFullscreen,
@@ -46,63 +48,64 @@ function FileView(props: Props) {
     eventID,
   } = props;
 
-  const { searchQuery } = useDirectoryContentContext();
+  const { searchQuery, isSearchMode } = useDirectoryContentContext();
 
-  useEventListener('toggle-resume', () => {
-    if (
-      fileViewer &&
-      fileViewer.current &&
-      fileViewer.current.contentWindow &&
-      // @ts-ignore
-      fileViewer.current.contentWindow.togglePlay
-    ) {
-      // @ts-ignore
-      fileViewer.current.contentWindow.togglePlay();
+  useEffect(() => {
+    if (AppConfig.isElectron) {
+      window.electronIO.ipcRenderer.on('play-pause', () => {
+        // @ts-ignore
+        fileViewer?.current?.contentWindow?.togglePlay();
+      });
+
+      return () => {
+        if (window.electronIO.ipcRenderer) {
+          window.electronIO.ipcRenderer.removeAllListeners('play-pause');
+        }
+      };
     }
-  });
+  }, []);
 
-  let fileOpenerURL: string;
+  function getFileOpenerURL(): string {
+    if (openedEntry && openedEntry.path) {
+      // if (fileTitle.length > maxCharactersTitleLength) {
+      //   fileTitle = fileTitle.substr(0, maxCharactersTitleLength) + '...';
+      // }
 
-  if (openedEntry.path) {
-    // if (fileTitle.length > maxCharactersTitleLength) {
-    //   fileTitle = fileTitle.substr(0, maxCharactersTitleLength) + '...';
-    // }
+      const textColor = theme.palette.text.primary;
+      const primaryColor = theme.palette.primary.main;
+      const bgndColor = theme.palette.background.default;
 
-    const textColor = theme.palette.text.primary;
-    const primaryColor = theme.palette.primary.main;
-    const bgndColor = theme.palette.background.default;
+      const extPrimaryColor =
+        '&primecolor=' +
+        encodeURIComponent(
+          primaryColor.startsWith('#') ? primaryColor : rgbToHex(primaryColor),
+        );
+      const extTextColor =
+        '&textcolor=' +
+        encodeURIComponent(
+          textColor.startsWith('#') ? textColor : rgbToHex(textColor),
+        );
+      const extBgndColor =
+        '&bgndcolor=' +
+        encodeURIComponent(
+          bgndColor.startsWith('#') ? bgndColor : rgbToHex(bgndColor),
+        );
 
-    const extPrimaryColor =
-      '&primecolor=' +
-      encodeURIComponent(
-        primaryColor.startsWith('#') ? primaryColor : rgbToHex(primaryColor),
-      );
-    const extTextColor =
-      '&textcolor=' +
-      encodeURIComponent(
-        textColor.startsWith('#') ? textColor : rgbToHex(textColor),
-      );
-    const extBgndColor =
-      '&bgndcolor=' +
-      encodeURIComponent(
-        bgndColor.startsWith('#') ? bgndColor : rgbToHex(bgndColor),
-      );
+      const event = eventID ? '&eventID=' + eventID : '';
+      const extQuery =
+        searchQuery.textQuery && isSearchMode
+          ? '&query=' + encodeURIComponent(searchQuery.textQuery)
+          : '';
+      const locale = '&locale=' + i18n.language;
+      const theming =
+        '&theme=' +
+        theme.palette.mode +
+        extPrimaryColor +
+        extTextColor +
+        extBgndColor;
 
-    const event = eventID ? '&eventID=' + eventID : '';
-    const extQuery = searchQuery.textQuery
-      ? '&query=' + encodeURIComponent(searchQuery.textQuery)
-      : '';
-    const locale = '&locale=' + i18n.language;
-    const theming =
-      '&theme=' +
-      theme.palette.mode +
-      extPrimaryColor +
-      extTextColor +
-      extBgndColor;
-
-    if (openedEntry.editMode && openedEntry.editingExtensionPath) {
-      fileOpenerURL =
-        openedEntry.editingExtensionPath +
+      const encrypted = openedEntry.isEncrypted ? '&encrypted=true' : '';
+      const getParams =
         '/index.html?file=' +
         encodeURIComponent(
           openedEntry.url ? openedEntry.url : openedEntry.path,
@@ -111,25 +114,20 @@ function FileView(props: Props) {
         theming +
         extQuery +
         event +
-        '&edit=true' +
-        (openedEntry.shouldReload === true ? '&t=' + new Date().getTime() : '');
-      // } else if (!currentEntry.isFile) { // TODO needed for loading folder's default html
-      //   fileOpenerURL = 'node_modules/@tagspaces/html-viewer/index.html?locale=' + i18n.language;
-    } else {
-      fileOpenerURL =
-        openedEntry.viewingExtensionPath +
-        '/index.html?file=' +
-        encodeURIComponent(
-          openedEntry.url ? openedEntry.url : openedEntry.path,
-        ) +
-        locale +
-        theming +
-        extQuery +
-        event +
-        (openedEntry.shouldReload === true ? '&t=' + new Date().getTime() : '');
+        encrypted;
+
+      if (isEditMode && openedEntry.editingExtensionPath) {
+        return openedEntry.editingExtensionPath + getParams + '&edit=true';
+      } else {
+        return (
+          openedEntry.viewingExtensionPath +
+          getParams +
+          '&t=' +
+          openedEntry.lmdt
+        );
+      }
     }
-  } else {
-    fileOpenerURL = 'about:blank';
+    return 'about:blank';
   }
 
   return (
@@ -170,7 +168,8 @@ function FileView(props: Props) {
             zIndex: 3,
             border: 0,
           }}
-          src={fileOpenerURL}
+          allow="clipboard-write *"
+          src={getFileOpenerURL() /*fileOpenerURL.current*/}
           allowFullScreen
           sandbox="allow-same-origin allow-scripts allow-modals allow-downloads"
           id={'FileViewer' + eventID}
@@ -179,13 +178,5 @@ function FileView(props: Props) {
     </div>
   );
 }
-
-/*const areEqual = (prevProp, nextProp) =>
-  nextProp.openedFile.path === prevProp.openedFile.path &&
-  nextProp.openedFile.url === prevProp.openedFile.url &&
-  nextProp.openedFile.editMode === prevProp.openedFile.editMode &&
-  nextProp.openedFile.shouldReload === prevProp.openedFile.shouldReload &&
-  nextProp.isFullscreen === prevProp.isFullscreen &&
-  nextProp.height === prevProp.height;*/
 
 export default FileView;

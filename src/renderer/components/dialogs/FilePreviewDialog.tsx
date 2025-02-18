@@ -1,6 +1,6 @@
 /**
  * TagSpaces - universal file and folder organizer
- * Copyright (C) 2017-present TagSpaces UG (haftungsbeschraenkt)
+ * Copyright (C) 2017-present TagSpaces GmbH
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License (version 3) as
@@ -16,24 +16,25 @@
  *
  */
 
-import React, { MutableRefObject, useRef } from 'react';
-import { getUuid } from '@tagspaces/tagspaces-common/utils-io';
-import DialogContent from '@mui/material/DialogContent';
-import DialogTitle from '@mui/material/DialogTitle';
-import Dialog from '@mui/material/Dialog';
-import DialogCloseButton from '-/components/dialogs/DialogCloseButton';
-import { extractContainingDirectoryPath } from '@tagspaces/tagspaces-common/paths';
-import DraggablePaper from '-/components/DraggablePaper';
-import { OpenedEntry } from '-/reducers/app';
-import { TS } from '-/tagspaces.namespace';
-import { getCurrentTheme, getSupportedFileTypes } from '-/reducers/settings';
-import { useSelector } from 'react-redux';
-import FileView from '-/components/FileView';
-import useEventListener from '-/utils/useEventListener';
-import PlatformIO from '-/services/platform-facade';
 import AppConfig from '-/AppConfig';
+import DraggablePaper from '-/components/DraggablePaper';
+import FileView from '-/components/FileView';
+import TsDialogTitle from '-/components/dialogs/components/TsDialogTitle';
 import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
+import { useFilePropertiesContext } from '-/hooks/useFilePropertiesContext';
 import { useOpenedEntryContext } from '-/hooks/useOpenedEntryContext';
+import { getCurrentTheme } from '-/reducers/settings';
+import { TS } from '-/tagspaces.namespace';
+import useEventListener from '-/utils/useEventListener';
+import { Typography } from '@mui/material';
+import Dialog from '@mui/material/Dialog';
+import DialogContent from '@mui/material/DialogContent';
+import { useTheme } from '@mui/material/styles';
+import useMediaQuery from '@mui/material/useMediaQuery';
+import { extractContainingDirectoryPath } from '@tagspaces/tagspaces-common/paths';
+import { getUuid } from '@tagspaces/tagspaces-common/utils-io';
+import { MutableRefObject, useRef } from 'react';
+import { useSelector } from 'react-redux';
 
 interface Props {
   open: boolean;
@@ -43,10 +44,11 @@ interface Props {
 
 function FilePreviewDialog(props: Props) {
   const { open = false, onClose, fsEntry } = props;
-  //const dispatch: AppDispatch = useDispatch();
-  const { switchLocationTypeByID, switchCurrentLocationType } =
-    useCurrentLocationContext();
+  const { findLocation } = useCurrentLocationContext();
   const { openedEntry } = useOpenedEntryContext();
+  const { isEditMode } = useFilePropertiesContext();
+  const theme = useTheme();
+  const smallScreen = useMediaQuery(theme.breakpoints.down('md'));
   // const supportedFileTypes = useSelector(getSupportedFileTypes);
   const currentTheme = useSelector(getCurrentTheme);
   const fileViewer: MutableRefObject<HTMLIFrameElement> =
@@ -55,14 +57,14 @@ function FilePreviewDialog(props: Props) {
     useRef<HTMLDivElement>(null);
   const eventID = useRef<string>(getUuid());
 
-  const openedFile: OpenedEntry =
+  const openedFile: TS.OpenedEntry =
     fsEntry && openedEntry
       ? {
           ...openedEntry,
           ...(fsEntry.uuid && { uuid: fsEntry.uuid }),
           path: fsEntry.path,
           isFile: fsEntry.isFile,
-          editMode: false,
+          // editMode: false,
         }
       : undefined;
 
@@ -104,53 +106,50 @@ function FilePreviewDialog(props: Props) {
           // @ts-ignore call setContent from iframe
           fileViewer.current.contentWindow.setTheme(currentTheme);
         }*/
+        const openLocation = findLocation(openedFile.locationID);
 
-        switchLocationTypeByID(openedFile.locationId).then(() => {
-          PlatformIO.loadTextFilePromise(
+        openLocation
+          ?.loadTextFilePromise(
             textFilePath,
             data.preview ? data.preview : false,
           )
-            .then((content) => {
-              const UTF8_BOM = '\ufeff';
-              if (content.indexOf(UTF8_BOM) === 0) {
-                content = content.substr(1);
-              }
-              let fileDirectory = extractContainingDirectoryPath(
-                textFilePath,
-                PlatformIO.getDirSeparator(),
+          .then((content) => {
+            const UTF8_BOM = '\ufeff';
+            if (content.indexOf(UTF8_BOM) === 0) {
+              content = content.substr(1);
+            }
+            let fileDirectory = extractContainingDirectoryPath(
+              textFilePath,
+              openLocation?.getDirSeparator(),
+            );
+            if (AppConfig.isWeb) {
+              const webDir = extractContainingDirectoryPath(
+                // eslint-disable-next-line no-restricted-globals
+                location.href,
+                openLocation?.getDirSeparator(),
               );
-              if (AppConfig.isWeb) {
-                fileDirectory =
-                  extractContainingDirectoryPath(
-                    // eslint-disable-next-line no-restricted-globals
-                    location.href,
-                    PlatformIO.getDirSeparator(),
-                  ) +
-                  '/' +
-                  fileDirectory;
-              }
-              if (
-                fileViewer &&
-                fileViewer.current &&
-                fileViewer.current.contentWindow &&
-                // @ts-ignore
-                fileViewer.current.contentWindow.setContent
-              ) {
-                // @ts-ignore call setContent from iframe
-                fileViewer.current.contentWindow.setContent(
-                  content,
-                  fileDirectory,
-                  !openedFile.editMode,
-                  currentTheme,
-                );
-              }
-              return switchCurrentLocationType();
-            })
-            .catch((err) => {
-              console.warn('Error loading text content ' + err);
-              return switchCurrentLocationType();
-            });
-        });
+              fileDirectory =
+                (webDir && webDir !== '/' ? webDir + '/' : '') + fileDirectory;
+            }
+            if (
+              fileViewer &&
+              fileViewer.current &&
+              fileViewer.current.contentWindow &&
+              // @ts-ignore
+              fileViewer.current.contentWindow.setContent
+            ) {
+              // @ts-ignore call setContent from iframe
+              fileViewer.current.contentWindow.setContent(
+                content,
+                fileDirectory,
+                !isEditMode,
+                currentTheme,
+              );
+            }
+          })
+          .catch((err) => {
+            console.log('Error loading text content ' + err);
+          });
         break;
     }
   };
@@ -167,29 +166,33 @@ function FilePreviewDialog(props: Props) {
       scroll="paper"
       fullWidth
       maxWidth="md"
+      fullScreen={smallScreen}
       aria-labelledby="draggable-dialog-title"
       PaperComponent={DraggablePaper}
       PaperProps={{ sx: { width: '100%', height: '100%' } }}
-      BackdropProps={{ style: { backgroundColor: 'transparent' } }}
+      slotProps={{ backdrop: { style: { backgroundColor: 'transparent' } } }}
     >
-      <DialogTitle
-        data-tid="importDialogTitle"
-        style={{ cursor: 'move' }}
-        id="draggable-dialog-title"
-      >
-        {/*{t('core:importDialogTitle')}*/}
-        <DialogCloseButton testId="closeFilePreviewTID" onClose={onClose} />
-      </DialogTitle>
+      <TsDialogTitle
+        dialogTitle="Preview"
+        closeButtonTestId="closeFilePreviewTID"
+        onClose={onClose}
+      />
       <DialogContent
         style={{
           marginLeft: 'auto',
           marginRight: 'auto',
           overflowY: 'hidden',
-          width: '90%',
+          padding: smallScreen ? '0' : 'inherited',
           flexGrow: 1,
         }}
       >
-        <p>{fsEntry.path}</p>
+        <Typography
+          variant="body2"
+          gutterBottom
+          style={{ wordBreak: 'break-all', margin: 10 }}
+        >
+          {fsEntry.path}
+        </Typography>
         <FileView
           key="FileViewPreviewID"
           fileViewer={fileViewer}

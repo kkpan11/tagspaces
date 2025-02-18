@@ -1,6 +1,6 @@
 /**
  * TagSpaces - universal file and folder organizer
- * Copyright (C) 2017-present TagSpaces UG (haftungsbeschraenkt)
+ * Copyright (C) 2017-present TagSpaces GmbH
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License (version 3) as
@@ -19,7 +19,6 @@
 import semver from 'semver';
 import AppConfig from '-/AppConfig';
 import defaultSettings from './settings-default';
-import PlatformIO from '-/services/platform-facade';
 import Links from 'assets/links';
 import versionMeta from '-/version.json';
 import { actions as AppActions } from './app';
@@ -30,15 +29,18 @@ import {
   getDefaultEditor,
   getDefaultViewer,
   mergeByProp,
+  setZoomFactorElectron,
   updateByProp,
 } from '-/services/utils-io';
+import { AIProvider } from '-/components/chat/ChatTypes';
+import { TabNames } from '-/hooks/EntryPropsTabsContextProvider';
 
 export const types = {
   UPGRADE_SETTINGS: 'SETTINGS/UPGRADE_SETTINGS',
   SET_LANGUAGE: 'SETTINGS/SET_LANGUAGE',
   TOGGLE_SHOWUNIXHIDDENENTRIES: 'SETTINGS/TOGGLE_SHOWUNIXHIDDENENTRIES',
   SET_ENTRY_CONTAINER_TAB: 'SETTINGS/SET_ENTRY_CONTAINER_TAB',
-  SET_SHOW_DETAILS: 'SETTINGS/SET_SHOW_DETAILS',
+  //SET_SHOW_DETAILS: 'SETTINGS/SET_SHOW_DETAILS',
   SET_DESKTOPMODE: 'SETTINGS/SET_DESKTOPMODE',
   SET_DEVMODE: 'SETTINGS/SET_DEVMODE',
   SET_ENABLE_WS: 'SETTINGS/SET_ENABLE_WS',
@@ -63,11 +65,16 @@ export const types = {
   SET_CALCULATETAGS: 'SETTINGS/SET_CALCULATETAGS',
   SET_USETRASHCAN: 'SETTINGS/SET_USETRASHCAN',
   SET_PERSISTTAGSINSIDECARFILE: 'SETTINGS/SET_PERSISTTAGSINSIDECARFILE',
+  SET_MAXCOLLECTEDTAG: 'SETTINGS/SET_MAXCOLLECTEDTAG',
+  SET_FILENAMETAGPLACEDATEND: 'SETTINGS/SET_FILENAMETAGPLACEDATEND',
   SET_ADDTAGSTOLIBRARY: 'SETTINGS/SET_ADDTAGSTOLIBRARY',
   SET_REVISIONS_ENABLED: 'SETTINGS/SET_REVISIONS_ENABLED',
+  SET_AI_PROVIDER: 'SETTINGS/SET_AI_PROVIDER',
+  ADD_AI_PROVIDER: 'SETTINGS/ADD_AI_PROVIDER',
+  REMOVE_AI_PROVIDER: 'SETTINGS/REMOVE_AI_PROVIDER',
+  SET_AI_PROVIDERS: 'SETTINGS/SET_AI_PROVIDERS',
   SET_PREFIX_TAG_CONTAINER: 'SETTINGS/SET_PREFIX_TAG_CONTAINER',
   SET_USEGENERATETHUMBNAILS: 'SETTINGS/SET_USEGENERATETHUMBNAILS',
-  SET_USETEXTEXTRACTION: 'SETTINGS/SET_USETEXTEXTRACTION',
   SET_TAGCOLOR: 'SETTINGS/SET_TAGCOLOR',
   SET_TAGTEXTCOLOR: 'SETTINGS/SET_TAGTEXTCOLOR',
   SET_CURRENTTHEME: 'SETTINGS/SET_CURRENTTHEME',
@@ -85,7 +92,7 @@ export const types = {
   SET_SUPPORTED_FILE_TYPES: 'SETTINGS/SET_SUPPORTED_FILE_TYPES',
   ADD_SUPPORTED_FILE_TYPES: 'SETTINGS/ADD_SUPPORTED_FILE_TYPES',
   REMOVE_SUPPORTED_FILE_TYPES: 'SETTINGS/REMOVE_SUPPORTED_FILE_TYPES',
-  ENABLE_EXTENSION: 'SETTINGS/ENABLE_EXTENSION',
+  //ENABLE_EXTENSION: 'SETTINGS/ENABLE_EXTENSION',
   SET_LAST_PUBLISHED_VERSION: 'SETTINGS/SET_LAST_PUBLISHED_VERSION',
   SET_ENTRY_PROPERTIES_SPLIT_SIZE: 'SETTINGS/SET_ENTRY_PROPERTIES_SPLIT_SIZE',
   SET_MAIN_VSPLIT_SIZE: 'SETTINGS/SET_MAIN_VSPLIT_SIZE',
@@ -100,6 +107,18 @@ export const types = {
   SET_FOLDER_OPEN_HISTORY: 'SET_FOLDER_OPEN_HISTORY',
   SET_FILE_EDIT_HISTORY: 'SET_FILE_EDIT_HISTORY',
 };
+
+function generateUniqueName(array: Array<any>, baseName: string): string {
+  let uniqueName = baseName;
+  let count = 1;
+
+  while (array.some((item) => item.name === uniqueName)) {
+    uniqueName = `${baseName}${count}`;
+    count++;
+  }
+
+  return uniqueName;
+}
 
 export default (state: any = defaultSettings, action: any) => {
   switch (action.type) {
@@ -141,18 +160,6 @@ export default (state: any = defaultSettings, action: any) => {
     }
     case types.SET_ENTRY_CONTAINER_TAB: {
       return { ...state, entryContainerTab: action.entryContainerTab };
-    }
-    case types.SET_SHOW_DETAILS: {
-      if (action.showDetails) {
-        if (state.entryContainerTab !== 0) {
-          return { ...state, entryContainerTab: 0 };
-        }
-      } /*else {
-        if (state.entryContainerTab !== undefined) {
-          return { ...state, entryContainerTab: undefined };
-        }
-      }*/
-      return state;
     }
     case types.SET_TAG_DELIMITER: {
       return { ...state, tagDelimiter: action.delimiter };
@@ -235,20 +242,60 @@ export default (state: any = defaultSettings, action: any) => {
         persistTagsInSidecarFile: action.persistTagsInSidecarFile,
       };
     }
+    case types.SET_MAXCOLLECTEDTAG: {
+      return {
+        ...state,
+        maxCollectedTag: action.maxCollectedTag,
+      };
+    }
+    case types.SET_FILENAMETAGPLACEDATEND: {
+      return {
+        ...state,
+        filenameTagPlacedAtEnd: action.filenameTagPlacedAtEnd,
+      };
+    }
     case types.SET_ADDTAGSTOLIBRARY: {
       return { ...state, addTagsToLibrary: action.addTagsToLibrary };
     }
     case types.SET_REVISIONS_ENABLED: {
       return { ...state, isRevisionsEnabled: action.enabled };
     }
+    case types.SET_AI_PROVIDER: {
+      return { ...state, aiProviderId: action.aiProviderId };
+    }
+    case types.ADD_AI_PROVIDER: {
+      if (
+        state.aiProviders.some((item) => item.name === action.aiProvider.name)
+      ) {
+        action.aiProvider.name = generateUniqueName(
+          state.aiProviders,
+          action.aiProvider.name,
+        );
+      }
+      return {
+        ...state,
+        aiProviders: [...state.aiProviders, action.aiProvider],
+      };
+    }
+    case types.REMOVE_AI_PROVIDER: {
+      return {
+        ...state,
+        aiProviders: state.aiProviders.filter(
+          (provider) => provider.id !== action.id,
+        ),
+      };
+    }
+    case types.SET_AI_PROVIDERS: {
+      return {
+        ...state,
+        aiProviders: action.aiProviders,
+      };
+    }
     case types.SET_PREFIX_TAG_CONTAINER: {
       return { ...state, prefixTagContainer: action.prefixTagContainer };
     }
     case types.SET_USEGENERATETHUMBNAILS: {
       return { ...state, useGenerateThumbnails: action.useGenerateThumbnails };
-    }
-    case types.SET_USETEXTEXTRACTION: {
-      return { ...state, useTextExtraction: action.useTextExtraction };
     }
     case types.SET_EMAIL: {
       return {
@@ -315,11 +362,11 @@ export default (state: any = defaultSettings, action: any) => {
       };
     }
     case types.SET_ZOOM_RESET: {
-      PlatformIO.setZoomFactorElectron(1);
+      setZoomFactorElectron(1);
       return { ...state, zoomFactor: 1 };
     }
     case types.SET_ZOOM_RESTORE: {
-      PlatformIO.setZoomFactorElectron(state.zoomFactor);
+      setZoomFactorElectron(state.zoomFactor);
       return state;
     }
     case types.SET_ZOOM_IN: {
@@ -329,7 +376,7 @@ export default (state: any = defaultSettings, action: any) => {
       const threshold = zoomLevel + correctedOffset;
       if (zoomLevel.toPrecision(2) <= threshold) {
         zoomLevel += offSet;
-        PlatformIO.setZoomFactorElectron(zoomLevel);
+        setZoomFactorElectron(zoomLevel);
       }
       return { ...state, zoomFactor: zoomLevel };
     }
@@ -338,7 +385,7 @@ export default (state: any = defaultSettings, action: any) => {
       const offSet = 0.1;
       if (zoomLevel.toPrecision(2) > offSet * 4) {
         zoomLevel -= offSet;
-        PlatformIO.setZoomFactorElectron(zoomLevel);
+        setZoomFactorElectron(zoomLevel);
       }
       return { ...state, zoomFactor: zoomLevel };
     }
@@ -358,7 +405,7 @@ export default (state: any = defaultSettings, action: any) => {
         ),
       };
     }
-    case types.ENABLE_EXTENSION: {
+    /*case types.ENABLE_EXTENSION: {
       let enabledExtensions;
       let supportedFileTypes;
       if (action.enabled) {
@@ -385,7 +432,7 @@ export default (state: any = defaultSettings, action: any) => {
         enabledExtensions: enabledExtensions,
         ...(supportedFileTypes && { supportedFileTypes: supportedFileTypes }),
       };
-    }
+    }*/
     case types.REMOVE_SUPPORTED_FILE_TYPES: {
       const supportedFileTypes = state.supportedFileTypes.map(
         (fType: TS.FileTypes) => ({
@@ -577,14 +624,16 @@ export const actions = {
   toggleShowUnixHiddenEntries: () => ({
     type: types.TOGGLE_SHOWUNIXHIDDENENTRIES,
   }),
-  setEntryContainerTab: (tabIndex: number) => ({
+  setEntryContainerTab: (
+    tabName: (typeof TabNames)[keyof typeof TabNames],
+  ) => ({
     type: types.SET_ENTRY_CONTAINER_TAB,
-    entryContainerTab: tabIndex,
+    entryContainerTab: tabName,
   }),
-  setShowDetails: (showDetails: boolean) => ({
+  /*  setShowDetails: (showDetails: boolean) => ({
     type: types.SET_SHOW_DETAILS,
     showDetails: showDetails,
-  }),
+  }),*/
   setCheckForUpdates: (checkForUpdates: boolean) => ({
     type: types.SET_CHECKFORUPDATES,
     checkForUpdates,
@@ -642,6 +691,14 @@ export const actions = {
     type: types.SET_PERSISTTAGSINSIDECARFILE,
     persistTagsInSidecarFile,
   }),
+  setMaxCollectedTag: (maxCollectedTag: number) => ({
+    type: types.SET_MAXCOLLECTEDTAG,
+    maxCollectedTag,
+  }),
+  setFileNameTagPlace: (filenameTagPlacedAtEnd: boolean) => ({
+    type: types.SET_FILENAMETAGPLACEDATEND,
+    filenameTagPlacedAtEnd,
+  }),
   setAddTagsToLibrary: (addTagsToLibrary: boolean) => ({
     type: types.SET_ADDTAGSTOLIBRARY,
     addTagsToLibrary,
@@ -650,6 +707,22 @@ export const actions = {
     type: types.SET_REVISIONS_ENABLED,
     enabled,
   }),
+  setAiProvider: (aiProviderId: string) => ({
+    type: types.SET_AI_PROVIDER,
+    aiProviderId,
+  }),
+  setAiProviders: (aiProviders: AIProvider[]) => ({
+    type: types.SET_AI_PROVIDERS,
+    aiProviders,
+  }),
+  addAiProvider: (aiProvider: AIProvider) => ({
+    type: types.ADD_AI_PROVIDER,
+    aiProvider,
+  }),
+  removeAiProvider: (id: string) => ({
+    type: types.REMOVE_AI_PROVIDER,
+    id,
+  }),
   setPrefixTagContainer: (prefixTagContainer: boolean) => ({
     type: types.SET_PREFIX_TAG_CONTAINER,
     prefixTagContainer,
@@ -657,10 +730,6 @@ export const actions = {
   setUseGenerateThumbnails: (useGenerateThumbnails: boolean) => ({
     type: types.SET_USEGENERATETHUMBNAILS,
     useGenerateThumbnails,
-  }),
-  setUseTextExtraction: (useTextExtraction: boolean) => ({
-    type: types.SET_USETEXTEXTRACTION,
-    useTextExtraction,
   }),
   setAppDataPath: (path: string) => ({
     type: types.SET_APPDATAPATH,
@@ -726,11 +795,11 @@ export const actions = {
     type: types.REMOVE_SUPPORTED_FILE_TYPES,
     extensionId,
   }),
-  enableExtension: (extensionId: string, enabled: boolean) => ({
+  /*enableExtension: (extensionId: string, enabled: boolean) => ({
     type: types.ENABLE_EXTENSION,
     extensionId,
     enabled,
-  }),
+  }),*/
   setSupportedFileTypes: (supportedFileTypes: []) => ({
     type: types.SET_SUPPORTED_FILE_TYPES,
     supportedFileTypes,
@@ -804,7 +873,7 @@ export const actions = {
           return true;
         })
         .catch((error) => {
-          console.warn('Error while checking for update: ' + error);
+          console.log('Error while checking for update: ' + error);
         });
     },
 };
@@ -851,6 +920,19 @@ export function getLastVersionPromise(): Promise<string> {
   });
 }
 
+function getDefaultAI(aiProviderId: string, aiProviders: AIProvider[]) {
+  if (aiProviderId) {
+    const provider = aiProviders.find((p) => p.enable && p.id === aiProviderId);
+    if (provider) {
+      return provider;
+    }
+  }
+  if (aiProviders.length > 0) {
+    return aiProviders.find((p) => p.enable);
+  }
+  return undefined;
+}
+
 // Selectors
 export const getEntrySplitSize = (state: any) => state.settings.entrySplitSize;
 export const getMapTileServer = (state: any): TS.MapTileServer =>
@@ -872,6 +954,23 @@ export const isDevMode = (state: any) =>
 export const isRevisionsEnabled = (state: any) =>
   state.settings.isRevisionsEnabled;
 export const isReorderTags = (state: any) => state.settings.reorderTags;
+/*export const getDefaultAIProviderId = (state: any) =>
+  state.settings.aiProviderId;*/
+export const getDefaultAIProvider = (state: any) => {
+  if (typeof window.ExtAI === 'undefined') {
+    return getDefaultAI(
+      state.settings.aiProviderId,
+      state.settings.aiProviders,
+    );
+  }
+  return getDefaultAI(window.ExtAI.defaultEngine, window.ExtAI.engines);
+};
+export const getAIProviders = (state: any) => {
+  if (typeof window.ExtAI === 'undefined') {
+    return state.settings.aiProviders;
+  }
+  return window.ExtAI.engines;
+};
 export const getPrefixTagContainer = (state: any) =>
   state.settings.prefixTagContainer;
 export const getGeoTaggingFormat = (state: any) =>
@@ -908,14 +1007,18 @@ export const getAppDataPath = (state: any) => state.settings.appDataPath;
 export const getSupportedLanguages = (state: any) => state.settings.languages;
 export const getCalculateTags = (state: any) => state.settings.calculateTags;
 export const getUseTrashCan = (state: any) => state.settings.useTrashCan;
+export const getMaxCollectedTag = (state: any) =>
+  state.settings.maxCollectedTag
+    ? state.settings.maxCollectedTag
+    : AppConfig.maxCollectedTag;
 export const getPersistTagsInSidecarFile = (state: any): boolean =>
   AppConfig.useSidecarsForFileTaggingDisableSetting
     ? AppConfig.useSidecarsForFileTagging
     : state.settings.persistTagsInSidecarFile;
+export const getFileNameTagPlace = (state: any): boolean =>
+  state.settings.filenameTagPlacedAtEnd;
 export const getUseGenerateThumbnails = (state: any) =>
   state.settings.useGenerateThumbnails;
-export const getUseTextExtraction = (state: any) =>
-  state.settings.useTextExtraction;
 export const getKeyBindings = (state: any) => state.settings.keyBindings;
 export const getKeyBindingObject = (state: any) =>
   generateKeyBindingObject(state.settings.keyBindings);
@@ -923,6 +1026,8 @@ export const getSupportedFileTypes = (state: any) =>
   state.settings.supportedFileTypes.sort((a, b) =>
     a.type > b.type ? 1 : a.type < b.type ? -1 : 0,
   );
+export const getExtensionsFound = (state: any) =>
+  state.settings.extensionsFound;
 export const getTagColor = (state: any) => state.settings.tagBackgroundColor;
 export const getTagTextColor = (state: any) => state.settings.tagTextColor;
 export const getCurrentTheme = (state: any) => state.settings.currentTheme;
@@ -936,6 +1041,8 @@ export const getMainVerticalSplitSize = (state: any) =>
   state.settings.mainVSplitSize;
 export const getNewHTMLFileContent = (state: any) =>
   state.settings.newHTMLFileContent;
+/*export const getEnabledExtensions = (state: any) =>
+  state.settings.enabledExtensions;*/
 export const getTagGroupCollapsed = (state: any) =>
   state.settings.tagGroupCollapsed;
 export const getTagDelimiter = (state: any) => state.settings.tagDelimiter;

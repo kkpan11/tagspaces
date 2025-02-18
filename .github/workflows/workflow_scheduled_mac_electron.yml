@@ -1,4 +1,4 @@
-name: Nightly E2E Tests Electron MacOS
+name: Nightly E2E Tests Lite Electron MacOS
 on:
   schedule:
     - cron: '0 2 * * *'
@@ -6,7 +6,7 @@ on:
 
 jobs:
   e2eTestsElectronMac:
-    name: Test TagSpaces Desktop on Mac
+    name: Test TagSpaces Lite Desktop on Mac
     runs-on: macos-latest
     steps:
       - name: Checking out default branch

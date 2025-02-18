@@ -1,6 +1,6 @@
 /**
  * TagSpaces - universal file and folder organizer
- * Copyright (C) 2017-present TagSpaces UG (haftungsbeschraenkt)
+ * Copyright (C) 2017-present TagSpaces GmbH
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License (version 3) as
@@ -17,7 +17,7 @@
  */
 
 import React from 'react';
-import { FileTypeGroups } from '-/services/search';
+import AppConfig from '-/AppConfig';
 
 interface Props {
   isFile: boolean;
@@ -63,19 +63,19 @@ function EntryIcon(props: Props) {
   let iconSVGPath = genericFileIcon;
   if (!isFile) {
     iconSVGPath = folderIcon;
-  } else if (FileTypeGroups.audio.includes(fileExtension)) {
+  } else if (AppConfig.SearchTypeGroups.audio.includes(fileExtension)) {
     iconSVGPath = audioFileIcon;
-  } else if (FileTypeGroups.video.includes(fileExtension)) {
+  } else if (AppConfig.SearchTypeGroups.video.includes(fileExtension)) {
     iconSVGPath = videoFileIcon;
-  } else if (FileTypeGroups.images.includes(fileExtension)) {
+  } else if (AppConfig.SearchTypeGroups.images.includes(fileExtension)) {
     iconSVGPath = imageFileIcon;
-  } else if (FileTypeGroups.notes.includes(fileExtension)) {
+  } else if (AppConfig.SearchTypeGroups.notes.includes(fileExtension)) {
     iconSVGPath = noteFileIcon;
-  } else if (FileTypeGroups.bookmarks.includes(fileExtension)) {
+  } else if (AppConfig.SearchTypeGroups.bookmarks.includes(fileExtension)) {
     iconSVGPath = bookmarkIcon;
-  } else if (FileTypeGroups.emails.includes(fileExtension)) {
+  } else if (AppConfig.SearchTypeGroups.emails.includes(fileExtension)) {
     iconSVGPath = emailIcon;
-  } else if (FileTypeGroups.ebooks.includes(fileExtension)) {
+  } else if (AppConfig.SearchTypeGroups.ebooks.includes(fileExtension)) {
     iconSVGPath = ebookIcon;
   }
 

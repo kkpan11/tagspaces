@@ -1,6 +1,6 @@
 /**
  * TagSpaces - universal file and folder organizer
- * Copyright (C) 2017-present TagSpaces UG (haftungsbeschraenkt)
+ * Copyright (C) 2017-present TagSpaces GmbH
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License (version 3) as
@@ -23,7 +23,8 @@ import Menu from '@mui/material/Menu';
 import MenuItem from '@mui/material/MenuItem';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import DeleteIcon from '@mui/icons-material/Delete';
-import { Pro } from '../../pro';
+import TsMenuList from '-/components/TsMenuList';
+import { Pro } from '-/pro';
 import { useTranslation } from 'react-i18next';
 
 interface Props {
@@ -74,7 +75,7 @@ function HistoryMenu(props: Props) {
   return (
     <div style={{ overflowY: 'hidden' }}>
       <Menu anchorEl={props.anchorEl} open={props.open} onClose={props.onClose}>
-        {menuItems}
+        <TsMenuList>{menuItems}</TsMenuList>
       </Menu>
     </div>
   );

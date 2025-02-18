@@ -1,6 +1,6 @@
 /**
  * TagSpaces - universal file and folder organizer
- * Copyright (C) 2017-present TagSpaces UG (haftungsbeschraenkt)
+ * Copyright (C) 2017-present TagSpaces GmbH
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License (version 3) as
@@ -16,21 +16,20 @@
  *
  */
 
-import React from 'react';
-import { useSelector } from 'react-redux';
-import { I18nextProvider, useTranslation } from 'react-i18next'; // as we build ourself via webpack
-import {
-  createTheme,
-  ThemeProvider,
-  StyledEngineProvider,
-} from '@mui/material/styles';
-import useMediaQuery from '@mui/material/useMediaQuery';
 import AppConfig from '-/AppConfig';
 import {
   getCurrentTheme,
-  getDefaultRegularTheme,
   getDefaultDarkTheme,
+  getDefaultRegularTheme,
 } from '-/reducers/settings';
+import {
+  StyledEngineProvider,
+  ThemeProvider,
+  createTheme,
+} from '@mui/material/styles';
+import useMediaQuery from '@mui/material/useMediaQuery';
+import { I18nextProvider, useTranslation } from 'react-i18next'; // as we build ourself via webpack
+import { useSelector } from 'react-redux';
 
 declare module '@mui/material/styles' {
   interface Theme extends Record<string, any> {
@@ -66,6 +65,7 @@ const newlightTheme = createTheme({
     },
     divider: '#ddd',
   },
+  // shape: { borderRadius: 10 },
 });
 
 // https://mui.com/material-ui/customization/dark-mode/

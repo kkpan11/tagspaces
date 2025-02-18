@@ -1,6 +1,6 @@
 /**
  * TagSpaces - universal file and folder organizer
- * Copyright (C) 2017-present TagSpaces UG (haftungsbeschraenkt)
+ * Copyright (C) 2017-present TagSpaces GmbH
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License (version 3) as
@@ -56,15 +56,6 @@ export default function buildDesktopMenu(props: any, i18n) {
         },
         {
           type: 'separator',
-        },
-        {
-          label: i18n.t('print'),
-          accelerator: 'CmdOrCtrl+p',
-          click: (item, focusedWindow) => {
-            if (focusedWindow.webContents && focusedWindow.webContents.print) {
-              focusedWindow.webContents.print();
-            }
-          },
         },
         {
           type: 'separator',
@@ -132,16 +123,14 @@ export default function buildDesktopMenu(props: any, i18n) {
         {
           label: i18n.t('showDevTools'),
           click: (item, focusedWindow) => {
-            if (focusedWindow) {
-              focusedWindow.toggleDevTools();
-            }
+            focusedWindow?.toggleDevTools();
           },
         },
         {
           label: i18n.t('reloadApplication'),
           accelerator: 'Alt+Shift+R',
           click: (item, focusedWindow) => {
-            focusedWindow.webContents.reload();
+            focusedWindow?.webContents.reload();
           },
         },
         {
@@ -180,11 +169,11 @@ export default function buildDesktopMenu(props: any, i18n) {
           accelerator: 'F11',
           click: (item, focusedWindow) => {
             // props.toggleFullScreen
-            if (focusedWindow.isFullScreen()) {
+            if (focusedWindow?.isFullScreen()) {
               props.exitFullscreen();
-              focusedWindow.setFullScreen(false);
+              focusedWindow?.setFullScreen(false);
             } else {
-              focusedWindow.setFullScreen(true);
+              focusedWindow?.setFullScreen(true);
             }
           },
         },
@@ -212,7 +201,7 @@ export default function buildDesktopMenu(props: any, i18n) {
           click: props.toggleKeysDialog,
         },
         {
-          label: 'Welcome Wizzard',
+          label: '&' + i18n.t('onboardingWizard'),
           click: props.toggleOnboardingDialog,
         },
         {
@@ -222,7 +211,7 @@ export default function buildDesktopMenu(props: any, i18n) {
           },
         },
         {
-          label: '&' + i18n.t('followOnTwitter'),
+          label: '&' + i18n.t('followOnX'),
           click: () => {
             shell.openExternal(Links.links.twitter);
           },

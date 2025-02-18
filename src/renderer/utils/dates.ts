@@ -1,6 +1,6 @@
 /**
  * TagSpaces - universal file and folder organizer
- * Copyright (C) 2017-present TagSpaces UG (haftungsbeschraenkt)
+ * Copyright (C) 2017-present TagSpaces GmbH
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License (version 3) as
@@ -15,6 +15,8 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  */
+
+import { parse } from 'date-fns';
 
 /** Returns true if the input is one of the following formats:
  * 2015, 201402, 20220212, 20190230~12, 20190230~1245, 20190230~124612 */
@@ -489,7 +491,49 @@ export function convertToDate(date: string) {
   }
 }
 
-export function convertToDateTime(dateTime: string) {
+export function convertToTimestamp(dateStr: string): number {
+  if (typeof dateStr !== 'string') {
+    throw new Error('Invalid date format. Please provide a date string.');
+  }
+
+  // Define possible date formats
+  const formats = [
+    'yyyy',
+    'yyyyMM',
+    'yyyyMMdd',
+    'yyyyMMdd~HHmmss',
+    'yyyyMMdd-HHmmss',
+    'yyyyMMdd HHmmss',
+    "yyyyMMdd'T'HHmmss",
+    'yyyy-MM',
+    'yyyy-MM-dd',
+    'yyyy-MM-dd HH:mm:ss',
+  ];
+
+  // Try to parse the date string using each format
+  for (const format of formats) {
+    try {
+      const parsedDate = parse(dateStr, format, new Date());
+      const timestamp = parsedDate.getTime();
+      // Check if the parsed date is valid
+      if (!isNaN(timestamp)) {
+        return timestamp;
+      }
+    } catch (error) {
+      // Ignore parsing errors and try the next format
+    }
+  }
+
+  // If none of the formats worked, throw an error
+  //throw new Error('Invalid date string or format.' + dateStr);
+  console.log('Invalid date string or format.' + dateStr);
+  return new Date().getTime();
+}
+
+/**
+ * @deprecated use convertToTimestamp instead
+ */
+/*export function convertToDateTime(dateTime: string) {
   const dateTimeRegExp =
     /^\d\d\d\d-(00|[0-9]|1[0-9]|2[0-3]):([0-9]|[0-5][0-9]):([0-9]|[0-5][0-9])$/g;
   const dateTimeWinRegExp =
@@ -541,9 +585,9 @@ export function convertToDateTime(dateTime: string) {
         return time;
       }
     }
-    if (dateTime.includes('~')) {
+    if (dateTime.includes('-')) {
       // for compatibility
-      time = dateTime.split('~');
+      time = dateTime.split('-');
       if (parseInt(time[0], 10) && parseInt(time[1], 10)) {
         firstTime = time[0];
         secondTime = time[1];
@@ -556,7 +600,7 @@ export function convertToDateTime(dateTime: string) {
       }
     }
   }
-}
+}*/
 
 export function convertToDateRange(dateRange: string) {
   const dateRangeRegExp =

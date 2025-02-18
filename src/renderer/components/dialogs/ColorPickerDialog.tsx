@@ -1,6 +1,6 @@
 /**
  * TagSpaces - universal file and folder organizer
- * Copyright (C) 2017-present TagSpaces UG (haftungsbeschraenkt)
+ * Copyright (C) 2017-present TagSpaces GmbH
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License (version 3) as
@@ -16,14 +16,17 @@
  *
  */
 
-import React, { useState } from 'react';
-import Button from '@mui/material/Button';
-import DialogActions from '@mui/material/DialogActions';
-import DialogContent from '@mui/material/DialogContent';
-import DialogTitle from '@mui/material/DialogTitle';
+import DraggablePaper from '-/components/DraggablePaper';
+import TsButton from '-/components/TsButton';
+import TsDialogActions from '-/components/dialogs/components/TsDialogActions';
+import TsDialogTitle from '-/components/dialogs/components/TsDialogTitle';
 import Dialog from '@mui/material/Dialog';
-import { SketchPicker } from 'react-color';
-import DialogCloseButton from '-/components/dialogs/DialogCloseButton';
+import DialogContent from '@mui/material/DialogContent';
+import Paper from '@mui/material/Paper';
+import { useTheme } from '@mui/material/styles';
+import useMediaQuery from '@mui/material/useMediaQuery';
+import { useState } from 'react';
+import ColorPicker from 'react-best-gradient-color-picker';
 import { useTranslation } from 'react-i18next';
 
 const presetColors = [
@@ -65,26 +68,38 @@ interface Props {
 function ColorPickerDialog(props: Props) {
   const { t } = useTranslation();
   const [color, setColor] = useState(undefined);
-  const [colorHex, setColorHex] = useState(undefined);
   const { open = false, onClose } = props;
+  const theme = useTheme();
+  const smallScreen = useMediaQuery(theme.breakpoints.down('md'));
 
   function onConfirm() {
-    if (color && colorHex) {
-      const hexAlphaColor = colorHex + Math.round(color.a * 255).toString(16);
-      props.setColor(hexAlphaColor);
-    }
+    // if (color && colorHex) {
+    //  const hexAlphaColor = colorHex + Math.round(color.a * 255).toString(16);
+    props.setColor(color);
+    //}
     props.onClose();
   }
 
-  function handleChangeComplete(newColor: any) {
-    setColor(newColor.rgb);
-    setColorHex(newColor.hex);
-  }
+  const okButton = (
+    <TsButton
+      variant="contained"
+      onClick={onConfirm}
+      data-tid="colorPickerConfirm"
+      style={{
+        // @ts-ignore
+        WebkitAppRegion: 'no-drag',
+      }}
+    >
+      {t('core:ok')}
+    </TsButton>
+  );
 
   return (
     <Dialog
       open={open}
       onClose={onClose}
+      fullScreen={smallScreen}
+      PaperComponent={smallScreen ? Paper : DraggablePaper}
       keepMounted
       scroll="paper"
       onKeyDown={(event) => {
@@ -95,10 +110,12 @@ function ColorPickerDialog(props: Props) {
         }
       }}
     >
-      <DialogTitle data-tid="colorPickerDialogTitle">
-        {t('core:colorPickerDialogTitle')}
-        <DialogCloseButton testId="closeColorPickerTID" onClose={onClose} />
-      </DialogTitle>
+      <TsDialogTitle
+        dialogTitle={t('core:colorPickerDialogTitle')}
+        closeButtonTestId="closeColorPickerTID"
+        onClose={onClose}
+        actionSlot={okButton}
+      />
       <DialogContent
         data-tid="colorPickerDialogContent"
         style={{
@@ -107,31 +124,25 @@ function ColorPickerDialog(props: Props) {
           overflowX: 'hidden',
         }}
       >
-        <SketchPicker
-          style={{
-            padding: '0 !important',
-            boxShadow: 'none !important',
-            backgroundColor: 'transparent !important',
-          }}
-          name="color"
-          presetColors={props.presetColors ? props.presetColors : presetColors}
-          color={color || props.color}
-          onChangeComplete={handleChangeComplete}
+        <ColorPicker
+          value={color || props.color}
+          onChange={(newColor) => setColor(newColor)}
+          presets={props.presetColors ? props.presetColors : presetColors}
+          hideEyeDrop
+          disableDarkMode
+          hideControls
+          // @ts-ignore
+          style={{ backgroundColor: 'transparent' }}
         />
       </DialogContent>
-      <DialogActions>
-        <Button data-tid="colorPickerCloseDialog" onClick={props.onClose}>
-          {t('core:cancel')}
-        </Button>
-        <Button
-          onClick={onConfirm}
-          variant="contained"
-          data-tid="colorPickerConfirm"
-          color="primary"
-        >
-          {t('core:ok')}
-        </Button>
-      </DialogActions>
+      {!smallScreen && (
+        <TsDialogActions>
+          <TsButton data-tid="colorPickerCloseDialog" onClick={props.onClose}>
+            {t('core:cancel')}
+          </TsButton>
+          {okButton}
+        </TsDialogActions>
+      )}
     </Dialog>
   );
 }

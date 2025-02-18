@@ -1,6 +1,6 @@
 /**
  * TagSpaces - universal file and folder organizer
- * Copyright (C) 2017-present TagSpaces UG (haftungsbeschraenkt)
+ * Copyright (C) 2017-present TagSpaces GmbH
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License (version 3) as
@@ -16,15 +16,14 @@
  *
  */
 
-import React from 'react';
-import Button from '@mui/material/Button';
-import DialogActions from '@mui/material/DialogActions';
+import LicenseContent from '-/LICENSE.txt';
+import TsButton from '-/components/TsButton';
+import TsDialogActions from '-/components/dialogs/components/TsDialogActions';
+import { Pro } from '-/pro';
+import { quitApp } from '-/services/utils-io';
+import Dialog from '@mui/material/Dialog';
 import DialogContent from '@mui/material/DialogContent';
 import DialogTitle from '@mui/material/DialogTitle';
-import Dialog from '@mui/material/Dialog';
-import { Pro } from '-/pro';
-import LicenseContent from '-/LICENSE.txt';
-import PlatformIO from '-/services/platform-facade';
 import { useTheme } from '@mui/material/styles';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import { useTranslation } from 'react-i18next';
@@ -59,14 +58,14 @@ function LicenseDialog(props: Props) {
   // }
 
   const theme = useTheme();
-  const fullScreen = useMediaQuery(theme.breakpoints.down('md'));
+  const smallScreen = useMediaQuery(theme.breakpoints.down('md'));
   return (
     <Dialog
       open={open}
       onClose={onClose}
       keepMounted
       disableEscapeKeyDown
-      fullScreen={fullScreen}
+      fullScreen={smallScreen}
       scroll="paper"
     >
       <DialogTitle>{t('core:license')}</DialogTitle>
@@ -80,31 +79,23 @@ function LicenseDialog(props: Props) {
           {Pro ? Pro.EULAContent : LicenseContent}
         </pre>
       </DialogContent>
-      <DialogActions
-        style={fullScreen ? { padding: '10px 30px 30px 30px' } : {}}
-      >
-        {/* <Button
+      <TsDialogActions>
+        {/* <TsButton
           onClick={printLicense}
-          color="primary"
         >
           {t('core:print')}
-        </Button> */}
-        <Button
-          data-tid="confirmLicenseDialog"
-          onClick={PlatformIO.quitApp}
-          color="primary"
-        >
+        </TsButton> */}
+        <TsButton data-tid="confirmLicenseDialog" onClick={quitApp}>
           {t('core:quit')}
-        </Button>
-        <Button
+        </TsButton>
+        <TsButton
           data-tid="agreeLicenseDialog"
           onClick={props.onClose}
-          color="primary"
           variant="contained"
         >
           {t('core:agreeLicense')}
-        </Button>
-      </DialogActions>
+        </TsButton>
+      </TsDialogActions>
     </Dialog>
   );
 }

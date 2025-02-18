@@ -1,6 +1,6 @@
 /**
  * TagSpaces - universal file and folder organizer
- * Copyright (C) 2017-present TagSpaces UG (haftungsbeschraenkt)
+ * Copyright (C) 2017-present TagSpaces GmbH
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License (version 3) as
@@ -16,39 +16,40 @@
  *
  */
 
-import React, { useReducer, useRef } from 'react';
-import {
-  Dialog,
-  DialogActions,
-  DialogContent,
-  DialogTitle,
-  FormControl,
-  FormControlLabel,
-  FormGroup,
-  Switch,
-  Divider,
-  InputLabel,
-  Select,
-  MenuItem,
-  Button,
-  FormHelperText,
-  Typography,
-  TextField,
-  Box,
-} from '@mui/material';
-import ListItemIcon from '@mui/material/ListItemIcon';
-import ListItemText from '@mui/material/ListItemText';
+import AppConfig from '-/AppConfig';
+import DraggablePaper from '-/components/DraggablePaper';
+import TsButton from '-/components/TsButton';
+import TsSelect from '-/components/TsSelect';
+import ZoomComponent from '-/components/ZoomComponent';
+import TsDialogActions from '-/components/dialogs/components/TsDialogActions';
+import TsDialogTitle from '-/components/dialogs/components/TsDialogTitle';
+import { usePerspectiveSettingsContext } from '-/hooks/usePerspectiveSettingsContext';
+import { useSortedDirContext } from '-/perspectives/grid/hooks/useSortedDirContext';
+import { Pro } from '-/pro';
+import useFirstRender from '-/utils/useFirstRender';
 import ThumbnailCoverIcon from '@mui/icons-material/PhotoSizeSelectActual';
 import ThumbnailContainIcon from '@mui/icons-material/PhotoSizeSelectLarge';
 import RadioCheckedIcon from '@mui/icons-material/RadioButtonChecked';
 import RadioUncheckedIcon from '@mui/icons-material/RadioButtonUnchecked';
-import DialogCloseButton from '-/components/dialogs/DialogCloseButton';
-import { Pro } from '-/pro';
+import {
+  Box,
+  Dialog,
+  DialogContent,
+  Divider,
+  FormControl,
+  FormControlLabel,
+  FormGroup,
+  MenuItem,
+  Paper,
+  Switch,
+  Typography,
+} from '@mui/material';
+import ListItemIcon from '@mui/material/ListItemIcon';
+import ListItemText from '@mui/material/ListItemText';
 import { useTheme } from '@mui/material/styles';
+import useMediaQuery from '@mui/material/useMediaQuery';
+import React, { useEffect, useReducer } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useSortedDirContext } from '-/perspectives/grid/hooks/useSortedDirContext';
-import ZoomComponent from '-/components/ZoomComponent';
-import { usePerspectiveSettingsContext } from '-/hooks/usePerspectiveSettingsContext';
 
 interface Props {
   open: boolean;
@@ -74,10 +75,21 @@ function GridSettingsDialog(props: Props) {
     saveSettings,
   } = usePerspectiveSettingsContext();
   const { sortBy, orderBy } = useSortedDirContext();
+  const firstRender = useFirstRender();
   const [ignored, forceUpdate] = useReducer((x: number) => x + 1, 0, undefined);
 
   const theme = useTheme();
+  const smallScreen = useMediaQuery(theme.breakpoints.down('md'));
   const { open, onClose, openHelpWebPage } = props;
+
+  useEffect(() => {
+    if (!firstRender) {
+      setSettings({
+        sortBy: sortBy,
+        orderBy: orderBy,
+      });
+    }
+  }, [sortBy, orderBy]);
 
   const handleGridPaginationLimit = (
     event: React.ChangeEvent<HTMLInputElement>,
@@ -99,15 +111,34 @@ function GridSettingsDialog(props: Props) {
     return parsed;
   }
 
+  const helpButton = (
+    <TsButton
+      style={{
+        // @ts-ignore
+        WebkitAppRegion: 'no-drag',
+      }}
+      data-tid="gridPerspectiveHelp"
+      onClick={openHelpWebPage}
+    >
+      {t('core:help')}
+    </TsButton>
+  );
+
   return (
-    <Dialog open={open} onClose={onClose} keepMounted scroll="paper">
-      <DialogTitle>
-        {t('core:perspectiveSettingsTitle')}
-        <DialogCloseButton
-          testId="closePerspectiveSettingsTID"
-          onClose={onClose}
-        />
-      </DialogTitle>
+    <Dialog
+      open={open}
+      onClose={onClose}
+      PaperComponent={smallScreen ? Paper : DraggablePaper}
+      fullScreen={smallScreen}
+      keepMounted
+      scroll="paper"
+    >
+      <TsDialogTitle
+        dialogTitle={t('core:perspectiveSettingsTitle')}
+        onClose={onClose}
+        closeButtonTestId="closePerspectiveSettingsTID"
+        actionSlot={helpButton}
+      />
       <DialogContent>
         {haveLocalSetting() && (
           <>
@@ -118,30 +149,27 @@ function GridSettingsDialog(props: Props) {
               {t('core:folderWithCustomPerspectiveSetting')}
             </Typography>
             <br />
-            <Button
+            <TsButton
               data-tid="resetLocalSettingsTID"
               title={t('core:resetLocalSettings')}
               onClick={() => {
                 resetLocalSetting();
                 onClose();
-                // forceUpdate();
               }}
             >
               {t('core:resetLocalSettings')}
-            </Button>
+            </TsButton>
           </>
         )}
-        <Divider />
         <Box style={{ display: 'flex' }}>
-          <ZoomComponent preview={true} />
           <Typography
             style={{ color: theme.palette.text.primary, alignSelf: 'center' }}
             variant="body1"
           >
             {t('Size of the entries')}
           </Typography>
+          <ZoomComponent preview={true} />
         </Box>
-        <Divider />
         <FormGroup>
           <FormControlLabel
             // labelPlacement="start"
@@ -153,7 +181,6 @@ function GridSettingsDialog(props: Props) {
                   setSettings({ showDirectories: !showDirectories });
                 }}
                 name="checkedD"
-                color="primary"
               />
             }
             label={t('core:showHideDirectories')}
@@ -168,7 +195,6 @@ function GridSettingsDialog(props: Props) {
                   setSettings({ showTags: !showTags });
                 }}
                 name="checkedT"
-                color="primary"
               />
             }
             label={t('core:showTags')}
@@ -185,7 +211,6 @@ function GridSettingsDialog(props: Props) {
                   });
                 }}
                 name={t('core:showHideEntriesDescription')}
-                color="primary"
               />
             }
             label={t('core:showHideEntriesDescription')}
@@ -200,7 +225,6 @@ function GridSettingsDialog(props: Props) {
                   setSettings({ showDetails: !showDetails });
                 }}
                 name={t('core:showHideDetails')}
-                color="primary"
               />
             }
             label={t('core:showHideDetails')}
@@ -215,7 +239,6 @@ function GridSettingsDialog(props: Props) {
                     setSettings({ showDescription: !showDescription });
                   }}
                   name={t('core:showHideDescription')}
-                  color="primary"
                 />
               }
               label={t('core:showHideDescription')}
@@ -262,63 +285,6 @@ function GridSettingsDialog(props: Props) {
             }
           />
         </MenuItem>
-        {/* <MenuItem
-          data-tid="gridPerspectiveEntrySizeSmall"
-          title={t('core:entrySizeSmall')}
-          aria-label={t('core:entrySizeSmall')}
-          onClick={() => {
-            changeEntrySize('small');
-            entrySize.current = EntrySizes.small;
-            forceUpdate();
-          }}
-        >
-          <ListItemIcon>
-            {entrySize.current === 'small' ? (
-              <RadioCheckedIcon />
-            ) : (
-              <RadioUncheckedIcon />
-            )}
-          </ListItemIcon>
-          <ListItemText primary={t('core:entrySizeSmall')} />
-        </MenuItem>
-        <MenuItem
-          data-tid="gridPerspectiveEntrySizeNormal"
-          title={t('core:entrySizeNormal')}
-          aria-label={t('core:entrySizeNormal')}
-          onClick={() => {
-            changeEntrySize('normal');
-            entrySize.current = EntrySizes.normal;
-            forceUpdate();
-          }}
-        >
-          <ListItemIcon>
-            {entrySize.current === 'normal' ? (
-              <RadioCheckedIcon />
-            ) : (
-              <RadioUncheckedIcon />
-            )}
-          </ListItemIcon>
-          <ListItemText primary={t('core:entrySizeNormal')} />
-        </MenuItem>
-        <MenuItem
-          data-tid="gridPerspectiveEntrySizeBig"
-          title={t('core:entrySizeBig')}
-          aria-label={t('core:entrySizeBig')}
-          onClick={() => {
-            changeEntrySize('big');
-            entrySize.current = EntrySizes.big;
-            forceUpdate();
-          }}
-        >
-          <ListItemIcon>
-            {entrySize.current === 'big' ? (
-              <RadioCheckedIcon />
-            ) : (
-              <RadioUncheckedIcon />
-            )}
-          </ListItemIcon>
-          <ListItemText primary={t('core:entrySizeBig')} />
-        </MenuItem> */}
         <Divider />
         <MenuItem
           data-tid="gridPerspectiveSingleClickOpenInternally"
@@ -375,13 +341,9 @@ function GridSettingsDialog(props: Props) {
           <ListItemText primary={t('core:singleClickSelects')} />
         </MenuItem>
         <Divider />
-        <FormControl
-          fullWidth={true}
-          style={{ overflow: 'visible', marginTop: 20 }}
-        >
-          <TextField
-            select
-            label={t('core:pageLimit')}
+        <FormControl fullWidth={true}>
+          <TsSelect
+            label={t('core:pageLimitHelp')}
             name="limit"
             defaultValue={gridPageLimit}
             onChange={handleGridPaginationLimit}
@@ -391,37 +353,52 @@ function GridSettingsDialog(props: Props) {
             <MenuItem value={100}>100</MenuItem>
             <MenuItem value={500}>500</MenuItem>
             <MenuItem value={1000}>1000</MenuItem>
-          </TextField>
-          <FormHelperText>{t('core:pageLimitHelp')}</FormHelperText>
+          </TsSelect>
+          {/* <FormHelperText>{t('core:pageLimitHelp')}</FormHelperText> */}
         </FormControl>
       </DialogContent>
-      <DialogActions style={{ justifyContent: 'space-between' }}>
-        <Button data-tid="gridPerspectiveHelp" onClick={openHelpWebPage}>
-          {t('core:help')}
-        </Button>
-        <Button
-          data-tid="defaultSettings"
-          onClick={() => {
-            saveSettings(true);
-            onClose();
-          }}
-          color="primary"
-        >
-          {t('core:defaultSettings')}
-        </Button>
-        {Pro && (
-          <Button
-            data-tid="directorySettings"
+      <TsDialogActions style={{ justifyContent: 'space-between' }}>
+        {smallScreen ? (
+          <div style={{ width: 1 }} />
+        ) : (
+          <span
+            style={{
+              marginTop: AppConfig.defaultSpaceBetweenButtons,
+            }}
+          >
+            {helpButton}
+          </span>
+        )}
+        <span>
+          <TsButton
+            data-tid="defaultSettings"
             onClick={() => {
-              saveSettings(false);
+              saveSettings(true);
               onClose();
             }}
-            color="primary"
+            style={{
+              marginTop: AppConfig.defaultSpaceBetweenButtons,
+            }}
           >
-            {t('core:directorySettings')}
-          </Button>
-        )}
-      </DialogActions>
+            {t('core:defaultSettings')}
+          </TsButton>
+          {Pro && (
+            <TsButton
+              data-tid="directorySettings"
+              onClick={() => {
+                saveSettings(false);
+                onClose();
+              }}
+              style={{
+                marginTop: AppConfig.defaultSpaceBetweenButtons,
+                marginLeft: AppConfig.defaultSpaceBetweenButtons,
+              }}
+            >
+              {t('core:directorySettings')}
+            </TsButton>
+          )}
+        </span>
+      </TsDialogActions>
     </Dialog>
   );
 }

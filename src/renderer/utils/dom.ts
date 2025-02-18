@@ -1,4 +1,3 @@
-import { TS } from '-/tagspaces.namespace';
 import { getRelativeEntryPath } from '-/services/utils-io';
 
 export function isVisibleOnScreen(element: any) {
@@ -16,7 +15,13 @@ export function isVisibleOnScreen(element: any) {
 export function getURLParameter(paramName: string, url?: string): string {
   const intUrl = url || window.location.href;
   const params = new URL(intUrl).searchParams;
-  return params.get(paramName);
+  let param = params.get(paramName);
+  // todo: temporal fix due to issue in the milkdown editor
+  if (param?.endsWith('\\')) {
+    // removing \ at the end of the param
+    param = param.substring(0, param.length - 1);
+  }
+  return param;
 }
 
 export function clearAllURLParams() {
@@ -35,7 +40,8 @@ export function clearURLParam(paramName) {
 }
 
 export function updateHistory(
-  newLocation: TS.Location,
+  locationUUID: string,
+  locationPath: string,
   newDirectoryPath: string,
   newEntryPath?: string,
 ) {
@@ -49,19 +55,14 @@ export function updateHistory(
   let diffFolderPath = false;
   let diffEntryPath = false;
 
-  if (newLocation) {
+  if (locationUUID) {
     let urlParams = '?';
-    if (newLocation && newLocation.uuid) {
-      const newEncLocationID = encodeURIComponent(newLocation.uuid);
-      urlParams += 'tslid=' + newEncLocationID;
-      diffLocation = newLocation.uuid !== currentLocationID;
-    }
+    const newEncLocationID = encodeURIComponent(locationUUID);
+    urlParams += 'tslid=' + newEncLocationID;
+    diffLocation = locationUUID !== currentLocationID;
 
     if (newDirectoryPath && newDirectoryPath.length > 0) {
-      const newRelDir = getRelativeEntryPath(
-        newLocation.path,
-        newDirectoryPath,
-      );
+      const newRelDir = getRelativeEntryPath(locationPath, newDirectoryPath);
       if (newRelDir) {
         const newEncRelDir = encodeURIComponent(newRelDir);
         urlParams += '&tsdpath=' + newEncRelDir;
@@ -70,7 +71,7 @@ export function updateHistory(
     }
 
     if (newEntryPath && newEntryPath.length > 0) {
-      const entryRelPath = getRelativeEntryPath(newLocation.path, newEntryPath);
+      const entryRelPath = getRelativeEntryPath(locationPath, newEntryPath);
       if (entryRelPath) {
         const newEncEntryPath = encodeURIComponent(entryRelPath);
         urlParams += '&tsepath=' + newEncEntryPath;
@@ -103,24 +104,72 @@ export function getBase64Image(imgURL: string) {
   return canvas.toDataURL('image/png');
 }
 
-export function arrayBufferToDataURL(arrayBuffer: any, mime: string) {
+/*export function arrayBufferToDataURL(arrayBuffer: any, mime: string) {
   const blob = new Blob([arrayBuffer], { type: mime });
   const url = window.URL || window.webkitURL;
   return url.createObjectURL(blob);
+}*/
+
+export function arrayBufferToDataURL(
+  arrayBuffer: any,
+  mime: string,
+): Promise<string> {
+  return new Promise((resolve) => {
+    const blob = new Blob([arrayBuffer], { type: mime });
+    const reader = new FileReader();
+
+    reader.onload = function (event) {
+      const dataUrl = event.target?.result as string;
+      resolve(dataUrl);
+    };
+
+    reader.readAsDataURL(blob);
+  });
 }
 
 export function dataURLtoBlob(dataURI) {
   const arr = dataURI.split(',');
   const mime = arr[0].match(/:(.*?);/)[1];
-  const arrBuff = base64ToArrayBuffer(arr[1]);
+  const arrBuff = base64ToBlob(arr[1]).buffer;
   return new window.Blob([arrBuff], { type: mime });
 }
 
-export function base64ToArrayBuffer(base64) {
+/**
+ * @deprecated use base64ToBlob instead
+ * @param base64
+ */
+/*export function base64ToArrayBuffer(base64) {
   const bstr = window.atob(base64);
   const bytes = new Uint8Array(bstr.length);
   for (let i = 0; i < bstr.length; i += 1) {
     bytes[i] = bstr.charCodeAt(i);
   }
   return bytes.buffer;
+}*/
+
+/**
+ * @param base64
+ */
+export function base64ToBlob(base64) {
+  const bstr = window.atob(base64);
+  const bytes = new Uint8Array(bstr.length);
+  for (let i = 0; i < bstr.length; i += 1) {
+    bytes[i] = bstr.charCodeAt(i);
+  }
+  return bytes;
+}
+
+export function generateClipboardLink(url, name?) {
+  const htmlType = 'text/html';
+  const plainTextType = 'text/plain';
+  const htmlLink = `<a href="${url}">${name ? name : url}</a>`;
+  const cbi = [
+    new ClipboardItem({
+      [htmlType]: new Blob([htmlLink], {
+        type: htmlType,
+      }),
+      [plainTextType]: new Blob([url], { type: plainTextType }),
+    }),
+  ];
+  return cbi;
 }

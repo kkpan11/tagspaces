@@ -1,6 +1,6 @@
 /**
  * TagSpaces - universal file and folder organizer
- * Copyright (C) 2023-present TagSpaces UG (haftungsbeschraenkt)
+ * Copyright (C) 2023-present TagSpaces GmbH
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License (version 3) as
@@ -16,136 +16,233 @@
  *
  */
 
-import React, { createContext, useMemo } from 'react';
-import { useDispatch, useSelector } from 'react-redux';
-import { actions as AppActions, AppDispatch } from '-/reducers/app';
+import React, { createContext, useMemo, useReducer, useRef } from 'react';
+import { useSelector } from 'react-redux';
 import mgrs from 'mgrs';
 import { Pro } from '-/pro';
 import { useTranslation } from 'react-i18next';
 import { TS } from '-/tagspaces.namespace';
 import OpenLocationCode from 'open-location-code-typescript';
-import { formatDateTime4Tag } from '@tagspaces/tagspaces-common/misc';
-import { getTagLibrary, mergeTagGroup } from '-/services/taglibrary-utils';
+import {
+  immutablySwapItems,
+  formatDateTime4Tag,
+} from '@tagspaces/tagspaces-common/misc';
+import { getTagLibrary, setTagLibrary } from '-/services/taglibrary-utils';
 import { isGeoTag } from '-/utils/geo';
 import {
   getAddTagsToLibrary,
+  getFileNameTagPlace,
   getGeoTaggingFormat,
+  getMaxCollectedTag,
   getPrefixTagContainer,
+  getSaveTagInLocation,
   getTagColor,
   getTagDelimiter,
   getTagTextColor,
 } from '-/reducers/settings';
-import PlatformIO from '-/services/platform-facade';
-import {
-  generateFileName,
-  loadDirMetaDataPromise,
-  loadFileMetaDataPromise,
-  loadMetaDataPromise,
-  saveMetaDataPromise,
-} from '-/services/utils-io';
 import {
   extractContainingDirectoryPath,
   extractFileName,
   extractTags,
+  extractTagsAsObjects,
+  generateFileName,
 } from '@tagspaces/tagspaces-common/paths';
-import { getLocations } from '-/reducers/locations';
+import { getUuid } from '@tagspaces/tagspaces-common/utils-io';
 import { useNotificationContext } from '-/hooks/useNotificationContext';
 import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
 import { useLocationIndexContext } from '-/hooks/useLocationIndexContext';
 import { useEditedEntryContext } from '-/hooks/useEditedEntryContext';
 import { useIOActionsContext } from '-/hooks/useIOActionsContext';
 import { useDirectoryContentContext } from '-/hooks/useDirectoryContentContext';
-
-type extractOptions = {
-  EXIFGeo?: boolean;
-  EXIFDateTime?: boolean;
-  IPTCDescription?: boolean;
-  IPTCTags?: boolean;
-};
+import { useTagGroupsLocationContext } from '-/hooks/useTagGroupsLocationContext';
+import AppConfig from '-/AppConfig';
+import { useEditedTagLibraryContext } from '-/hooks/useEditedTagLibraryContext';
+import { CommonLocation } from '-/utils/CommonLocation';
+import LoadingLazy from '-/components/LoadingLazy';
 
 type TaggingActionsContextData = {
-  extractContent: (options?: extractOptions) => Promise<boolean>;
-  addTags: (paths: Array<string>, tags: Array<TS.Tag>) => Promise<boolean>;
-  addTagsToEntry: (path: string, tags: Array<TS.Tag>) => Promise<string>;
+  addTagsToFsEntries: (
+    files: TS.FileSystemEntry[],
+    tags: TS.Tag[],
+  ) => Promise<boolean>;
+  addTags: (
+    entries: TS.FileSystemEntry[],
+    tags: Array<TS.Tag>,
+  ) => Promise<boolean>;
+  addTagsToEntry: (
+    path: string,
+    tags: Array<TS.Tag>,
+    reflect?: boolean,
+  ) => Promise<TS.FileSystemEntry>;
+  addTagsToFsEntry: (
+    fsEntry: TS.FileSystemEntry,
+    tags: Array<TS.Tag>,
+    reflect?: boolean,
+    collectTags?: boolean,
+  ) => Promise<TS.FileSystemEntry>;
   editTagForEntry: (path: string, tag: TS.Tag, newTagTitle?: string) => void;
   removeTags: (paths: Array<string>, tags?: Array<TS.Tag>) => Promise<boolean>;
   removeTagsFromEntry: (path: string, tags?: Array<TS.Tag>) => Promise<string>;
   removeAllTags: (paths: Array<string>) => Promise<boolean>;
   collectTagsFromLocation: (tagGroup: TS.TagGroup) => void;
+  createTagGroup: (
+    entry: TS.TagGroup,
+    location?: CommonLocation,
+  ) => Promise<boolean>;
+  mergeTagGroup: (entry: TS.TagGroup) => void;
+  removeTagGroup: (parentTagGroupUuid: TS.Uuid) => void;
+  addTag: (tag: TS.Tag[], parentTagGroupUuid: TS.Uuid) => void;
+  editTag: (
+    tag: TS.Tag,
+    parentTagGroupUuid: TS.Uuid,
+    origTitle: string,
+  ) => void;
+  deleteTag: (tagTitle: string, parentTagGroupUuid: TS.Uuid) => void;
+  moveTag: (
+    tagTitle: string,
+    fromTagGroupId: TS.Uuid,
+    toTagGroupId: TS.Uuid,
+  ) => void;
+  changeTagOrder: (
+    tagGroupUuid: TS.Uuid,
+    fromIndex: number,
+    toIndex: number,
+  ) => void;
+  moveTagGroupUp: (parentTagGroupUuid: TS.Uuid) => void;
+  moveTagGroupDown: (parentTagGroupUuid: TS.Uuid) => void;
+  moveTagGroup: (tagGroupUuid: TS.Uuid, position: number) => void;
+  sortTagGroup: (parentTagGroupUuid: TS.Uuid) => void;
+  updateTagGroup: (tg: TS.TagGroup, replaceTags?: boolean) => void;
+  importTagGroups: (
+    newEntries: Array<TS.TagGroup>,
+    replace?: boolean,
+    location?: CommonLocation,
+  ) => void;
+  openEditEntryTagDialog: (entries: TS.FileSystemEntry[], tag: TS.Tag) => void;
+  closeEditEntryTagDialog: () => void;
 };
 
 export const TaggingActionsContext = createContext<TaggingActionsContextData>({
-  extractContent: undefined,
+  addTagsToFsEntries: undefined,
   addTags: undefined,
   addTagsToEntry: undefined,
+  addTagsToFsEntry: undefined,
   editTagForEntry: undefined,
   removeTags: undefined,
   removeTagsFromEntry: undefined,
   removeAllTags: undefined,
   collectTagsFromLocation: undefined,
+  createTagGroup: undefined,
+  mergeTagGroup: undefined,
+  removeTagGroup: undefined,
+  addTag: undefined,
+  editTag: undefined,
+  deleteTag: undefined,
+  moveTag: undefined,
+  changeTagOrder: undefined,
+  moveTagGroupUp: undefined,
+  moveTagGroupDown: undefined,
+  moveTagGroup: undefined,
+  sortTagGroup: undefined,
+  updateTagGroup: undefined,
+  importTagGroups: undefined,
+  openEditEntryTagDialog: undefined,
+  closeEditEntryTagDialog: undefined,
 });
 
 export type TaggingActionsContextProviderProps = {
   children: React.ReactNode;
 };
 
+const EditEntryTagDialog = React.lazy(
+  () =>
+    import(
+      /* webpackChunkName: "EditEntryTagDialog" */ '../components/dialogs/EditEntryTagDialog'
+    ),
+);
+
 export const TaggingActionsContextProvider = ({
   children,
 }: TaggingActionsContextProviderProps) => {
   const { t } = useTranslation();
-  const { persistTagsInSidecarFile } = useCurrentLocationContext();
-  const { currentDirectoryEntries } = useDirectoryContentContext();
+  const { findLocation, persistTagsInSidecarFile } =
+    useCurrentLocationContext();
+  const { tagGroups, reflectTagLibraryChanged } = useEditedTagLibraryContext();
+  const {
+    createLocationTagGroup,
+    editLocationTagGroup,
+    removeLocationTagGroup,
+    mergeLocationTagGroup,
+  } = useTagGroupsLocationContext();
+  const { currentDirectoryEntries, getAllPropertiesPromise, getMetaForEntry } =
+    useDirectoryContentContext();
   const { getIndex } = useLocationIndexContext();
-  const { renameFile } = useIOActionsContext();
-  const { reflectUpdateMeta } = useEditedEntryContext();
-  const { showNotification, hideNotifications } = useNotificationContext();
-  const dispatch: AppDispatch = useDispatch();
+  const { renameFile, saveMetaDataPromise, saveCurrentLocationMetaData } =
+    useIOActionsContext();
+  const { reflectUpdateMeta, setReflectActions } = useEditedEntryContext();
+  const { showNotification } = useNotificationContext();
+
+  const open = useRef<boolean>(false);
+  const selectedTag = useRef<TS.Tag>(undefined);
+  const selectedEntries = useRef<TS.FileSystemEntry[]>(undefined);
+
   const geoTaggingFormat = useSelector(getGeoTaggingFormat);
+  const maxCollectedTag = useSelector(getMaxCollectedTag);
   const addTagsToLibrary = useSelector(getAddTagsToLibrary);
   const tagBackgroundColor: string = useSelector(getTagColor);
   const tagTextColor: string = useSelector(getTagTextColor);
   const tagDelimiter: string = useSelector(getTagDelimiter);
   const prefixTagContainer: boolean = useSelector(getPrefixTagContainer);
-  const locations: TS.Location[] = useSelector(getLocations);
+  //const locations: CommonLocation[] = useSelector(getLocations);
+  const saveTagInLocation: boolean = useSelector(getSaveTagInLocation);
+  const filenameTagPlacedAtEnd = useSelector(getFileNameTagPlace);
+  const [ignored, forceUpdate] = useReducer((x) => x + 1, 0, undefined);
+  const currentLocation = findLocation();
 
-  function extractContent(
-    options: extractOptions = {
-      EXIFGeo: true,
-      EXIFDateTime: true,
-      IPTCDescription: true,
-      IPTCTags: true,
-    },
-  ): Promise<boolean> {
-    if (!Pro || !Pro.ContentExtractor) {
-      showNotification(t('core:thisFunctionalityIsAvailableInPro'));
-      return Promise.resolve(false);
+  function addTagsToFilePath(path: string, tags: string[]) {
+    if (tags && tags.length > 0) {
+      const dirSeparator = currentLocation
+        ? currentLocation.getDirSeparator()
+        : AppConfig.dirSeparator;
+      const extractedTags: string[] = extractTags(
+        path,
+        tagDelimiter,
+        dirSeparator,
+      );
+      const uniqueTags = tags.filter(
+        (tag) => !extractedTags.some((tagName) => tagName === tag),
+      );
+      const fileName = extractFileName(path, dirSeparator);
+      const containingDirectoryPath = extractContainingDirectoryPath(
+        path,
+        dirSeparator,
+      );
+
+      return (
+        (containingDirectoryPath && containingDirectoryPath !== dirSeparator
+          ? containingDirectoryPath + dirSeparator
+          : '') +
+        generateFileName(
+          fileName,
+          [...extractedTags, ...uniqueTags],
+          tagDelimiter,
+          currentLocation?.getDirSeparator(),
+          prefixTagContainer,
+          filenameTagPlacedAtEnd,
+        )
+      );
     }
-    showNotification('Extracting content...', 'info', false);
-    Pro.ContentExtractor.extractContent(
-      currentDirectoryEntries,
-      addTags,
-      options,
-    ).then((success) => {
-      hideNotifications();
-      return success;
-    });
+    return path;
   }
 
   function addTags(
-    paths: Array<string>,
-    tags: Array<TS.Tag>,
+    entries: TS.FileSystemEntry[],
+    tags: TS.Tag[],
   ): Promise<boolean> {
-    let defaultTagLocation;
-    if (geoTaggingFormat.toLowerCase() === 'mgrs') {
-      defaultTagLocation = mgrs.forward([0, 51.48]);
-    } else {
-      defaultTagLocation = OpenLocationCode.encode(51.48, 0, undefined);
-    }
-
     const processedTags = [];
     tags.map((pTag) => {
       const tag = { ...pTag };
-      tag.type = 'sidecar';
+      tag.type = persistTagsInSidecarFile ? 'sidecar' : 'plain';
       if (tag.id) {
         delete tag.id;
       }
@@ -156,10 +253,11 @@ export const TaggingActionsContextProvider = ({
         delete tag.description;
         if (tag.functionality === 'geoTagging') {
           if (Pro) {
-            tag.path = paths[0]; // todo rethink and remove this!
-            // delete tag.functionality;
-            tag.title = defaultTagLocation;
-            dispatch(AppActions.toggleEditTagDialog(tag));
+            tag.title =
+              geoTaggingFormat.toLowerCase() === 'mgrs'
+                ? mgrs.forward([0, 51.48])
+                : OpenLocationCode.encode(51.48, 0, undefined);
+            openEditEntryTagDialog(entries, tag);
           } else {
             showNotification(
               t('core:thisFunctionalityIsAvailableInPro' as any) as string,
@@ -167,10 +265,11 @@ export const TaggingActionsContextProvider = ({
           }
         } else if (tag.functionality === 'dateTagging') {
           if (Pro) {
-            tag.path = paths[0]; // todo rethink and remove this!
             // delete tag.functionality;
-            tag.title = formatDateTime4Tag(new Date(), true); // defaultTagDate;
-            dispatch(AppActions.toggleEditTagDialog(tag));
+            tag.title = formatDateTime4Tag(new Date(), false);
+            tag.color = tagBackgroundColor;
+            tag.textcolor = tagTextColor;
+            openEditEntryTagDialog(entries, tag);
           } else {
             showNotification(
               t('core:thisFunctionalityIsAvailableInPro' as any) as string,
@@ -188,56 +287,9 @@ export const TaggingActionsContextProvider = ({
     });
 
     if (processedTags.length > 0) {
-      const promises = paths.map((path) =>
-        addTagsToEntry(path, processedTags, false),
-      );
+      collectTagsToLibrary(processedTags);
 
-      if (addTagsToLibrary) {
-        // collecting tags
-        // filter existed in tagLibrary
-        const uniqueTags: TS.Tag[] = [];
-        processedTags.map((tag) => {
-          if (
-            getTagLibrary().findIndex(
-              (tagGroup) =>
-                tagGroup.children.findIndex(
-                  (obj) => obj.title === tag.title,
-                ) !== -1,
-            ) === -1 &&
-            !/^(?:\d+~\d+|\d+)$/.test(tag.title) && // skip adding of tag containing only digits
-            !isGeoTag(tag.title) // skip adding of tag containing geo information
-          ) {
-            uniqueTags.push({
-              ...tag,
-              color: tag.color || tagBackgroundColor,
-              textcolor: tag.textcolor || tagTextColor,
-            });
-          }
-          return true;
-        });
-        if (uniqueTags.length > 0) {
-          const tagGroup = {
-            uuid: 'collected_tag_group_id', // uuid needs to be constant here (see mergeTagGroup)
-            title: t('core:collectedTags' as any) as string,
-            color: tagBackgroundColor,
-            textcolor: tagTextColor,
-            children: uniqueTags,
-            created_date: new Date().getTime(),
-            modified_date: new Date().getTime(),
-          };
-          mergeTagGroup(tagGroup, getTagLibrary());
-          dispatch(AppActions.tagLibraryChanged());
-        }
-      }
-      return Promise.all(promises).then((editedPaths) => {
-        let sideCarChanges = editedPaths.filter((item) => paths.includes(item));
-        if (sideCarChanges.length > 0) {
-          reflectUpdateMeta(...sideCarChanges);
-        }
-        return true;
-        //return reflectRenameEntries(editedPaths);
-        //return openCurrentDirectory();
-      });
+      return addTagsToFsEntries(entries, processedTags);
     }
     return Promise.resolve(false);
   }
@@ -284,171 +336,250 @@ export const TaggingActionsContextProvider = ({
     return tagTitle;
   }
 
+  function addTagsToFsEntries(
+    entries: TS.FileSystemEntry[],
+    tags: Array<TS.Tag>,
+  ): Promise<boolean> {
+    if (entries && entries.length > 0) {
+      const promises = entries.map((entry) =>
+        addTagsToFsEntry(entry, tags, false, false).then((newEntry) => ({
+          oldEntryPath: entry.path,
+          newEntry,
+        })),
+      );
+      collectTagsToLibrary(tags);
+      return Promise.all(promises).then((editedPaths) => {
+        const reflects: TS.EditAction[] = [];
+        for (let i = 0; i < editedPaths.length; i++) {
+          const { oldEntryPath, newEntry } = editedPaths[i];
+          if (newEntry !== undefined) {
+            const currentAction: TS.EditAction = {
+              action: 'update',
+              entry: newEntry,
+              oldEntryPath: oldEntryPath,
+            };
+            reflects.push(currentAction);
+          }
+        }
+        setReflectActions(...reflects);
+        return true;
+      });
+    }
+    return Promise.resolve(true);
+  }
+
   /**
-   * @param path
+   * @param entry: TS.FileSystemEntry
    * @param tags
    * @param reflect
-   * return newPath
+   * return newFsEntry updated
+   * @param collectTags
    */
-  async function addTagsToEntry(
-    path: string,
+  async function addTagsToFsEntry(
+    entry: TS.FileSystemEntry,
     tags: Array<TS.Tag>,
     reflect: boolean = true,
-  ): Promise<string> {
-    const entryProperties = await PlatformIO.getPropertiesPromise(path);
-    let fsEntryMeta;
-    try {
-      fsEntryMeta = entryProperties.isFile
-        ? await loadFileMetaDataPromise(path)
-        : await loadDirMetaDataPromise(path);
-    } catch (error) {
-      console.log('No sidecar found ' + error);
-    }
+    collectTags: boolean = true,
+  ): Promise<TS.FileSystemEntry> {
+    if (entry) {
+      if (collectTags) {
+        collectTagsToLibrary(tags);
+      }
+      /*let fsEntryMeta;
+      try {
+        fsEntryMeta = entry.isFile
+          ? await currentLocation.loadFileMetaDataPromise(entry.path)
+          : await currentLocation.loadDirMetaDataPromise(entry.path);
+      } catch (error) {
+        console.log('No sidecar found ' + error);
+      }*/
 
-    if (!entryProperties.isFile || persistTagsInSidecarFile) {
-      // Handling adding tags in sidecar
-      if (fsEntryMeta) {
-        const uniqueTags = getNonExistingTags(
-          tags,
-          extractTags(path, tagDelimiter, PlatformIO.getDirSeparator()),
-          fsEntryMeta.tags,
-        );
-        if (uniqueTags.length > 0) {
-          const newTags: TS.Tag[] = [...fsEntryMeta.tags, ...uniqueTags];
-          const updatedFsEntryMeta = {
-            ...fsEntryMeta,
-            tags: newTags,
-          };
-          return saveMetaDataPromise(path, updatedFsEntryMeta)
-            .then(() => {
+      if (!entry.isFile || persistTagsInSidecarFile) {
+        // Handling adding tags in sidecar
+        if (!entry.meta) {
+          const entryMeta = await getMetaForEntry(entry);
+          if (entryMeta) {
+            entry.meta = entryMeta.meta;
+          }
+        }
+        if (entry.meta) {
+          const uniqueTags = getNonExistingTags(
+            tags,
+            extractTags(
+              entry.path,
+              tagDelimiter,
+              currentLocation?.getDirSeparator(),
+            ),
+            entry.meta.tags,
+          );
+          if (uniqueTags.length > 0) {
+            const newTags: TS.Tag[] = [
+              ...(entry.meta.tags ? entry.meta.tags : []),
+              ...uniqueTags,
+            ];
+            const updatedFsEntryMeta = {
+              ...entry.meta,
+              tags: newTags,
+            };
+            return saveMetaDataPromise(entry, updatedFsEntryMeta)
+              .then(() => {
+                if (reflect) {
+                  reflectUpdateMeta({ ...entry, meta: updatedFsEntryMeta });
+                }
+                return { ...entry, meta: updatedFsEntryMeta };
+              })
+              .catch((err) => {
+                console.log(
+                  'Error adding tags for ' + entry.path + ' with ' + err,
+                );
+                showNotification(
+                  t('core:addingTagsFailed' as any) as string,
+                  'error',
+                  true,
+                );
+                return entry;
+              });
+          }
+        } else {
+          const newFsEntryMeta = { tags };
+          return saveMetaDataPromise(entry, newFsEntryMeta)
+            .then((meta) => {
               if (reflect) {
-                reflectUpdateMeta(path);
+                reflectUpdateMeta({ ...entry, meta });
               }
-              return path;
+              return { ...entry, meta };
             })
-            .catch((err) => {
-              console.warn('Error adding tags for ' + path + ' with ' + err);
+            .catch((error) => {
+              console.log(
+                'Error adding tags for ' + entry.path + ' with ' + error,
+              );
               showNotification(
                 t('core:addingTagsFailed' as any) as string,
                 'error',
                 true,
               );
-              return path;
+              return entry;
             });
         }
-      } else {
-        const newFsEntryMeta = { tags };
-        return saveMetaDataPromise(path, newFsEntryMeta)
-          .then(() => {
-            if (reflect) {
-              reflectUpdateMeta(path);
-            }
-            return path;
-          })
-          .catch((error) => {
-            console.warn('Error adding tags for ' + path + ' with ' + error);
-            showNotification(
-              t('core:addingTagsFailed' as any) as string,
-              'error',
-              true,
-            );
-            return path;
-          });
-      }
-    } else if (fsEntryMeta) {
-      // Handling tags in filename by existing sidecar
-      const extractedTags = extractTags(
-        path,
-        tagDelimiter,
-        PlatformIO.getDirSeparator(),
-      );
-      const uniqueTags = getNonExistingTags(
-        tags,
-        extractedTags,
-        fsEntryMeta.tags,
-      );
-      if (uniqueTags.length > 0) {
-        const fileName = extractFileName(path, PlatformIO.getDirSeparator());
-        const containingDirectoryPath = extractContainingDirectoryPath(
-          path,
-          PlatformIO.getDirSeparator(),
-        );
-
-        for (let i = 0; i < uniqueTags.length; i += 1) {
-          extractedTags.push(uniqueTags[i].title);
-        }
-        const newFilePath =
-          (containingDirectoryPath
-            ? containingDirectoryPath + PlatformIO.getDirSeparator()
-            : '') +
-          generateFileName(
-            fileName,
-            extractedTags,
-            tagDelimiter,
-            prefixTagContainer,
-          );
-        return renameFile(path, newFilePath).then(() => {
-          return newFilePath;
-        });
-      }
-    } else {
-      // Handling tags in filename by no sidecar
-      const fileName = extractFileName(path, PlatformIO.getDirSeparator());
-      const containingDirectoryPath = extractContainingDirectoryPath(
-        path,
-        PlatformIO.getDirSeparator(),
-      );
-      const extractedTags = extractTags(
-        path,
-        tagDelimiter,
-        PlatformIO.getDirSeparator(),
-      );
-      for (let i = 0; i < tags.length; i += 1) {
-        // check if tag is already in the tag array
-        if (extractedTags.indexOf(tags[i].title) < 0) {
-          // Adding the new tag
-          extractedTags.push(tags[i].title);
-        }
-      }
-      const newFilePath =
-        (containingDirectoryPath
-          ? containingDirectoryPath + PlatformIO.getDirSeparator()
-          : '') +
-        generateFileName(
-          fileName,
-          extractedTags,
+      } else if (entry.meta) {
+        // Handling tags in filename by existing sidecar
+        const extractedTags = extractTags(
+          entry.path,
           tagDelimiter,
-          prefixTagContainer,
+          currentLocation?.getDirSeparator(),
         );
-      if (path !== newFilePath) {
-        return renameFile(path, newFilePath).then(() => {
-          return newFilePath;
-        });
-      }
-    }
-    return Promise.resolve(path);
-
-    function getNonExistingTags(
-      newTagsArray: Array<TS.Tag>,
-      fileTagsArray: string[],
-      sideCarTagsArray: Array<TS.Tag>,
-    ) {
-      const newTags = [];
-      for (let i = 0; i < newTagsArray.length; i += 1) {
-        // check if tag is already in the fileTagsArray
-        if (fileTagsArray.indexOf(newTagsArray[i].title) === -1) {
-          // check if tag is already in the sideCarTagsArray
-          if (
-            sideCarTagsArray.findIndex(
-              (sideCarTag) => sideCarTag.title === newTagsArray[i].title,
-            ) === -1
-          ) {
-            newTags.push(newTagsArray[i]);
+        const uniqueTags = getNonExistingTags(
+          tags,
+          extractedTags,
+          entry.meta.tags,
+        );
+        if (uniqueTags.length > 0) {
+          const newFilePath = addTagsToFilePath(
+            entry.path,
+            uniqueTags.map((tag) => tag.title),
+          );
+          if (entry.path !== newFilePath) {
+            return renameFile(
+              entry.path,
+              newFilePath,
+              entry.locationID,
+              reflect,
+            ).then((success) => {
+              return success
+                ? {
+                    ...entry,
+                    tags: extractTagsAsObjects(
+                      newFilePath,
+                      tagDelimiter,
+                      currentLocation?.getDirSeparator(),
+                    ),
+                    name: extractFileName(
+                      newFilePath,
+                      currentLocation?.getDirSeparator(),
+                    ),
+                    path: newFilePath,
+                  }
+                : undefined;
+            });
           }
         }
+      } else {
+        // Handling tags in filename by no sidecar
+        const newFilePath = addTagsToFilePath(
+          entry.path,
+          tags.map((tag) => tag.title),
+        );
+        if (entry.path !== newFilePath) {
+          return renameFile(
+            entry.path,
+            newFilePath,
+            entry.locationID,
+            reflect,
+          ).then((success) => {
+            return success
+              ? {
+                  ...entry,
+                  tags: extractTagsAsObjects(
+                    newFilePath,
+                    tagDelimiter,
+                    currentLocation?.getDirSeparator(),
+                  ),
+                  name: extractFileName(
+                    newFilePath,
+                    currentLocation?.getDirSeparator(),
+                  ),
+                  path: newFilePath,
+                }
+              : undefined;
+          });
+        }
       }
-      return newTags;
+      return Promise.resolve(entry);
+
+      function getNonExistingTags(
+        newTagsArray: Array<TS.Tag>,
+        fileTagsArray: string[],
+        sideCarTagsArray: Array<TS.Tag>,
+      ): TS.Tag[] {
+        const newTags = [];
+        if (newTagsArray) {
+          for (let i = 0; i < newTagsArray.length; i += 1) {
+            // check if tag is already in the fileTagsArray
+            if (
+              !fileTagsArray ||
+              fileTagsArray.indexOf(newTagsArray[i].title) === -1
+            ) {
+              // check if tag is already in the sideCarTagsArray
+              if (
+                !sideCarTagsArray ||
+                sideCarTagsArray.findIndex(
+                  (sideCarTag) => sideCarTag.title === newTagsArray[i].title,
+                ) === -1
+              ) {
+                newTags.push(newTagsArray[i]);
+              }
+            }
+          }
+        }
+        return newTags;
+      }
     }
+    return Promise.resolve(undefined);
+  }
+  /**
+   * @param path
+   * @param tags
+   * @param reflect
+   * return newFsEntry updated
+   */
+  function addTagsToEntry(
+    path: string,
+    tags: Array<TS.Tag>,
+    reflect: boolean = true,
+  ): Promise<TS.FileSystemEntry> {
+    return getAllPropertiesPromise(path).then((entry) =>
+      addTagsToFsEntry(entry, tags, reflect),
+    );
   }
 
   /**
@@ -463,6 +594,9 @@ export const TaggingActionsContextProvider = ({
     tag: TS.Tag,
     newTagTitle?: string,
   ) {
+    const dirSeparator = currentLocation
+      ? currentLocation.getDirSeparator()
+      : AppConfig.dirSeparator;
     if (newTagTitle === undefined) {
       // eslint-disable-next-line no-param-reassign
       newTagTitle = tag.title;
@@ -473,28 +607,27 @@ export const TaggingActionsContextProvider = ({
     ) {
       // Work around solution
       delete tag.functionality;
-      const entryProperties = await PlatformIO.getPropertiesPromise(path);
+      const entryProperties = await currentLocation.getPropertiesPromise(path);
       if (entryProperties.isFile && !persistTagsInSidecarFile) {
         tag.type = 'plain';
       }
     }
     delete tag.description;
     delete tag.functionality;
-    delete tag.path;
     delete tag.id;
-
     const extractedTags: string[] = extractTags(
       path,
       tagDelimiter,
-      PlatformIO.getDirSeparator(),
+      dirSeparator,
     );
     // TODO: Handle adding already added tags
     if (extractedTags.includes(tag.title)) {
-      // tag.type === 'plain') {
-      const fileName = extractFileName(path, PlatformIO.getDirSeparator());
+      //tag.type === 'plain') {
+
+      const fileName = extractFileName(path, dirSeparator);
       const containingDirectoryPath = extractContainingDirectoryPath(
         path,
-        PlatformIO.getDirSeparator(),
+        dirSeparator,
       );
 
       let tagFoundPosition = -1;
@@ -518,17 +651,21 @@ export const TaggingActionsContextProvider = ({
         fileName,
         extractedTags,
         tagDelimiter,
+        dirSeparator,
         prefixTagContainer,
+        filenameTagPlacedAtEnd,
       );
       if (newFileName !== fileName) {
-        await renameFile(
-          path,
-          containingDirectoryPath + PlatformIO.getDirSeparator() + newFileName,
-        );
+        const newFilePath =
+          (containingDirectoryPath && containingDirectoryPath !== dirSeparator
+            ? containingDirectoryPath + dirSeparator
+            : '') + newFileName;
+        await renameFile(path, newFilePath, currentLocation.uuid);
       }
     } else {
       //if (tag.type === 'sidecar') {
-      loadMetaDataPromise(path)
+      currentLocation
+        .loadMetaDataPromise(path)
         .then((fsEntryMeta) => {
           let tagFoundPosition = -1;
           let newTagsArray = fsEntryMeta.tags.map((sidecarTag, index) => {
@@ -556,16 +693,18 @@ export const TaggingActionsContextProvider = ({
             (item, pos, array) =>
               array.findIndex((el) => el.title === item.title) === pos,
           );
-          saveMetaDataPromise(path, {
+          saveCurrentLocationMetaData(path, {
             ...fsEntryMeta,
             tags: newTagsArray,
           })
             .then(() => {
-              reflectUpdateMeta(path);
+              getAllPropertiesPromise(path).then((entry) =>
+                reflectUpdateMeta(entry),
+              );
               return true;
             })
             .catch((err) => {
-              console.warn('Error adding tags for ' + path + ' with ' + err);
+              console.log('Error adding tags for ' + path + ' with ' + err);
               showNotification(
                 t('core:addingTagsFailed' as any) as string,
                 'error',
@@ -576,20 +715,22 @@ export const TaggingActionsContextProvider = ({
         })
         .catch((error) => {
           // json metadata not exist -create the new one
-          console.warn(
+          console.log(
             'json metadata not exist create new ' + path + ' with ' + error,
           );
           // dispatch(AppActions.showNotification(t('core:addingTagsFailed'), 'error', true));
           // eslint-disable-next-line no-param-reassign
           tag.title = newTagTitle;
           const fsEntryMeta = { tags: [tag] };
-          saveMetaDataPromise(path, fsEntryMeta)
+          saveCurrentLocationMetaData(path, fsEntryMeta)
             .then(() => {
-              reflectUpdateMeta(path);
+              getAllPropertiesPromise(path).then((entry) =>
+                reflectUpdateMeta(entry),
+              );
               return true;
             })
             .catch((err) => {
-              console.warn('Error adding tags for ' + path + ' with ' + err);
+              console.log('Error adding tags for ' + path + ' with ' + err);
               showNotification(
                 t('core:addingTagsFailed' as any) as string,
                 'error',
@@ -598,27 +739,29 @@ export const TaggingActionsContextProvider = ({
             });
         });
     }
+    collectTagsToLibrary([{ ...tag, title: newTagTitle }]);
+  }
 
+  function collectTagsToLibrary(tags: TS.Tag[]) {
     if (addTagsToLibrary) {
       // collecting tags
       // filter existed in tagLibrary
-      const uniqueTags = [];
-      if (
-        getTagLibrary().findIndex(
-          (tagGroup) =>
-            tagGroup.children.findIndex((obj) => obj.title === newTagTitle) !==
-            -1,
-        ) === -1 &&
-        !/^(?:\d+~\d+|\d+)$/.test(newTagTitle) &&
-        !isGeoTag(newTagTitle) // skip adding of tag containing only digits or geo tags
-      ) {
-        uniqueTags.push({
+      const uniqueTags = tags.filter(
+        (tag) =>
+          getTagLibrary().findIndex(
+            (tagGroup) =>
+              tagGroup.children.findIndex((obj) => obj.title === tag.title) !==
+              -1,
+          ) === -1 &&
+          !/^(?:\d+~\d+|\d+)$/.test(tag.title) &&
+          !isGeoTag(tag.title),
+      ); // skip adding of tag containing only digits or geo tags
+
+      /*uniqueTags.push({
           ...tag,
-          title: newTagTitle,
           color: tag.color || tagBackgroundColor,
           textcolor: tag.textcolor || tagTextColor,
-        });
-      }
+        });*/
       if (uniqueTags.length > 0) {
         const tagGroup = {
           uuid: 'collected_tag_group_id', // uuid needs to be constant here (see mergeTagGroup)
@@ -629,8 +772,8 @@ export const TaggingActionsContextProvider = ({
           created_date: new Date().getTime(),
           modified_date: new Date().getTime(),
         };
-        mergeTagGroup(tagGroup, getTagLibrary());
-        dispatch(AppActions.tagLibraryChanged());
+        mergeTagGroup(tagGroup);
+        // dispatch(AppActions.tagLibraryChanged());
       }
     }
   }
@@ -643,8 +786,27 @@ export const TaggingActionsContextProvider = ({
       removeTagsFromEntry(path, tags, false),
     );
     return Promise.all(promises).then((editedPaths) => {
-      reflectUpdateMeta(...editedPaths);
-      return true;
+      const promiseReflect: Promise<TS.EditAction>[] = [];
+      for (let i = 0; i < editedPaths.length; i++) {
+        if (editedPaths[i]) {
+          promiseReflect.push(
+            getAllPropertiesPromise(editedPaths[i]).then(
+              (fsEntry: TS.FileSystemEntry) => {
+                const currentAction: TS.EditAction = {
+                  action: 'update',
+                  entry: fsEntry,
+                  oldEntryPath: paths[i],
+                };
+                return currentAction;
+              },
+            ),
+          );
+        }
+      }
+      return Promise.all(promiseReflect).then((actionsArray) => {
+        setReflectActions(...actionsArray);
+        return true;
+      });
     });
   }
 
@@ -662,23 +824,27 @@ export const TaggingActionsContextProvider = ({
     const tagTitlesForRemoving = tags
       ? tags.map((tag) => tag.title)
       : undefined;
-    return loadMetaDataPromise(path)
+    return currentLocation
+      .loadMetaDataPromise(path)
       .then((fsEntryMeta: TS.FileSystemEntryMeta) => {
-        const newTags = tagTitlesForRemoving
-          ? fsEntryMeta.tags.filter(
-              (sidecarTag) => !tagTitlesForRemoving.includes(sidecarTag.title),
-            )
-          : [];
-
-        return removeTagsFromFilename(fsEntryMeta.isFile).then(
+        return removeTagsFromFilename(fsEntryMeta.isFile, reflect).then(
           (newFilePath) => {
+            const newTags = tagTitlesForRemoving
+              ? fsEntryMeta.tags.filter(
+                  (sidecarTag) =>
+                    !tagTitlesForRemoving.includes(sidecarTag.title),
+                )
+              : [];
             return removeTagsFromSideCar(
               fsEntryMeta,
               newTags,
               newFilePath,
+              false,
             ).then(() => {
               if (reflect) {
-                reflectUpdateMeta(newFilePath);
+                getAllPropertiesPromise(newFilePath).then((entry) =>
+                  reflectUpdateMeta(entry),
+                );
               }
               return newFilePath;
             });
@@ -686,30 +852,36 @@ export const TaggingActionsContextProvider = ({
         );
       })
       .catch((error) => {
-        console.warn('Error removing tags for ' + path + ' with ' + error);
+        console.log('Error removing tags for ' + path + ' with ' + error);
         // dispatch(AppActions.showNotification(t('core:removingSidecarTagsFailed'), 'error', true));
-        return removeTagsFromFilename();
+        return removeTagsFromFilename(true, reflect);
       });
 
     function removeTagsFromSideCar(
       fsEntryMeta: TS.FileSystemEntryMeta,
       newTags,
       newFilePath,
+      reflect,
     ): Promise<boolean> {
-      if (newFilePath === path) {
+      if (JSON.stringify(fsEntryMeta.tags) !== JSON.stringify(newTags)) {
+        //newFilePath === path) {
         // no file rename - only sidecar tags removed
         const updatedFsEntryMeta = {
           ...fsEntryMeta,
           tags: newTags,
         };
-        return saveMetaDataPromise(path, updatedFsEntryMeta)
+        return saveCurrentLocationMetaData(newFilePath, updatedFsEntryMeta)
           .then(() => {
-            reflectUpdateMeta(newFilePath);
+            if (reflect) {
+              getAllPropertiesPromise(newFilePath).then((entry) =>
+                reflectUpdateMeta(entry),
+              );
+            }
             return true;
           })
           .catch((err) => {
-            console.warn(
-              'Removing sidecar tags failed ' + path + ' with ' + err,
+            console.log(
+              'Removing sidecar tags failed ' + newFilePath + ' with ' + err,
             );
             showNotification(
               t('core:removingSidecarTagsFailed' as any) as string,
@@ -724,22 +896,25 @@ export const TaggingActionsContextProvider = ({
     /**
      * return new file path
      * @param isFile
+     * @param reflect
      */
-    function removeTagsFromFilename(isFile: boolean = true): Promise<string> {
+    function removeTagsFromFilename(
+      isFile: boolean = true,
+      reflect = true,
+    ): Promise<string> {
       if (!isFile) {
         return Promise.resolve(path);
       }
       return new Promise(async (resolve, reject) => {
-        let extractedTags = extractTags(
-          path,
-          tagDelimiter,
-          PlatformIO.getDirSeparator(),
-        );
+        const dirSeparator = currentLocation
+          ? currentLocation.getDirSeparator()
+          : AppConfig.dirSeparator;
+        let extractedTags = extractTags(path, tagDelimiter, dirSeparator);
         if (extractedTags.length > 0) {
-          const fileName = extractFileName(path, PlatformIO.getDirSeparator());
+          const fileName = extractFileName(path, dirSeparator);
           const containingDirectoryPath = extractContainingDirectoryPath(
             path,
-            PlatformIO.getDirSeparator(),
+            dirSeparator,
           );
           if (tagTitlesForRemoving) {
             for (let i = 0; i < tagTitlesForRemoving.length; i += 1) {
@@ -756,19 +931,27 @@ export const TaggingActionsContextProvider = ({
             extractedTags = [];
           }
           const newFilePath =
-            (containingDirectoryPath
-              ? containingDirectoryPath + PlatformIO.getDirSeparator()
+            (containingDirectoryPath && containingDirectoryPath !== dirSeparator
+              ? containingDirectoryPath + dirSeparator
               : '') +
             generateFileName(
               fileName,
               extractedTags,
               tagDelimiter,
+              dirSeparator,
               prefixTagContainer,
+              filenameTagPlacedAtEnd,
             );
           if (path !== newFilePath) {
-            const success = await renameFile(path, newFilePath);
+            const success = await renameFile(
+              path,
+              newFilePath,
+              currentLocation.uuid,
+              reflect,
+            );
             if (!success) {
-              reject(new Error('Error renaming file'));
+              resolve(undefined);
+              //reject(new Error('Error renaming file'));
               return;
             }
           }
@@ -797,7 +980,7 @@ export const TaggingActionsContextProvider = ({
         children: uniqueTags,
         modified_date: new Date().getTime(),
       };
-      mergeTagGroup(changedTagGroup, getTagLibrary(), locations);
+      mergeTagGroup(changedTagGroup);
       // dispatch(TagLibraryActions.mergeTagGroup(changedTagGroup));
     }
   }
@@ -829,25 +1012,496 @@ export const TaggingActionsContextProvider = ({
     return uniqueTags;
   }
 
+  function saveTagLibrary(tg: TS.TagGroup[]) {
+    const tagGroups = setTagLibrary(tg);
+    reflectTagLibraryChanged(tagGroups);
+  }
+
+  function saveTags(tags: TS.Tag[], indexForEditing: number) {
+    if (indexForEditing >= 0) {
+      /*const taggroupTags = tagGroups[indexForEditing].children;
+      if (
+        !taggroupTags.some((tag) => tags.some((t) => t.title === tag.title))
+      ) {*/
+      saveTagLibrary([
+        ...tagGroups.slice(0, indexForEditing),
+        {
+          ...tagGroups[indexForEditing],
+          children: tags,
+        },
+        ...tagGroups.slice(indexForEditing + 1),
+      ]);
+    }
+  }
+
+  function updateTagGroup(entry: TS.TagGroup, replaceTags = false) {
+    let indexForEditing = tagGroups.findIndex(
+      (tagGroup) => tagGroup.uuid === entry.uuid,
+    );
+
+    if (indexForEditing >= 0) {
+      const modifiedEntry = {
+        ...entry,
+        ...(!entry.created_date && { created_date: new Date().getTime() }),
+        ...(!entry.modified_date && { modified_date: new Date().getTime() }),
+      };
+      if (Pro && entry.locationId) {
+        const location: CommonLocation = findLocation(entry.locationId);
+        if (location) {
+          editLocationTagGroup(location, modifiedEntry, replaceTags);
+        }
+      }
+
+      return saveTagLibrary([
+        ...tagGroups.slice(0, indexForEditing),
+        modifiedEntry,
+        ...tagGroups.slice(indexForEditing + 1),
+      ]);
+    }
+  }
+
+  /*function saveTagInt(
+    newTag: TS.Tag,
+    parentTagGroupUuid: TS.Uuid
+  ) {
+    let indexForEditing = tagGroups.findIndex(
+      (tagGroup) => tagGroup.uuid === parentTagGroupUuid,
+    );
+
+    if (indexForEditing >= 0) {
+      const taggroupTags = tagGroups[indexForEditing].children;
+      if (!taggroupTags.some((tag) => tag.title === newTag.title)) {
+        return saveTagLibrary([
+          ...tagGroups.slice(0, indexForEditing),
+          {
+            ...tagGroups[indexForEditing],
+            children: [...taggroupTags, newTag],
+          },
+          ...tagGroups.slice(indexForEditing + 1),
+        ]);
+      }
+    }
+    return tagGroups;
+  }*/
+
+  function createTagGroup(
+    entry: TS.TagGroup,
+    location?: CommonLocation,
+  ): Promise<boolean> {
+    const newEntry = {
+      ...entry,
+      created_date: new Date().getTime(),
+      modified_date: new Date().getTime(),
+    };
+    saveTagLibrary([...tagGroups, newEntry]);
+    if (Pro && location) {
+      return createLocationTagGroup(location, newEntry).then(() => true);
+    }
+    return Promise.resolve(true);
+  }
+
+  function mergeTagGroup(entry: TS.TagGroup) {
+    if (Pro && entry.locationId) {
+      const location: CommonLocation = findLocation(entry.locationId);
+      if (location) {
+        mergeLocationTagGroup(location, entry);
+      }
+    }
+    const indexForEditing = tagGroups.findIndex(
+      (obj) => obj.uuid === entry.uuid,
+    );
+    if (indexForEditing > -1) {
+      const tags = [...tagGroups[indexForEditing].children, ...entry.children];
+      tags.splice(0, tags.length - maxCollectedTag);
+      saveTagLibrary([
+        ...tagGroups.slice(0, indexForEditing),
+        {
+          uuid: entry.uuid,
+          title: entry.title,
+          children: tags,
+          created_date: entry.created_date,
+          modified_date: new Date().getTime(),
+        },
+        ...tagGroups.slice(indexForEditing + 1),
+      ]);
+    } else {
+      saveTagLibrary([
+        ...tagGroups,
+        {
+          uuid: entry.uuid || getUuid(),
+          title: entry.title,
+          color: entry.color,
+          textcolor: entry.textcolor,
+          children: entry.children,
+          created_date: new Date().getTime(),
+          modified_date: new Date().getTime(),
+        },
+      ]);
+    }
+  }
+
+  function removeTagGroup(parentTagGroupUuid: TS.Uuid) {
+    const indexForRemoving = tagGroups.findIndex(
+      (t) => t.uuid === parentTagGroupUuid,
+    );
+    if (indexForRemoving >= 0) {
+      const tagGroup: TS.TagGroup = tagGroups[indexForRemoving];
+      if (Pro && tagGroup && tagGroup.locationId) {
+        const location: CommonLocation = findLocation(tagGroup.locationId);
+        if (location) {
+          removeLocationTagGroup(location, parentTagGroupUuid);
+        }
+      }
+
+      saveTagLibrary([
+        ...tagGroups.slice(0, indexForRemoving),
+        ...tagGroups.slice(indexForRemoving + 1),
+      ]);
+    }
+  }
+
+  /**
+   * Add tag to tagGroup
+   * @param tag
+   * @param parentTagGroupUuid - tagGroup ID to add in
+   */
+  function addTag(tags: TS.Tag[], parentTagGroupUuid: TS.Uuid) {
+    const tgIndex = tagGroups.findIndex(
+      (tagGroup) => tagGroup.uuid === parentTagGroupUuid,
+    );
+    if (tgIndex > -1) {
+      const tagGroup = tagGroups[tgIndex];
+
+      const newTags = [
+        ...tagGroup.children,
+        ...tags.map((tag) => ({
+          ...tag,
+          ...(!tag.color && { color: tagGroup.color }),
+          ...(!tag.textcolor && { textcolor: tagGroup.textcolor }),
+        })),
+      ];
+      saveTags(newTags, tgIndex);
+
+      if (Pro && tagGroup && tagGroup.locationId) {
+        const location: CommonLocation = findLocation(tagGroup.locationId);
+        if (location) {
+          tagGroup.children = newTags;
+          editLocationTagGroup(location, tagGroup);
+        }
+      }
+    }
+  }
+
+  function editTag(
+    tag: TS.Tag,
+    parentTagGroupUuid: TS.Uuid,
+    origTitle: string,
+  ) {
+    const indexForEditing = tagGroups.findIndex(
+      (t) => t.uuid === parentTagGroupUuid,
+    );
+
+    if (indexForEditing > -1) {
+      const tagGroup: TS.TagGroup = tagGroups[indexForEditing];
+      const newTagGroup: TS.TagGroup = {
+        ...tagGroup,
+        modified_date: new Date().getTime(),
+        children: tagGroup.children.map((t) => {
+          if (t.title === origTitle) {
+            return tag;
+          }
+          return t;
+        }),
+      };
+      updateTagGroup(newTagGroup, true);
+    }
+  }
+
+  function deleteTag(tagTitle: string, parentTagGroupUuid: TS.Uuid) {
+    const tagGroup: TS.TagGroup = tagGroups.find(
+      (t) => t.uuid === parentTagGroupUuid,
+    );
+
+    const tagIndexForRemoving = tagGroup.children.findIndex(
+      (tag) => tag.title === tagTitle,
+    );
+    if (tagIndexForRemoving >= 0) {
+      const editedTagGroup: TS.TagGroup = {
+        ...tagGroup,
+        modified_date: new Date().getTime(),
+        children: [
+          ...tagGroup.children.slice(0, tagIndexForRemoving),
+          ...tagGroup.children.slice(tagIndexForRemoving + 1),
+        ],
+      };
+
+      updateTagGroup(editedTagGroup, true);
+    }
+  }
+
+  function moveTag(
+    tagTitle: string,
+    fromTagGroupId: TS.Uuid,
+    toTagGroupId: TS.Uuid,
+  ) {
+    let tagIndexForRemoving = -1;
+    let indexFromGroup = -1;
+    let indexToGroup = -1;
+    tagGroups.forEach((tagGroup, index) => {
+      if (tagGroup.uuid === fromTagGroupId) {
+        indexFromGroup = index;
+      }
+      if (tagGroup.uuid === toTagGroupId) {
+        indexToGroup = index;
+      }
+    });
+    if (indexFromGroup >= 0 && tagGroups[indexFromGroup].children) {
+      tagIndexForRemoving = tagGroups[indexFromGroup].children.findIndex(
+        (tag) => tag.title === tagTitle,
+      );
+    }
+    if (indexToGroup >= 0 && indexToGroup >= 0 && tagIndexForRemoving >= 0) {
+      const newTagLibrary = [...tagGroups];
+      const tag = {
+        ...tagGroups[indexFromGroup].children[tagIndexForRemoving],
+      };
+      const found = newTagLibrary[indexToGroup].children.find(
+        (t) => t.title === tag.title,
+      );
+      if (!found) {
+        newTagLibrary[indexToGroup].children.push(tag);
+        newTagLibrary[indexFromGroup].children = [
+          ...newTagLibrary[indexFromGroup].children.slice(
+            0,
+            tagIndexForRemoving,
+          ),
+          ...newTagLibrary[indexFromGroup].children.slice(
+            tagIndexForRemoving + 1,
+          ),
+        ];
+        return saveTagLibrary(newTagLibrary);
+      }
+      console.log('Tag with this title already exists in the target tag group');
+    }
+  }
+
+  function changeTagOrder(
+    tagGroupUuid: TS.Uuid,
+    fromIndex: number,
+    toIndex: number,
+  ) {
+    const indexFromGroup = tagGroups.findIndex(
+      (tagGroup) => tagGroup.uuid === tagGroupUuid,
+    );
+
+    if (indexFromGroup > -1) {
+      const newTagLibrary = [...tagGroups];
+      // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/Destructuring_assignment#swapping_variables
+      [
+        newTagLibrary[indexFromGroup].children[fromIndex],
+        newTagLibrary[indexFromGroup].children[toIndex],
+      ] = [
+        newTagLibrary[indexFromGroup].children[toIndex],
+        newTagLibrary[indexFromGroup].children[fromIndex],
+      ];
+
+      saveTagLibrary(newTagLibrary);
+    }
+  }
+
+  function moveTagGroupUp(parentTagGroupUuid: TS.Uuid) {
+    let indexForUpdating = tagGroups.findIndex(
+      (t) => t.uuid === parentTagGroupUuid,
+    );
+    if (indexForUpdating > 0) {
+      const secondIndex = indexForUpdating - 1;
+      return saveTagLibrary(
+        immutablySwapItems(tagGroups, indexForUpdating, secondIndex),
+      );
+    }
+    return tagGroups;
+  }
+
+  function moveTagGroupDown(parentTagGroupUuid: TS.Uuid) {
+    let indexForUpdating = tagGroups.findIndex(
+      (t) => t.uuid === parentTagGroupUuid,
+    );
+    if (indexForUpdating >= 0 && indexForUpdating < tagGroups.length - 1) {
+      const secondIndex = indexForUpdating + 1;
+      return saveTagLibrary(
+        immutablySwapItems(tagGroups, indexForUpdating, secondIndex),
+      );
+    }
+    return tagGroups;
+  }
+
+  function moveTagGroup(tagGroupUuid: TS.Uuid, position: number) {
+    let indexForUpdating = tagGroups.findIndex((t) => t.uuid === tagGroupUuid);
+    if (indexForUpdating > -1 && indexForUpdating !== position) {
+      const tagGroupsReturn = Array.from(tagGroups);
+      const [removed] = tagGroupsReturn.splice(indexForUpdating, 1);
+      tagGroupsReturn.splice(position, 0, removed);
+      saveTagLibrary(tagGroupsReturn);
+    }
+  }
+
+  function sortTagGroup(parentTagGroupUuid: TS.Uuid) {
+    let indexForUpdating = tagGroups.findIndex(
+      (t) => t.uuid === parentTagGroupUuid,
+    );
+    if (indexForUpdating > -1) {
+      saveTagLibrary([
+        ...tagGroups.slice(0, indexForUpdating),
+        {
+          ...tagGroups[indexForUpdating],
+          children: tagGroups[indexForUpdating].children.sort((a, b) =>
+            a.title > b.title ? 1 : a.title < b.title ? -1 : 0,
+          ),
+        },
+        ...tagGroups.slice(indexForUpdating + 1),
+      ]);
+    }
+  }
+
+  function importTagGroups(
+    newEntries: Array<TS.TagGroup>,
+    replace = false,
+    location: CommonLocation = undefined,
+  ) {
+    let arr = replace ? [] : [...tagGroups];
+    // console.log(arr);
+    // @ts-ignore
+    if (newEntries[0] && newEntries[0].key) {
+      // TODO test this migration
+      newEntries.forEach((newTg: TS.TagGroup, index) => {
+        // migration of old tag groups 2.9 or less in the new version 3.0-present
+        // @ts-ignore
+        if (newTg.key === tagGroups.uuid || newTg.key !== tagGroups.uuid) {
+          newTg = {
+            ...(location && { locationId: location.uuid }),
+            title: newTg.title,
+            // @ts-ignore
+            uuid: newTg.key,
+            children: newTg.children,
+          };
+          const tagsArr = [];
+          newTg.children.forEach((tag) => {
+            tagsArr.push(tag);
+            newTg.children = tagsArr;
+            arr.push(newTg);
+          });
+        }
+      });
+    } else {
+      newEntries.forEach((tagGroup) => {
+        const exist = arr.some((obj) => obj.uuid === tagGroup.uuid);
+        if (exist) {
+          arr = arr.map((tGroup) => {
+            if (tGroup.uuid === tagGroup.uuid) {
+              return tagGroup;
+            }
+            return tGroup;
+          });
+        } else {
+          arr.push({
+            ...tagGroup,
+            ...(location && {
+              locationId: location.uuid,
+            }),
+          });
+        }
+        /*const index = arr.findIndex((obj) => obj.uuid === tagGroup.uuid);
+        if (index > -1) {
+          tagGroup.children.forEach((tag) => {
+            const stateTag = arr[index].children.find(
+              (obj) => obj.title === tag.title,
+            );
+            if (stateTag === undefined) {
+              arr[index].children.push(tag);
+            }
+          });
+          if (tagGroup.locationId) {
+            arr[index].locationId = tagGroup.locationId;
+          }
+        } else {
+          arr.push({
+            ...tagGroup,
+            ...(location && {
+              locationId: location.uuid,
+            }),
+          });
+        }*/
+      });
+    }
+
+    saveTagLibrary(arr);
+  }
+
+  function openEditEntryTagDialog(entries: TS.FileSystemEntry[], tag: TS.Tag) {
+    open.current = true;
+    selectedEntries.current = entries;
+    selectedTag.current = tag;
+    forceUpdate();
+  }
+
+  function closeEditEntryTagDialog() {
+    open.current = false;
+    forceUpdate();
+  }
+
+  function EditEntryTagDialogAsync(props) {
+    return (
+      <React.Suspense fallback={<LoadingLazy />}>
+        <EditEntryTagDialog {...props} />
+      </React.Suspense>
+    );
+  }
+
   const context = useMemo(() => {
     return {
-      extractContent,
+      addTagsToFsEntries,
       addTags,
       addTagsToEntry,
+      addTagsToFsEntry,
       editTagForEntry,
       removeTags,
       removeTagsFromEntry,
       removeAllTags,
       collectTagsFromLocation,
+      createTagGroup,
+      mergeTagGroup,
+      removeTagGroup,
+      addTag,
+      editTag,
+      deleteTag,
+      moveTag,
+      changeTagOrder,
+      moveTagGroupUp,
+      moveTagGroupDown,
+      moveTagGroup,
+      sortTagGroup,
+      updateTagGroup,
+      importTagGroups,
+      openEditEntryTagDialog,
+      closeEditEntryTagDialog,
     };
   }, [
+    tagGroups,
     persistTagsInSidecarFile,
     addTagsToLibrary,
-    //reflectUpdateSidecarTags,
+    currentDirectoryEntries,
+    saveTagInLocation,
+    filenameTagPlacedAtEnd,
   ]);
 
   return (
     <TaggingActionsContext.Provider value={context}>
+      <EditEntryTagDialogAsync
+        open={open.current}
+        onClose={closeEditEntryTagDialog}
+        tag={selectedTag.current}
+        entries={selectedEntries.current}
+      />
       {children}
     </TaggingActionsContext.Provider>
   );

@@ -1,6 +1,6 @@
 /**
  * TagSpaces - universal file and folder organizer
- * Copyright (C) 2017-present TagSpaces UG (haftungsbeschraenkt)
+ * Copyright (C) 2017-present TagSpaces GmbH
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License (version 3) as
@@ -17,10 +17,10 @@
  */
 
 import AppConfig from '-/AppConfig';
-import keyBindings from '-/reducers/keybindings-default';
+import { extensionsFound, supportedFileTypes } from '-/extension-config';
 import { PerspectiveIDs } from '-/perspectives';
+import keyBindings from '-/reducers/keybindings-default';
 import { getUuid } from '@tagspaces/tagspaces-common/utils-io';
-import { supportedFileTypes } from '-/extension-config';
 
 let desktopMode = !AppConfig.isMobile;
 if (window.ExtDisplayMode && window.ExtDisplayMode === 'mobile') {
@@ -31,6 +31,10 @@ if (window.ExtDisplayMode && window.ExtDisplayMode === 'mobile') {
 let checkForUpdates = true;
 if (window.ExtCheckForUpdatesOnStartup !== undefined) {
   checkForUpdates = window.ExtCheckForUpdatesOnStartup;
+}
+let filenameTagPlacedAtEnd = true;
+if (window.ExtFilenameTagPlacedAtEnd !== undefined) {
+  filenameTagPlacedAtEnd = window.ExtFilenameTagPlacedAtEnd;
 }
 
 export default {
@@ -43,7 +47,7 @@ export default {
   contentHash: '',
   isUpdateInProgress: false,
   isUpdateAvailable: false,
-  enableWS: true,
+  enableWS: AppConfig.isElectron,
   warningOpeningFilesExternally: true,
   tagDelimiter: ' ',
   maxSearchResult: 1000,
@@ -53,7 +57,7 @@ export default {
   newHTMLFileContent:
     '<!DOCTYPE html><html><head><meta http-equiv="Content-Type" content="text/html; charset=utf-8"></head><body></body></html>',
   showUnixHiddenEntries: false,
-  entryContainerTab: undefined,
+  entryContainerTab: 0,
   checkForUpdates,
   reorderTags: false,
   coloredFileExtension: false,
@@ -69,6 +73,7 @@ export default {
   lastOpenedLocation: '',
   useDefaultLocation: false, // TODO for remove
   persistTagsInSidecarFile: false, // old name writeMetaToSidecarFile -> persistTagsInSidecarFile
+  filenameTagPlacedAtEnd,
   addTagsToLibrary: true,
   interfaceLanguage: 'en',
   useTrashCan: true,
@@ -82,7 +87,7 @@ export default {
   currentDarkTheme: 'darklegacy',
   geoTaggingFormat: 'pluscodes',
   defaultPerspective: PerspectiveIDs.GRID,
-  enableGlobalKeyboardShortcuts: true,
+  enableGlobalKeyboardShortcuts: false,
   zoomFactor: 1,
   lastPublishedVersion: '',
   entrySplitSize: '45%', // AppConfig.isElectron ? '560px' : '360px',
@@ -105,6 +110,7 @@ export default {
       ? true
       : window.ExtRevisionsEnabled,
   prefixTagContainer: AppConfig.prefixTagContainer,
+  aiProviders: [],
   isAutoSaveEnabled:
     typeof window.ExtAutoSaveEnabled === 'undefined'
       ? false
@@ -218,9 +224,22 @@ export default {
       iso: 'zh_HK',
       title: '漢語 (Chinese Hong Kong)',
     },
+    {
+      iso: 'he',
+      title: 'עִבְרִית (Hebrew)',
+    },
+    {
+      iso: 'es_CL',
+      title: 'Español chileno (Chilean Spanish)',
+    },
   ],
   keyBindings: keyBindings(AppConfig.isMacLike),
-  supportedFileTypes: supportedFileTypes,
+  supportedFileTypes: window.ExtSupportedFileTypes
+    ? [...supportedFileTypes, ...window.ExtSupportedFileTypes]
+    : supportedFileTypes,
+  extensionsFound: window.ExtExtensionsFound
+    ? [...extensionsFound, ...window.ExtExtensionsFound]
+    : extensionsFound,
   enabledExtensions: [],
   mapTileServers: [
     {

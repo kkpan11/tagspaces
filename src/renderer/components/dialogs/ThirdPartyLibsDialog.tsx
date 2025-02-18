@@ -1,6 +1,6 @@
 /**
  * TagSpaces - universal file and folder organizer
- * Copyright (C) 2017-present TagSpaces UG (haftungsbeschraenkt)
+ * Copyright (C) 2017-present TagSpaces GmbH
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License (version 3) as
@@ -16,14 +16,14 @@
  *
  */
 
-import React from 'react';
-import Button from '@mui/material/Button';
-import DialogActions from '@mui/material/DialogActions';
-import DialogContent from '@mui/material/DialogContent';
-import DialogTitle from '@mui/material/DialogTitle';
-import Dialog from '@mui/material/Dialog';
+import DraggablePaper from '-/components/DraggablePaper';
+import TsButton from '-/components/TsButton';
+import TsDialogActions from '-/components/dialogs/components/TsDialogActions';
+import TsDialogTitle from '-/components/dialogs/components/TsDialogTitle';
 import ThirdPartyLibs from '-/third-party.txt';
-import DialogCloseButton from '-/components/dialogs/DialogCloseButton';
+import Dialog from '@mui/material/Dialog';
+import DialogContent from '@mui/material/DialogContent';
+import Paper from '@mui/material/Paper';
 import { useTheme } from '@mui/material/styles';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import { useTranslation } from 'react-i18next';
@@ -37,36 +37,41 @@ function ThirdPartyLibsDialog(props: Props) {
   const { open, onClose } = props;
   const { t } = useTranslation();
   const theme = useTheme();
-  const fullScreen = useMediaQuery(theme.breakpoints.down('md'));
+  const smallScreen = useMediaQuery(theme.breakpoints.down('md'));
+  const okButton = (
+    <TsButton
+      style={{
+        // @ts-ignore
+        WebkitAppRegion: 'no-drag',
+      }}
+      data-tid="confirmThirdPartyLibsDialog"
+      onClick={onClose}
+    >
+      {t('core:ok')}
+    </TsButton>
+  );
+
   return (
     <Dialog
       open={open}
       onClose={onClose}
-      fullScreen={fullScreen}
+      fullScreen={smallScreen}
+      PaperComponent={smallScreen ? Paper : DraggablePaper}
       keepMounted
       scroll="paper"
     >
-      <DialogTitle>
-        {t('core:thirdPartyLibs')}{' '}
-        <DialogCloseButton testId="closeThirdPartyTID" onClose={onClose} />
-      </DialogTitle>
-      <DialogContent style={{ overflowX: 'auto' }}>
+      <TsDialogTitle
+        dialogTitle={t('core:thirdPartyLibs')}
+        closeButtonTestId="closeThirdPartyTID"
+        onClose={onClose}
+        actionSlot={okButton}
+      />
+      <DialogContent>
         <pre style={{ whiteSpace: 'pre-wrap', userSelect: 'text' }}>
           {ThirdPartyLibs}
         </pre>
       </DialogContent>
-      <DialogActions
-        style={fullScreen ? { padding: '10px 30px 30px 30px' } : {}}
-      >
-        <Button
-          data-tid="confirmThirdPartyLibsDialog"
-          onClick={onClose}
-          color="primary"
-          variant="contained"
-        >
-          {t('core:ok')}
-        </Button>
-      </DialogActions>
+      {!smallScreen && <TsDialogActions>{okButton}</TsDialogActions>}
     </Dialog>
   );
 }

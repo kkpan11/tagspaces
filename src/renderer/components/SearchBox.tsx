@@ -1,6 +1,6 @@
 /**
  * TagSpaces - universal file and folder organizer
- * Copyright (C) 2017-present TagSpaces UG (haftungsbeschraenkt)
+ * Copyright (C) 2017-present TagSpaces GmbH
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License (version 3) as
@@ -20,31 +20,19 @@ import React, { useState } from 'react';
 import Popover from '@mui/material/Popover';
 import SearchPopover from '-/components/SearchPopover';
 import SearchAutocomplete from '-/components/SearchAutocomplete';
-import { useLocationIndexContext } from '-/hooks/useLocationIndexContext';
-import { useDirectoryContentContext } from '-/hooks/useDirectoryContentContext';
 
 interface Props {
   open: boolean;
 }
 
 function SearchBox(props: Props) {
-  const { searchQuery } = useDirectoryContentContext();
   const [anchorSearch, setAnchorSearch] = useState<HTMLButtonElement | null>(
     null,
   );
 
-  const [textQuery, setTextQuery] = useState<string>(
-    searchQuery.textQuery || '',
-  );
-
   return (
     <>
-      <SearchAutocomplete
-        open={props.open}
-        textQuery={textQuery}
-        setTextQuery={setTextQuery}
-        setAnchorSearch={setAnchorSearch}
-      />
+      <SearchAutocomplete open={props.open} setAnchorSearch={setAnchorSearch} />
       {props.open && (
         <Popover
           open={Boolean(anchorSearch)}
@@ -59,6 +47,8 @@ function SearchBox(props: Props) {
               style: {
                 overflow: 'hidden',
                 height: 720,
+                // background: alpha(theme.palette.background.default, 0.95),
+                // backdropFilter: 'blur(5px)',
               },
             },
           }}
@@ -71,11 +61,7 @@ function SearchBox(props: Props) {
             WebkitAppRegion: 'no-drag',
           }}
         >
-          <SearchPopover
-            onClose={() => setAnchorSearch(null)}
-            textQuery={textQuery}
-            setTextQuery={setTextQuery}
-          />
+          <SearchPopover onClose={() => setAnchorSearch(null)} />
         </Popover>
       )}
     </>

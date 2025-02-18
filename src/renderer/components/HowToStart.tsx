@@ -1,5 +1,5 @@
 import * as React from 'react';
-import Button from '@mui/material/Button';
+import TsButton from '-/components/TsButton';
 import Box from '@mui/material/Box';
 import Stepper from '@mui/material/Stepper';
 import Step from '@mui/material/Step';
@@ -25,18 +25,15 @@ const selectByTID: any = (tid) =>
   document.querySelector('[data-tid="' + tid + '"]');
 
 function clearHighlights() {
-  selectByTID('locationManager').classList.remove('highlighterOn');
-  selectByTID('tagLibrary').classList.remove('highlighterOn');
-  selectByTID('settings').classList.remove('highlighterOn');
-  selectByTID('createNewFileTID').classList.remove('highlighterOn');
-  // selectByTID('createNewLocation').classList.remove('highlighterOn');
-  selectByTID('locationList').classList.remove('highlighterOn');
-  selectByTID('tagLibraryTagGroupList') &&
-    selectByTID('tagLibraryTagGroupList').classList.remove('highlighterOn');
-  selectByTID('quickAccessButton').classList.remove('highlighterOn');
-  selectByTID('quickAccessArea') &&
-    selectByTID('quickAccessArea').classList.remove('highlighterOn');
-  selectByTID('floatingPerspectiveSwitcher').classList.remove('highlighterOn');
+  selectByTID('locationManager')?.classList.remove('highlighterOn');
+  selectByTID('tagLibrary')?.classList.remove('highlighterOn');
+  selectByTID('settings')?.classList.remove('highlighterOn');
+  selectByTID('createNewDropdownButtonTID')?.classList.remove('highlighterOn');
+  selectByTID('locationList')?.classList.remove('highlighterOn');
+  selectByTID('tagLibraryTagGroupList')?.classList.remove('highlighterOn');
+  selectByTID('quickAccessButton')?.classList.remove('highlighterOn');
+  selectByTID('quickAccessArea')?.classList.remove('highlighterOn');
+  selectByTID('floatingPerspectiveSwitcher')?.classList.remove('highlighterOn');
 }
 
 function HowToStart() {
@@ -48,8 +45,8 @@ function HowToStart() {
       description: (
         <>
           The following guide will demonstrate some of the key areas and
-          features of this application. We suggest that first-time users utilize
-          this walk-through.
+          features of the application. We highly recommend it for first-time
+          users.
         </>
       ),
     },
@@ -57,11 +54,11 @@ function HowToStart() {
       label: 'Location Manager',
       description: (
         <>
-          In order to use a folder with files in TagSpaces you have to connect
-          it as location within the Location Manager. The Location Manager
-          allows you to create, edit, remove, import, and export your locations.
-          Any pre-existing locations already pointing to folders such as the
-          Desktop or Downloads can be removed if they are not needed.
+          In order to use a given folder in TagSpaces you have to connect it as
+          location with the Location Manager. The Location Manager allows you to
+          create, edit, remove, import, and export your locations. Any
+          pre-existing locations already pointing to folders such as the
+          Documents or Downloads can be removed if they are not needed.
           <br />
           <SlideButton
             title="Find out more"
@@ -70,8 +67,8 @@ function HowToStart() {
         </>
       ),
       action: () => {
-        selectByTID('locationManager').click();
-        selectByTID('locationList').classList.add('highlighterOn');
+        selectByTID('locationManager')?.click();
+        selectByTID('locationList')?.classList.add('highlighterOn');
       },
     },
     {
@@ -82,16 +79,18 @@ function HowToStart() {
           which folder you'd like to use in TagSpaces and create a location
           linked to it. Depending on the type of location, the folder can be
           located on your computer or in an S3-compatible cloud storage such as
-          AWS, Wasabi, or Minio.
+          AWS, Cloudflare, Wasabi, or Minio.
           <br />
           <SlideButton
-            title="Open Videos Tutorials"
-            link={Links.links.howToStart}
+            title="Video about creating locations"
+            link={Links.links.howToStart + '#locationsLocal'}
           />
         </>
       ),
       action: () => {
-        selectByTID('createNewFileTID').classList.add('highlighterOn');
+        selectByTID('createNewDropdownButtonTID')?.classList.add(
+          'highlighterOn',
+        );
       },
     },
     {
@@ -104,16 +103,16 @@ function HowToStart() {
           dragging and dropping it onto a file or folder.
           <br />
           <SlideButton
-            title="Find out more"
-            link={Links.documentationLinks.taglibrary}
+            title="Video introducing the tag library"
+            link={Links.links.howToStart + '#taglibrary'}
           />
         </>
       ),
       action: () => {
         selectByTID('tagLibrary').click();
         setTimeout(() => {
-          selectByTID('tagLibrary').classList.add('highlighterOn');
-          selectByTID('tagLibraryTagGroupList').classList.add('highlighterOn');
+          selectByTID('tagLibrary')?.classList.add('highlighterOn');
+          selectByTID('tagLibraryTagGroupList')?.classList.add('highlighterOn');
         }, 2000);
       },
     },
@@ -149,8 +148,8 @@ function HowToStart() {
       action: () => {
         selectByTID('quickAccessButton').click();
         setTimeout(() => {
-          selectByTID('quickAccessButton').classList.add('highlighterOn');
-          selectByTID('quickAccessArea').classList.add('highlighterOn');
+          selectByTID('quickAccessButton')?.classList.add('highlighterOn');
+          selectByTID('quickAccessArea')?.classList.add('highlighterOn');
         }, 2000);
       },
     },
@@ -180,6 +179,11 @@ function HowToStart() {
               <b>Kanban</b>&nbsp;
               <ProSign /> - turns every folder into a Kanban board
             </li>
+            <li>
+              <b>FolderViz</b>&nbsp;
+              <ProSign /> - display the file structure of a folder as visual
+              tree
+            </li>
           </ul>
           <SlideButton
             title="Find out more"
@@ -188,7 +192,7 @@ function HowToStart() {
         </>
       ),
       action: () => {
-        selectByTID('floatingPerspectiveSwitcher').classList.add(
+        selectByTID('floatingPerspectiveSwitcher')?.classList.add(
           'highlighterOn',
         );
       },
@@ -213,6 +217,9 @@ function HowToStart() {
               <b>Text</b> - suitable for creating plain text files, with no
               formatting
             </li>
+            <li>
+              <b>Audio</b> - <ProSign /> suitable for audio notes
+            </li>
           </ul>
           <SlideButton
             title="Find out more"
@@ -221,18 +228,20 @@ function HowToStart() {
         </>
       ),
       action: () => {
-        selectByTID('createNewFileTID').classList.add('highlighterOn');
+        selectByTID('createNewDropdownButtonTID')?.classList.add(
+          'highlighterOn',
+        );
       },
     },
     {
       label: 'App Settings',
       description: (
         <>
-          The highlighted button can be used to access the settings of the
-          application. This dialog allows the configuration of the application's
-          color theme, language, default perspective, tagging method, and more.
-          Additionally, keyboard shortcuts and preferences for editing supported
-          file types can be changed here.
+          The highlighted button will open the settings of the application.
+          There you can configure the application's color theme, language,
+          default perspective, tagging method, and more. Additionally, keyboard
+          shortcuts and preferences for editing supported file types can be also
+          changed there.
           <br />
           <SlideButton
             title="Find out more"
@@ -241,8 +250,8 @@ function HowToStart() {
         </>
       ),
       action: () => {
-        selectByTID('locationManager').click();
-        selectByTID('settings').classList.add('highlighterOn');
+        selectByTID('locationManager')?.click();
+        selectByTID('settings')?.classList.add('highlighterOn');
       },
     },
     {
@@ -254,9 +263,11 @@ function HowToStart() {
         </>
       ),
       action: () => {
-        selectByTID('createNewFileTID').classList.add('highlighterOn');
-        selectByTID('locationList').classList.add('highlighterOn');
-        selectByTID('locationManager').click();
+        selectByTID('createNewDropdownButtonTID')?.classList.add(
+          'highlighterOn',
+        );
+        selectByTID('locationList')?.classList.add('highlighterOn');
+        selectByTID('locationManager')?.click();
       },
     },
   ];
@@ -264,15 +275,14 @@ function HowToStart() {
   function SlideButton(props) {
     const { title, link } = props;
     return (
-      <Button
+      <TsButton
         onClick={() => {
           openURLExternally(link, true);
         }}
-        variant="text"
-        color="primary"
+        //variant="text"
       >
         {title}
-      </Button>
+      </TsButton>
     );
   }
 
@@ -301,7 +311,7 @@ function HowToStart() {
     setActiveStep(0);
   };
 
-  // ${theme.palette.primary.main};
+  // ${theme.palette.primary.main}; // #da15d8;
   return (
     <Box style={{ maxWidth: 480, paddingLeft: 10, paddingRight: 10 }}>
       <style>
@@ -311,7 +321,8 @@ function HowToStart() {
         }
         @keyframes pulsate {
             0%   { box-shadow: 0 0 0 transparent; }
-            50%  { box-shadow: 0 0 7px 6px ${theme.palette.primary.main} }
+            20%  { box-shadow: 0 0 7px 6px #da15d8;  }
+            70%  { box-shadow: 0 0 7px 6px #da15d8;  }
             100% { box-shadow: 0 0 0 transparent; }
         }
         `}
@@ -338,7 +349,7 @@ function HowToStart() {
               </Typography>
               <Box sx={{ mb: 2 }}>
                 <div>
-                  <Button
+                  <TsButton
                     // variant="contained"
                     onClick={handleNext}
                     sx={{ mt: 1, mr: 1 }}
@@ -346,14 +357,14 @@ function HowToStart() {
                     {index === steps.length - 1
                       ? t('core:finish')
                       : t('core:goforward')}
-                  </Button>
-                  <Button
+                  </TsButton>
+                  <TsButton
                     disabled={index === 0}
                     onClick={handleBack}
                     sx={{ mt: 1, mr: 1 }}
                   >
                     {t('core:goback')}
-                  </Button>
+                  </TsButton>
                 </div>
               </Box>
             </StepContent>
@@ -368,9 +379,9 @@ function HowToStart() {
           style={{ backgroundColor: 'transparent' }}
         >
           <Typography>All steps completed - you&apos;re finished.</Typography>
-          <Button onClick={handleReset} sx={{ mt: 1, mr: 1 }}>
+          <TsButton onClick={handleReset} sx={{ mt: 1, mr: 1 }}>
             {t('core:resetBtn')}
-          </Button>
+          </TsButton>
         </Paper>
       )}
     </Box>

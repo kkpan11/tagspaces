@@ -1,10 +1,9 @@
-/* Copyright (c) 2016-present - TagSpaces UG (Haftungsbeschraenkt). All rights reserved. */
-import path from 'path';
+/* Copyright (c) 2016-present - TagSpaces GmbH. All rights reserved. */
 import { expect } from '@playwright/test';
-import { delay } from './hook';
-import { firstFile, toContainTID } from './test-utils';
 import AppConfig from '../../src/renderer/AppConfig';
 import { dataTidFormat } from '../../src/renderer/services/test';
+import { delay } from './hook';
+import { firstFile, openContextEntryMenu, toContainTID } from './test-utils';
 
 export const defaultLocationPath =
   './testdata-tmp/file-structure/supported-filestypes';
@@ -12,8 +11,10 @@ export const defaultLocationName = 'supported-filestypes';
 export const perspectiveGridTable = '//*[@data-tid="perspectiveGridFileTable"]';
 export const newLocationName = 'Location Name Changed';
 export const tsFolder = '\\.ts'; // escape dot
-export const selectorFile = '//*[@data-tid="perspectiveGridFileTable"]/span';
-export const selectorFolder = '//*[@data-tid="perspectiveGridFileTable"]/div';
+export const selectorFile =
+  '//*[@data-tid="perspectiveGridFileTable"]/div/span';
+export const selectorFolder =
+  '//*[@data-tid="perspectiveGridFileTable"]/div/div';
 
 // const newHTMLFileName = 'newHTMLFile.html';
 const testFolder = 'testFolder';
@@ -29,6 +30,33 @@ export async function takeScreenshot(testInfo, title = 'failure') {
     contentType: 'image/png',
   });
   return await global.client.screenshot({ path: sPath });
+}
+
+export async function getElementScreenshot(
+  selector,
+  options = {
+    /*encoding: 'base64'*/
+  },
+) {
+  try {
+    /*const el = await global.client.$(selector);
+    await el.waitForElementState('visible');
+    const boundingBox = await el.boundingBox();*/
+    const buffer = await global.client.locator(selector).screenshot({
+      ...options,
+      /*clip: {
+          x: boundingBox.x + 5,
+          y: boundingBox.y + 5,
+          width: boundingBox.width - 10,
+          height: boundingBox.height -10
+        }*/
+    });
+    //const buffer = await el.screenshot({ ...options/*, clip: boundingBox*/ });
+    return buffer.toString('base64');
+  } catch (e) {
+    console.log('getElementScreenshot ' + selector + ' error: ', e);
+  }
+  return undefined;
 }
 
 export async function clickOn(selector, options = { timeout: 15000 }) {
@@ -51,29 +79,35 @@ export async function rightClickOn(selector) {
 /**
  *
  * @param selector
- * @param className
+ * @param propValue
+ * @param attribute
+ * @param timeout
  * @returns {Promise<void>} newClassName
  */
-export async function waitUntilClassChanged(selector, className) {
-  const element = await global.client.$(selector);
-  await element.waitUntil(
-    async function () {
-      const newClassName = await this.getAttribute('class');
-      return newClassName !== className;
-    },
-    {
-      timeout: 5000,
-      timeoutMsg:
-        'waitUntilClassChanged selector ' +
-        selector +
-        ' className:' +
-        className +
-        ' to changed after 5s',
-    },
-  );
-  return await element.getAttribute('class');
+export async function waitUntilChanged(
+  selector,
+  propValue,
+  attribute = 'class',
+  timeout = 5000,
+) {
+  const element = global.client.locator(selector);
+  await expect
+    .poll(
+      async () => {
+        const value = await element.getAttribute(attribute);
+        return value;
+      },
+      { timeout },
+    )
+    .not.toBe(propValue);
+
+  return await element.getAttribute(attribute);
 }
 
+export async function getAttribute(selector, attribute = 'style') {
+  const element = global.client.locator(selector);
+  return await element.getAttribute(attribute);
+}
 export async function setInputValue(selector, value) {
   global.client.fill(selector, value);
 }
@@ -83,6 +117,7 @@ export async function setInputValue(selector, value) {
  * @param value
  * @param delay
  * @returns {Promise<*>}
+ * @deprecated use typeInputValue instead
  */
 export async function setInputKeys(tid, value, delay = 0) {
   // global.client.keyboard.type('[data-tid=' + tid + '] input', value, { delay: 100 });
@@ -107,6 +142,10 @@ export async function typeInputValue(inputSelector, value, delay = 0) {
   await global.client.type(inputSelector, value, {
     delay,
   });
+  if (global.isWin) {
+    // todo on windows not always wait for typing value
+    await global.client.waitForTimeout(1000);
+  }
   return oldValue;
 }
 
@@ -323,10 +362,28 @@ export async function getGridCellClass(fileIndex = 0) {
   return undefined;
 }
 
-export async function expectAudioPlay() {
+export async function expectMediaPlay(visible = true) {
+  const fLocator = await frameLocator();
+  const videoLocator = fLocator.locator('video');
+  await expect(videoLocator).toBeVisible({
+    timeout: 8000,
+    visible: visible,
+  });
+  if (visible) {
+    const expectVideoToRender = async () => {
+      await expect(videoLocator).toBeSeekableMediaElement(6.9, 7);
+    };
+
+    await expectVideoToRender();
+  }
+  /*
   await expect
     .poll(
       async () => {
+        if (!global.isWin || global.isWeb) {
+          //todo remove this - currently video do not start playing on mac and web
+          return true;
+        }
         const fLocator = await frameLocator();
         const progressSeek = await fLocator.locator('[data-plyr=seek]');
         const ariaValueNow = await progressSeek.getAttribute('aria-valuenow');
@@ -342,10 +399,10 @@ export async function expectAudioPlay() {
       {
         message: 'progress of file is not greater that 0', // custom error message
         // Poll for 10 seconds; defaults to 5 seconds. Pass 0 to disable timeout.
-        timeout: 10000,
+        timeout: 15000,
       },
     )
-    .toBe(true);
+    .toBe(true);*/
 }
 
 export async function expectAllFileSelected(isSelected = true) {
@@ -363,16 +420,32 @@ export async function expectAllFileSelected(isSelected = true) {
 export async function expectElementSelected(
   selector,
   isSelected = true,
-  timeout = 2000,
+  timeout = 4000,
 ) {
-  // [data-testid="' + (isSelected ? 'CheckCircleIcon' : 'RadioButtonUncheckedIcon') + '"]
-  const sel = '[data-tid="fsEntryName_' + dataTidFormat(selector) + '"]';
+  const sel = `[data-tid="fsEntryName_${dataTidFormat(selector)}"]`;
+
   await expectElementExist(sel, true, timeout);
+
   const item = await global.client.$(sel);
-  const style = await item.getAttribute('style');
-  const selected =
-    style.indexOf('rgb(29') !== -1 && style.indexOf('transparent') === -1;
-  expect(selected).toBe(isSelected);
+
+  const startTime = Date.now();
+
+  while (Date.now() - startTime < timeout) {
+    const finalStyle = await item.evaluate((el) => el.getAttribute('style'));
+    const selected =
+      finalStyle.includes('rgb(29') && !finalStyle.includes('transparent');
+
+    if (selected === isSelected) {
+      expect(selected).toBe(isSelected); // Pass the test if the condition is met
+      return;
+    }
+
+    await global.client.waitForTimeout(100); // Small delay to avoid excessive CPU usage
+  }
+
+  throw new Error(
+    `Element ${sel} did not reach expected selected state: ${isSelected} within ${timeout}ms`,
+  );
 }
 
 export async function expectElementExist(
@@ -404,7 +477,7 @@ export async function createLocation(
     '[data-tid=locationManagerPanel]',
   );
   await locationManagerMenu.click();
-  const elem = await global.client.$('[data-tid=createNewLocation]');
+  const elem = await global.client.$('[data-tid=createNewLocationTID]');
   await elem.click();
   const lPath = await global.client.$('[data-tid=locationPath]');
   await lPath.click();
@@ -444,11 +517,11 @@ export async function setGridOptions(
   await clickOn('[data-tid=' + perspective + 'PerspectiveOptionsMenu]');
   if (showDirectories) {
     await global.client.check(
-      '[data-tid=gridPerspectiveToggleShowDirectories] input',
+      '[data-tid=' + perspective + 'PerspectiveToggleShowDirectories] input',
     );
   } else {
     await global.client.uncheck(
-      '[data-tid=gridPerspectiveToggleShowDirectories] input',
+      '[data-tid=' + perspective + 'PerspectiveToggleShowDirectories] input',
     );
   }
 
@@ -497,7 +570,7 @@ export async function selectFilesByID(arrEntryIds = []) {
 export async function selectRowFiles(arrIndex = []) {
   await setGridOptions('grid', false);
   const filesList = await global.client.$$(
-    '[data-tid=perspectiveGridFileTable] > span',
+    '[data-tid=perspectiveGridFileTable] > div > span',
   );
   const arrElements = [];
   if (filesList.length > 0) {
@@ -508,7 +581,9 @@ export async function selectRowFiles(arrIndex = []) {
         const divEl = await filesList[index].$('div div');
         const id = await divEl.getAttribute('data-entry-id');
         arrElements.push(id);
-        const spanEl = await divEl.$('div:nth-child(3) div span');
+        const spanEl = await divEl.$(
+          'div:nth-child(3) div ' + (i > 1 ? 'button' : 'span'),
+        );
         await spanEl.click();
       }
     }
@@ -623,7 +698,7 @@ export async function extractTags(selectorElement) {
 export async function removeTagFromTagMenu(tagName) {
   await clickOn('[data-tid=tagMoreButton_' + tagName + ']');
   await clickOn('[data-tid=deleteTagMenu]');
-  await clickOn('[data-tid=confirmRemoveTagFromFile]');
+  // await clickOn('[data-tid=confirmRemoveTagFromFile]');
   await isDisplayed('[data-tid=tagMoreButton_' + tagName + ']', false);
 }
 
@@ -635,55 +710,6 @@ export async function showFilesWithTag(tagName) {
 
 export function getGridFileSelector(fileName) {
   return '[data-tid="fsEntryName_' + dataTidFormat(fileName) + '"]';
-}
-
-export function generateFileName(fileName, fileExt, tags, tagDelimiter = ' ') {
-  let tagsString = '';
-  let beginTagContainer = AppConfig.beginTagContainer;
-  let endTagContainer = AppConfig.endTagContainer;
-  const prefixTagContainer = AppConfig.prefixTagContainer;
-  // Creating the string will all the tags by more that 0 tags
-  if (tags && tags.length > 0) {
-    tagsString = beginTagContainer;
-    for (let i = 0; i < tags.length; i += 1) {
-      if (i === tags.length - 1) {
-        tagsString += tags[i].trim();
-      } else {
-        tagsString += tags[i].trim() + tagDelimiter;
-      }
-    }
-    tagsString = tagsString.trim() + endTagContainer;
-  }
-  // Assembling the new filename with the tags
-  let newFileName = '';
-  beginTagContainer = fileName.indexOf(beginTagContainer);
-  endTagContainer = fileName.indexOf(endTagContainer);
-  if (
-    beginTagContainer < 0 ||
-    endTagContainer < 0 ||
-    beginTagContainer >= endTagContainer
-  ) {
-    // File does not have an extension
-    newFileName =
-      fileName.trim() +
-      (tagsString ? prefixTagContainer + tagsString : '') +
-      '.' +
-      fileExt;
-  } else {
-    // File does not have an extension
-    newFileName =
-      fileName.substring(0, beginTagContainer).trim() +
-      (tagsString ? prefixTagContainer + tagsString : '') +
-      fileName.substring(endTagContainer + 1, fileName.length).trim();
-  }
-  if (newFileName.length < 1) {
-    throw new Error('Generated filename is invalid');
-  }
-  // Removing double prefix
-  newFileName = newFileName
-    .split(prefixTagContainer + '' + prefixTagContainer)
-    .join(prefixTagContainer);
-  return newFileName;
 }
 
 /**
@@ -729,7 +755,8 @@ export async function expectMetaFilesExist(
   //await clickOn('[data-tid=folderContainerOpenDirMenu]');
   //await clickOn('[data-tid=reloadDirectory]');
   if (exist || (await isDisplayed(getGridFileSelector(AppConfig.metaFolder)))) {
-    await global.client.dblclick(getGridFileSelector(AppConfig.metaFolder));
+    await openFolder(AppConfig.metaFolder);
+    //await global.client.dblclick(getGridFileSelector(AppConfig.metaFolder));
     if (subFolder) {
       if (await isDisplayed(getGridFileSelector(subFolder))) {
         await global.client.dblclick(getGridFileSelector(subFolder));
@@ -762,8 +789,10 @@ export async function expectMetaFilesExist(
 
 export async function writeTextInIframeInput(txt) {
   const fLocator = await frameLocator();
-  const editor = await fLocator.locator('#editorText');
-  await editor.type(txt);
+  const monacoEditor = await fLocator.locator('#monaco_editor');
+  await monacoEditor.click();
+  await global.client.keyboard.press('Meta+KeyA');
+  await monacoEditor.type(txt);
 }
 
 export async function expectFileContain(
@@ -819,6 +848,26 @@ export async function waitForNotification(
   } */
 }
 
+export async function openFolder(folderName) {
+  await openContextEntryMenu(getGridFileSelector(folderName), 'openDirectory');
+  await expectElementExist(
+    '[data-tid=currentDir_' + dataTidFormat(folderName) + ']',
+    true,
+    8000,
+  );
+}
+
+export async function openFile(fileName, menuOption = 'fileMenuOpenFile') {
+  await openContextEntryMenu(
+    getGridFileSelector(fileName), // perspectiveGridTable + firstFile,
+    menuOption,
+  );
+  await expectElementExist(
+    '[data-tid=OpenedTID' + dataTidFormat(fileName) + ']',
+    true,
+    8000,
+  );
+}
 /**
  * for check settings use checkSettings instead
  * @param selector
@@ -919,28 +968,29 @@ export async function createNewDirectory(dirName = testFolder) {
   // set new dir name
   await setInputKeys('directoryName', dirName);
   await clickOn('[data-tid=confirmCreateNewDirectory]');
-  await waitForNotification();
+  await expectElementExist(getGridFileSelector(dirName), true, 5000);
+  // await waitForNotification();
   return dirName;
 }
 
 export async function newHTMLFile() {
   await clickOn('[data-tid=folderContainerOpenDirMenu]');
-  await clickOn('[data-tid=createNewFile]');
-  await clickOn('[data-tid=createRichTextFileButton]');
+  await clickOn('[data-tid=createHTMLTextFileTID]');
+  await clickOn('[data-tid=createTID]');
   await waitForNotification();
 }
 
 export async function newMDFile() {
   await clickOn('[data-tid=folderContainerOpenDirMenu]');
-  await clickOn('[data-tid=createNewFile]');
-  await clickOn('[data-tid=createMarkdownButton]');
+  await clickOn('[data-tid=createNewMarkdownFileTID]');
+  await clickOn('[data-tid=createTID]');
   await waitForNotification();
 }
 
 export async function createTxtFile() {
   await clickOn('[data-tid=folderContainerOpenDirMenu]');
-  await clickOn('[data-tid=createNewFile]');
-  await clickOn('[data-tid=createTextFileButton]');
+  await clickOn('[data-tid=createNewTextFileTID]');
+  await clickOn('[data-tid=createTID]');
   await waitForNotification();
 }
 

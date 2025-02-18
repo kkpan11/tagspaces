@@ -1,6 +1,6 @@
 /**
  * TagSpaces - universal file and folder organizer
- * Copyright (C) 2017-present TagSpaces UG (haftungsbeschraenkt)
+ * Copyright (C) 2017-present TagSpaces GmbH
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License (version 3) as
@@ -16,39 +16,46 @@
  *
  */
 
-import React from 'react';
-import IconButton from '@mui/material/IconButton';
-import Button from '@mui/material/Button';
+import TsButton from '-/components/TsButton';
+import { useProTeaserDialogContext } from '-/components/dialogs/hooks/useProTeaserDialogContext';
+import { openURLExternally } from '-/services/utils-io';
+import CameraTwoToneIcon from '@mui/icons-material/CameraTwoTone';
+import CloseIcon from '@mui/icons-material/Close';
+import MapTwoToneIcon from '@mui/icons-material/MapTwoTone';
+import ViewKanbanTwoToneIcon from '@mui/icons-material/ViewKanbanTwoTone';
+import { ButtonGroup } from '@mui/material';
 import CardActions from '@mui/material/CardActions';
 import CardContent from '@mui/material/CardContent';
+import IconButton from '@mui/material/IconButton';
 import Typography from '@mui/material/Typography';
-import CloseIcon from '@mui/icons-material/Close';
-import ProTeaserImage from '-/assets/images/pro-teaser.svg';
 import Links from 'assets/links';
-import { openURLExternally } from '-/services/utils-io';
 import { useTranslation } from 'react-i18next';
 
 interface Props {
-  toggleProTeaser: (slidePage?: string) => void;
   setShowTeaserBanner: (teaserVisibility: boolean) => void;
 }
 
 function ProTeaser(props: Props) {
-  const { toggleProTeaser, setShowTeaserBanner } = props;
+  const { setShowTeaserBanner } = props;
+  const { openProTeaserDialog } = useProTeaserDialogContext();
 
   const { t } = useTranslation();
   return (
     <>
       <CardContent
-        onClick={() => toggleProTeaser()}
         style={{
-          padding: 5,
+          paddingLeft: 5,
+          paddingRight: 5,
+          paddingTop: 0,
           paddingBottom: 0,
           textAlign: 'center',
+          cursor: 'pointer',
         }}
       >
         <Typography color="textSecondary" variant="caption">
-          achieve more with
+          <span style={{ textTransform: 'lowercase' }}>
+            {t('core:achieveMore')}
+          </span>
           <IconButton
             style={{ right: 5, marginTop: -10, position: 'absolute' }}
             size="small"
@@ -63,10 +70,26 @@ function ProTeaser(props: Props) {
           </IconButton>
         </Typography>
         <br />
-        <b>TagSpaces Pro</b>
-        {/* <img style={{ height: 35 }} src={ProTextLogo} alt="" /> */}
-        <br />
-        <img style={{ maxHeight: 60 }} src={ProTeaserImage} alt="" />
+        <div
+          role="button"
+          onClick={() => openProTeaserDialog()}
+          style={{
+            cursor: 'pointer',
+          }}
+        >
+          <b>TagSpaces Pro</b>
+          {/* <img style={{ height: 35 }} src={ProTextLogo} alt="" /> */}
+          <br />
+          <ViewKanbanTwoToneIcon
+            style={{
+              fontSize: 50,
+              color: '#a466aa',
+            }}
+          />
+          <CameraTwoToneIcon style={{ fontSize: 50, color: '#f7901e' }} />
+          <MapTwoToneIcon style={{ fontSize: 50, color: '#33b5be' }} />
+          {/* <img style={{ maxHeight: 60 }} src={ProTeaserImage} alt="" /> */}
+        </div>
       </CardContent>
       <CardActions
         style={{
@@ -75,26 +98,28 @@ function ProTeaser(props: Props) {
           marginTop: -10,
         }}
       >
-        <Button
-          size="small"
-          onClick={(event: any) => {
-            event.preventDefault();
-            event.stopPropagation();
-            toggleProTeaser();
-          }}
-        >
-          {t('showMeMore')}
-        </Button>
-        <Button
-          size="small"
-          onClick={(event: any) => {
-            event.preventDefault();
-            event.stopPropagation();
-            openURLExternally(Links.links.productsOverview, true);
-          }}
-        >
-          {t('getItNow')}
-        </Button>
+        <ButtonGroup>
+          <TsButton
+            style={{ borderTopRightRadius: 0, borderBottomRightRadius: 0 }}
+            onClick={(event: any) => {
+              event.preventDefault();
+              event.stopPropagation();
+              openProTeaserDialog();
+            }}
+          >
+            {t('showMeMore')}
+          </TsButton>
+          <TsButton
+            style={{ borderTopLeftRadius: 0, borderBottomLeftRadius: 0 }}
+            onClick={(event: any) => {
+              event.preventDefault();
+              event.stopPropagation();
+              openURLExternally(Links.links.productsOverview, true);
+            }}
+          >
+            {t('upgrade')}
+          </TsButton>
+        </ButtonGroup>
       </CardActions>
     </>
   );

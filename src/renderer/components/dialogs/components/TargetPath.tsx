@@ -1,6 +1,6 @@
 /**
  * TagSpaces - universal file and folder organizer
- * Copyright (C) 2017-present TagSpaces UG (haftungsbeschraenkt)
+ * Copyright (C) 2017-present TagSpaces GmbH
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License (version 3) as
@@ -26,8 +26,9 @@ import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
 
 function TargetPath() {
   const { t } = useTranslation();
-  const { currentLocation } = useCurrentLocationContext();
+  const { findLocation } = useCurrentLocationContext();
   const { targetDirectoryPath } = useTargetPathContext();
+  const currentLocation = findLocation();
 
   return (
     <Grid item style={{ marginTop: 20 }} xs={12}>

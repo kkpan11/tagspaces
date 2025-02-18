@@ -1,6 +1,6 @@
 /**
  * TagSpaces - universal file and folder organizer
- * Copyright (C) 2017-present TagSpaces UG (haftungsbeschraenkt)
+ * Copyright (C) 2017-present TagSpaces GmbH
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License (version 3) as
@@ -17,8 +17,8 @@
  */
 
 import React from 'react';
-import IconButton from '@mui/material/IconButton';
-import { CloseIcon } from '../CommonIcons';
+import TsIconButton from '-/components/TsIconButton';
+import { CloseIcon } from '-/components/CommonIcons';
 import { useTranslation } from 'react-i18next';
 
 interface Props {
@@ -30,21 +30,21 @@ function DialogCloseButton(props: Props) {
   const { onClose, testId } = props;
   const { t } = useTranslation();
   return (
-    <IconButton
+    <TsIconButton
       title={t('closeButtonDialog')}
       aria-label="close"
       tabIndex={-1}
       style={{
+        // float: 'right',
         position: 'absolute',
-        right: 5,
-        top: 5,
+        right: 15,
+        top: 15,
       }}
       data-tid={testId && testId}
       onClick={onClose}
-      size="large"
     >
       <CloseIcon />
-    </IconButton>
+    </TsIconButton>
   );
 }
 

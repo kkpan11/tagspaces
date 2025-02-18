@@ -1,6 +1,6 @@
 /**
  * TagSpaces - universal file and folder organizer
- * Copyright (C) 2017-present TagSpaces UG (haftungsbeschraenkt)
+ * Copyright (C) 2017-present TagSpaces GmbH
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License (version 3) as
@@ -16,24 +16,29 @@
  *
  */
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { useSelector, useDispatch } from 'react-redux';
-import classNames from 'classnames';
-import Typography from '@mui/material/Typography';
-import IconButton from '@mui/material/IconButton';
-import Collapse from '@mui/material/Collapse';
-import MoreVertIcon from '@mui/icons-material/MoreVert';
 import AppConfig from '-/AppConfig';
-import TagContainerDnd from './TagContainerDnd';
-import TagContainer from './TagContainer';
-import ConfirmDialog from './dialogs/ConfirmDialog';
-import CreateTagGroupDialog from './dialogs/CreateTagGroupDialog';
-import CreateTagsDialog from './dialogs/CreateTagsDialog';
-import EditTagGroupDialog from './dialogs/EditTagGroupDialog';
-import TagGroupContainer from './TagGroupContainer';
-import TagMenu from './menus/TagMenu';
-import TagLibraryMenu from './menus/TagLibraryMenu';
-import TagGroupMenu from './menus/TagGroupMenu';
+import { SidePanel, classes } from '-/components/SidePanels.css';
+import TagGroupTitleDnD from '-/components/TagGroupTitleDnD';
+import TsIconButton from '-/components/TsIconButton';
+import EditTagDialog from '-/components/dialogs/EditTagDialog';
+import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
+import { useEditedTagLibraryContext } from '-/hooks/useEditedTagLibraryContext';
+import { useSelectedEntriesContext } from '-/hooks/useSelectedEntriesContext';
+import { useTagGroupsLocationContext } from '-/hooks/useTagGroupsLocationContext';
+import { useTaggingActionsContext } from '-/hooks/useTaggingActionsContext';
+import { Pro } from '-/pro';
+import { AppDispatch } from '-/reducers/app';
+import { getAllTags, getTagLibrary } from '-/services/taglibrary-utils';
+import { TS } from '-/tagspaces.namespace';
+import { CommonLocation } from '-/utils/CommonLocation';
+import useFirstRender from '-/utils/useFirstRender';
+import MoreVertIcon from '@mui/icons-material/MoreVert';
+import Collapse from '@mui/material/Collapse';
+import Typography from '@mui/material/Typography';
+import classNames from 'classnames';
+import React, { useCallback, useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import { useDispatch, useSelector } from 'react-redux';
 import {
   actions as SettingsActions,
   getSaveTagInLocation,
@@ -41,36 +46,17 @@ import {
   getTagGroupCollapsed,
   getTagTextColor,
 } from '../reducers/settings';
-import { AppDispatch, isTagLibraryChanged } from '-/reducers/app';
 import SmartTags from '../reducers/smart-tags';
-import EditTagDialog from '-/components/dialogs/EditTagDialog';
-import { TS } from '-/tagspaces.namespace';
-import { getLocations } from '-/reducers/locations';
-import { Pro } from '-/pro';
-import TagGroupTitleDnD from '-/components/TagGroupTitleDnD';
-import {
-  addTag,
-  changeTagOrder,
-  createTagGroup,
-  deleteTag,
-  editTag,
-  editTagGroup,
-  getAllTags,
-  getTagLibrary,
-  importTagGroups,
-  moveTag,
-  moveTagGroup,
-  moveTagGroupDown,
-  moveTagGroupUp,
-  removeTagGroup,
-  sortTagGroup,
-} from '-/services/taglibrary-utils';
-import useFirstRender from '-/utils/useFirstRender';
-import { classes, SidePanel } from '-/components/SidePanels.css';
-import { useTranslation } from 'react-i18next';
-import { useTaggingActionsContext } from '-/hooks/useTaggingActionsContext';
-import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
-import { useSelectedEntriesContext } from '-/hooks/useSelectedEntriesContext';
+import TagContainer from './TagContainer';
+import TagContainerDnd from './TagContainerDnd';
+import TagGroupContainer from './TagGroupContainer';
+import ConfirmDialog from './dialogs/ConfirmDialog';
+import CreateTagGroupDialog from './dialogs/CreateTagGroupDialog';
+import CreateTagsDialog from './dialogs/CreateTagsDialog';
+import EditTagGroupDialog from './dialogs/EditTagGroupDialog';
+import TagGroupMenu from './menus/TagGroupMenu';
+import TagLibraryMenu from './menus/TagLibraryMenu';
+import TagMenu from './menus/TagMenu';
 
 interface Props {
   style?: any;
@@ -79,25 +65,27 @@ interface Props {
 
 function TagLibrary(props: Props) {
   const { t } = useTranslation();
-  const { addTags } = useTaggingActionsContext();
+  const {
+    createTagGroup,
+    removeTagGroup,
+    deleteTag,
+    changeTagOrder,
+    moveTag,
+    moveTagGroup,
+    importTagGroups,
+  } = useTaggingActionsContext();
+  const { getTagGroups } = useTagGroupsLocationContext();
   const { selectedEntries } = useSelectedEntriesContext();
-  const { switchLocationTypeByID, switchCurrentLocationType, readOnlyMode } =
-    useCurrentLocationContext();
+  const { readOnlyMode, findLocation, locations } = useCurrentLocationContext();
+  const { tagGroups, reflectTagLibraryChanged } = useEditedTagLibraryContext();
   const dispatch: AppDispatch = useDispatch();
   const tagBackgroundColor = useSelector(getTagColor);
   const tagTextColor = useSelector(getTagTextColor);
   const tagGroupCollapsed: Array<string> = useSelector(getTagGroupCollapsed);
-  const locations: Array<TS.Location> = useSelector(getLocations);
-  const saveTagInLocation: boolean = useSelector(getSaveTagInLocation);
-  const tagLibraryChanged = useSelector(isTagLibraryChanged);
+  //const locations: Array<CommonLocation> = useSelector(getLocations);
 
   const toggleTagGroupDispatch = (uuid) =>
     dispatch(SettingsActions.toggleTagGroup(uuid));
-
-  const [tagGroups, setTagGroups] =
-    useState<Array<TS.TagGroup>>(getTagLibrary());
-  // const tagLibrary: Array<TS.TagGroup> = getTagLibrary();
-  const tagContainerRef = useRef<HTMLSpanElement>(null);
   const [tagGroupMenuAnchorEl, setTagGroupMenuAnchorEl] =
     useState<null | HTMLElement>(null);
   const [tagMenuAnchorEl, setTagMenuAnchorEl] = useState<null | HTMLElement>(
@@ -107,7 +95,6 @@ function TagLibrary(props: Props) {
     useState<null | HTMLElement>(null);
   const [selectedTagGroupEntry, setSelectedTagGroupEntry] =
     useState<TS.TagGroup>(null);
-  // const [selectedTagEntry, setSelectedTagEntry] = useState<TagGroup>(null);
   const [selectedTag, setSelectedTag] = useState<TS.Tag>(null);
   const [isCreateTagGroupDialogOpened, setIsCreateTagGroupDialogOpened] =
     useState<boolean>(false);
@@ -121,63 +108,48 @@ function TagLibrary(props: Props) {
     useState<boolean>(false);
   const [isDeleteTagDialogOpened, setIsDeleteTagDialogOpened] =
     useState<boolean>(false);
+  const saveTagInLocation: boolean = useSelector(getSaveTagInLocation);
   const firstRender = useFirstRender();
-
-  useEffect(() => {
-    if (Pro && saveTagInLocation) {
-      refreshTagsFromLocation();
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!firstRender) {
-      setTagGroups(getTagLibrary());
-    }
-  }, [tagLibraryChanged]);
-
-  const refreshTagsFromLocation = () => {
-    locations.map((location) =>
-      Pro.MetaOperations.getTagGroups(location.path)
-        .then((tg: Array<TS.TagGroup>) => {
-          if (tg && tg.length > 0) {
-            const newGroups = tg.map((group) => ({
-              ...group,
-              locationId: location.uuid,
-            }));
-            const oldGroups = getTagLibrary();
-            if (checkTagGroupModified(location.uuid, newGroups, oldGroups)) {
-              setTagGroups(importTagGroups(newGroups, oldGroups, false));
-            }
-          } /*else {
-            setTagGroups(getTagLibrary());
-          }*/
-          return true;
-        })
-        .catch((err) => {
-          console.log(err);
-        }),
-    );
-  };
-
-  function checkTagGroupModified(
-    locationId: string,
-    newGroups: Array<TS.TagGroup>,
-    oldGroups: Array<TS.TagGroup>,
-  ) {
-    if (!oldGroups.some((group) => group.locationId === locationId)) {
-      return true;
-    }
-    return !oldGroups.some((group) =>
-      newGroups.some(
-        (newGroup) =>
-          newGroup.modified_date === group.modified_date &&
-          newGroup.locationId === group.locationId,
-      ),
-    );
-  }
 
   const isTagLibraryReadOnly =
     window.ExtTagLibrary && window.ExtTagLibrary.length > 0;
+
+  useEffect(() => {
+    if (Pro && saveTagInLocation && firstRender) {
+      refreshTagsFromLocation();
+    }
+  }, [saveTagInLocation]);
+
+  function refreshTagsFromLocation() {
+    if (locations && locations.length > 0) {
+      for (const location of locations) {
+        getTagGroups(location).then((locationTagGroups) => {
+          if (locationTagGroups && locationTagGroups.length > 0) {
+            const oldGroups = getTagLibrary();
+            if (checkTagGroupModified(locationTagGroups, oldGroups)) {
+              importTagGroups(locationTagGroups, false, location);
+              // } else {
+              //   // refresh if localStorage is changed - from new instance
+              //   reflectTagLibraryChanged(oldGroups);
+            }
+          }
+        });
+      }
+    }
+  }
+
+  function checkTagGroupModified(
+    newGroups: Array<TS.TagGroup>,
+    oldGroups: Array<TS.TagGroup>,
+  ) {
+    return !newGroups.every((newGroup) =>
+      oldGroups.some(
+        (oldGroup) =>
+          newGroup.uuid === oldGroup.uuid &&
+          newGroup.modified_date <= oldGroup.modified_date,
+      ),
+    );
+  }
 
   const handleTagGroupMenu = (
     event: React.ChangeEvent<HTMLInputElement>,
@@ -259,11 +231,10 @@ function TagLibrary(props: Props) {
           index={index}
           tagGroup={tagGroup}
           moveTagGroup={(tagGroupUuid, position) => {
-            setTagGroups(moveTagGroup(tagGroupUuid, position, tagGroups));
+            moveTagGroup(tagGroupUuid, position);
           }}
           handleTagGroupMenu={handleTagGroupMenu}
           toggleTagGroup={toggleTagGroupDispatch}
-          locations={locations}
           tagGroupCollapsed={tagGroupCollapsed}
           isReadOnly={tagGroup.readOnly || isTagLibraryReadOnly}
         />
@@ -271,66 +242,38 @@ function TagLibrary(props: Props) {
           <TagGroupContainer taggroup={tagGroup}>
             {tagGroup.children &&
               tagGroup.children.map((tag: TS.Tag, idx) => {
+                const isSmartTag =
+                  tag.functionality && tag.functionality.length > 0;
                 if (readOnlyMode) {
                   return (
                     <TagContainer
                       key={tagGroup.uuid + tag.title}
                       tag={tag}
                       tagGroup={tagGroup}
+                      tagMode={isSmartTag ? 'display' : 'default'}
                       handleTagMenu={handleTagMenuCallback}
-                      addTags={addTags}
-                      /*moveTag={(
-                        tagTitle: string,
-                        fromTagGroupId: TS.Uuid,
-                        toTagGroupId: TS.Uuid
-                      ) =>
-                        moveTag(
-                          tagTitle,
-                          fromTagGroupId,
-                          toTagGroupId,
-                          tagGroups
-                        )
-                      }*/
                     />
                   );
                 }
                 return (
                   <TagContainerDnd
                     key={tagGroup.uuid + tag.title}
-                    tagContainerRef={tagContainerRef}
+                    // tagContainerRef={tagContainerRef}
                     index={idx}
                     tag={tag}
                     tagGroup={tagGroup}
+                    tagMode={isSmartTag ? 'display' : 'default'}
                     handleTagMenu={handleTagMenuCallback}
-                    addTags={addTags}
                     moveTag={(
                       tagTitle: string,
                       fromTagGroupId: TS.Uuid,
                       toTagGroupId: TS.Uuid,
-                    ) =>
-                      setTagGroups(
-                        moveTag(
-                          tagTitle,
-                          fromTagGroupId,
-                          toTagGroupId,
-                          tagGroups,
-                        ),
-                      )
-                    }
+                    ) => moveTag(tagTitle, fromTagGroupId, toTagGroupId)}
                     changeTagOrder={(
                       tagGroupUuid: TS.Uuid,
                       fromIndex: number,
                       toIndex: number,
-                    ) =>
-                      setTagGroups(
-                        changeTagOrder(
-                          tagGroupUuid,
-                          fromIndex,
-                          toIndex,
-                          tagGroups,
-                        ),
-                      )
-                    }
+                    ) => changeTagOrder(tagGroupUuid, fromIndex, toIndex)}
                     selectedEntries={selectedEntries}
                   />
                 );
@@ -343,14 +286,7 @@ function TagLibrary(props: Props) {
 
   function confirmDeleteTag() {
     if (selectedTag && selectedTagGroupEntry) {
-      setTagGroups(
-        deleteTag(
-          selectedTag.title,
-          selectedTagGroupEntry.uuid,
-          tagGroups,
-          locations,
-        ),
-      );
+      deleteTag(selectedTag.title, selectedTagGroupEntry.uuid);
     }
   }
 
@@ -379,13 +315,12 @@ function TagLibrary(props: Props) {
           {t('core:tagLibrary')}
         </Typography>
         {!isTagLibraryReadOnly && (
-          <IconButton
+          <TsIconButton
             data-tid="tagLibraryMenu"
             onClick={handleTagLibraryMenu}
-            size="large"
           >
             <MoreVertIcon />
-          </IconButton>
+          </TsIconButton>
         )}
       </div>
       {isDeleteTagGroupDialogOpened && (
@@ -398,13 +333,7 @@ function TagLibrary(props: Props) {
           })}
           confirmCallback={(result) => {
             if (result && selectedTagGroupEntry) {
-              setTagGroups(
-                removeTagGroup(
-                  selectedTagGroupEntry.uuid,
-                  tagGroups,
-                  locations,
-                ),
-              );
+              removeTagGroup(selectedTagGroupEntry.uuid);
             }
           }}
           cancelDialogTID="cancelDeleteTagGroupDialog"
@@ -416,18 +345,11 @@ function TagLibrary(props: Props) {
           open={isCreateTagGroupDialogOpened}
           onClose={() => setIsCreateTagGroupDialogOpened(false)}
           createTagGroup={(entry: TS.TagGroup) => {
-            const location: TS.Location = locations.find(
-              (l) => l.uuid === entry.locationId,
-            );
+            const location: CommonLocation = findLocation(entry.locationId);
             if (location) {
-              switchLocationTypeByID(location.uuid).then(
-                (currentLocationId) => {
-                  setTagGroups(createTagGroup(entry, tagGroups, location));
-                  switchCurrentLocationType();
-                },
-              );
+              createTagGroup(entry, location);
             } else {
-              setTagGroups(createTagGroup(entry, tagGroups));
+              createTagGroup(entry);
             }
           }}
           color={tagBackgroundColor}
@@ -438,9 +360,6 @@ function TagLibrary(props: Props) {
         <CreateTagsDialog
           open={isCreateTagDialogOpened}
           onClose={() => setIsCreateTagDialogOpened(false)}
-          addTag={(tag: any, parentTagGroupUuid: TS.Uuid) =>
-            setTagGroups(addTag(tag, parentTagGroupUuid, tagGroups, locations))
-          }
           selectedTagGroupEntry={selectedTagGroupEntry}
         />
       )}
@@ -448,9 +367,6 @@ function TagLibrary(props: Props) {
         <EditTagGroupDialog
           open={isEditTagGroupDialogOpened}
           onClose={() => setIsEditTagGroupDialogOpened(false)}
-          editTagGroup={(entry: TS.TagGroup) =>
-            setTagGroups(editTagGroup(entry, tagGroups, locations))
-          }
           selectedTagGroupEntry={selectedTagGroupEntry}
         />
       )}
@@ -464,27 +380,13 @@ function TagLibrary(props: Props) {
           showDeleteTagGroupDialog={showDeleteTagGroupDialog}
           handleCloseTagGroupMenu={() => setTagGroupMenuAnchorEl(null)}
           showEditTagGroupDialog={showEditTagGroupDialog}
-          moveTagGroupUp={(parentTagGroupUuid) =>
-            setTagGroups(moveTagGroupUp(parentTagGroupUuid, tagGroups))
-          }
-          moveTagGroupDown={(parentTagGroupUuid) =>
-            setTagGroups(moveTagGroupDown(parentTagGroupUuid, tagGroups))
-          }
-          sortTagGroup={(parentTagGroupUuid) =>
-            setTagGroups(sortTagGroup(parentTagGroupUuid, tagGroups))
-          }
         />
       )}
       <TagLibraryMenu
         anchorEl={tagLibraryMenuAnchorEl}
         open={Boolean(tagLibraryMenuAnchorEl)}
         onClose={() => setTagLibraryMenuAnchorEl(null)}
-        tagGroups={tagGroups}
-        importTagGroups={(newGroups, replace) =>
-          setTagGroups(importTagGroups(newGroups, tagGroups, replace))
-        }
         showCreateTagGroupDialog={showCreateTagGroupDialog}
-        saveTagInLocation={saveTagInLocation}
         refreshTagsFromLocation={refreshTagsFromLocation}
       />
       {Boolean(tagMenuAnchorEl) && (
@@ -502,15 +404,6 @@ function TagLibrary(props: Props) {
         <EditTagDialog
           open={isEditTagDialogOpened}
           onClose={() => setIsEditTagDialogOpened(false)}
-          editTag={(
-            tag: TS.Tag,
-            parentTagGroupUuid: TS.Uuid,
-            origTitle: string,
-          ) =>
-            setTagGroups(
-              editTag(tag, parentTagGroupUuid, origTitle, tagGroups, locations),
-            )
-          }
           selectedTagGroupEntry={selectedTagGroupEntry}
           selectedTag={selectedTag}
         />
@@ -540,6 +433,7 @@ function TagLibrary(props: Props) {
           height: 'calc(100% - ' + reduceHeightBy + 'px)',
           width: 310,
           overflowY: 'auto',
+          overflowX: 'hidden',
         }}
         data-tid="tagLibraryTagGroupList"
       >
