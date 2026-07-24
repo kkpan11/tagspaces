@@ -16,6 +16,10 @@
  *
  */
 
+import AppConfig from '-/AppConfig';
+import LoadingLazy from '-/components/LoadingLazy';
+import { TargetPathContextProvider } from '-/components/dialogs/hooks/TargetPathContextProvider';
+import { TS } from '-/tagspaces.namespace';
 import React, {
   createContext,
   useEffect,
@@ -23,10 +27,6 @@ import React, {
   useReducer,
   useRef,
 } from 'react';
-import LoadingLazy from '-/components/LoadingLazy';
-import AppConfig from '-/AppConfig';
-import { TargetPathContextProvider } from '-/components/dialogs/hooks/TargetPathContextProvider';
-import { TS } from '-/tagspaces.namespace';
 
 type NewFileDialogContextData = {
   openNewFileDialog: (entryType?: TS.FileType, fName?: string) => void;
@@ -59,6 +59,10 @@ export const NewFileDialogContextProvider = ({
     if (AppConfig.isElectron) {
       window.electronIO.ipcRenderer.on('new-text-file', () => {
         openDialog();
+      });
+
+      window.electronIO.ipcRenderer.on('new-md-file', () => {
+        openDialog('md');
       });
 
       return () => {
@@ -104,9 +108,9 @@ export const NewFileDialogContextProvider = ({
         <NewFileDialogAsync
           open={open.current}
           onClose={(event, reason) => {
-            if (reason !== 'backdropClick') {
-              closeDialog();
-            }
+            //if (reason !== 'backdropClick') {
+            closeDialog();
+            //}
           }}
           fileType={fileType.current}
           fileName={fileName.current}

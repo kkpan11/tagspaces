@@ -16,17 +16,18 @@
  *
  */
 
-import React from 'react';
 import AppConfig from '-/AppConfig';
 import {
   CloudLocationIcon,
   LocalLocationIcon,
   MoreMenuIcon,
 } from '-/components/CommonIcons';
-import Tooltip from '-/components/Tooltip';
+import TsTooltip from '-/components/TsTooltip';
+import { useMenuContext } from '-/components/dialogs/hooks/useMenuContext';
 import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
 import { useDirectoryContentContext } from '-/hooks/useDirectoryContentContext';
 import { useSelectedEntriesContext } from '-/hooks/useSelectedEntriesContext';
+import { Box } from '@mui/material';
 import Breadcrumbs from '@mui/material/Breadcrumbs';
 import Chip from '@mui/material/Chip';
 import { emphasize, styled } from '@mui/material/styles';
@@ -35,8 +36,8 @@ import {
   extractShortDirectoryName,
   normalizePath,
 } from '@tagspaces/tagspaces-common/paths';
+import React from 'react';
 import { useTranslation } from 'react-i18next';
-import { useMenuContext } from '-/components/dialogs/hooks/useMenuContext';
 
 const StyledBreadcrumb = styled(Chip)(({ theme }) => {
   const backgroundColor =
@@ -46,7 +47,7 @@ const StyledBreadcrumb = styled(Chip)(({ theme }) => {
   return {
     backgroundColor,
     borderRadius: AppConfig.defaultCSSRadius,
-    height: theme.spacing(4),
+    height: 34, // theme.spacing(4),
     color: theme.palette.text.primary,
     fontWeight: theme.typography.fontWeightRegular,
     '&:hover, &:focus': {
@@ -62,14 +63,18 @@ const StyledBreadcrumb = styled(Chip)(({ theme }) => {
   };
 }) as typeof Chip; // TypeScript only: need a type cast here because https://github.com/Microsoft/TypeScript/issues/26591
 
-// const NoWrapBreadcrumb = styled(StyledBreadcrumb)(({ theme }) => {
-//   return { flexWrap: 'nowrap' };
-// });
-
 const StyledBreadcrumbs = styled(Breadcrumbs)(({ theme }) => {
   return {
+    // auto (not scroll) so a horizontal scrollbar is reserved only when the
+    // path actually overflows — a permanent scrollbar pinned the chips to the
+    // top and broke vertical centering.
+    overflowX: 'auto',
+    display: 'flex',
+    alignItems: 'center',
+    WebkitAppRegion: 'no-drag',
     '& ol': {
       flexWrap: 'nowrap',
+      alignItems: 'center',
     },
   };
 }) as typeof Breadcrumbs; // TypeScript only: need a type cast here because https://github.com/Microsoft/TypeScript/issues/26591
@@ -82,10 +87,10 @@ interface Props {
 function PathBreadcrumbs(props: Props) {
   const { t } = useTranslation();
   const { openDirectoryMenu } = useMenuContext();
-  const { openDirectory, currentDirectoryPath } = useDirectoryContentContext();
+  const { openDirectory, currentDirectory } = useDirectoryContentContext();
   const { findLocation } = useCurrentLocationContext();
   const { setSelectedEntries } = useSelectedEntriesContext();
-  const currentLocation = findLocation();
+  const currentLocation = findLocation(currentDirectory?.locationID);
   let pathParts: Array<string> = [];
 
   const { isDesktopMode } = props;
@@ -93,11 +98,11 @@ function PathBreadcrumbs(props: Props) {
   const openDirMenu = (event: React.MouseEvent<Element, MouseEvent>) => {
     event.preventDefault();
     setSelectedEntries([]);
-    openDirectoryMenu(event, currentDirectoryPath, false, true);
+    openDirectoryMenu(event, currentDirectory?.path, false, true);
   };
 
-  const normalizedCurrentDirPath = currentDirectoryPath
-    ? normalizePath(currentDirectoryPath.split('\\').join('/'))
+  const normalizedCurrentDirPath = currentDirectory
+    ? normalizePath(currentDirectory.path.split('\\').join('/'))
     : undefined;
 
   const locationTypeIcon =
@@ -109,12 +114,12 @@ function PathBreadcrumbs(props: Props) {
 
   let currentFolderChipIcon = undefined;
 
-  if (currentDirectoryPath) {
+  if (currentDirectory) {
     // Make the path unix like ending always with /
     const addSlash =
       currentLocation && currentLocation.haveObjectStoreSupport() ? '//' : '/';
     let normalizedCurrentPath =
-      addSlash + normalizePath(currentDirectoryPath.split('\\').join('/'));
+      addSlash + normalizePath(currentDirectory.path.split('\\').join('/'));
 
     let normalizedCurrentLocationPath = '';
     if (currentLocation && currentLocation.path) {
@@ -158,7 +163,8 @@ function PathBreadcrumbs(props: Props) {
 
   function getBreadcrumbs() {
     let breadcrumbs = [];
-    if (pathParts.length > 0) {
+    // In mobile mode show only the current folder — skip the parent-path chips.
+    if (isDesktopMode && pathParts.length > 0) {
       breadcrumbs = pathParts.map((pathPart, index) => {
         const folderName = extractShortDirectoryName(
           pathPart,
@@ -166,7 +172,10 @@ function PathBreadcrumbs(props: Props) {
         );
         const icon = index === 0 ? locationTypeIcon : undefined;
         return (
-          <Tooltip key={pathPart} title={t('core:navigateTo') + ' ' + pathPart}>
+          <TsTooltip
+            key={pathPart}
+            title={t('core:navigateTo') + ' ' + pathPart}
+          >
             <StyledBreadcrumb
               component="a"
               href="#"
@@ -174,16 +183,16 @@ function PathBreadcrumbs(props: Props) {
               icon={icon}
               onClick={() => openDirectory(pathPart)}
             />
-          </Tooltip>
+          </TsTooltip>
         );
       });
     }
     if (currentLocation) {
       const curDirBreadcrumb = (
-        <Tooltip
+        <TsTooltip
           key="lastBreadcrumb"
           title={
-            t('core:openDirectoryMenu') + ' - ' + (currentDirectoryPath || '')
+            t('core:openDirectoryMenu') + ' - ' + (currentDirectory?.path || '')
           }
         >
           <StyledBreadcrumb
@@ -194,9 +203,9 @@ function PathBreadcrumbs(props: Props) {
             onDelete={openDirMenu}
             onClick={openDirMenu}
             onContextMenu={openDirMenu}
-            style={{ marginRight: 2 }}
+            sx={{ marginRight: '2px' }}
           />
-        </Tooltip>
+        </TsTooltip>
       );
       return [...breadcrumbs, curDirBreadcrumb];
     }
@@ -204,41 +213,24 @@ function PathBreadcrumbs(props: Props) {
   }
 
   return (
-    <>
-      <StyledBreadcrumbs
-        style={{
-          overflowX: 'scroll',
-          marginTop: 8,
-          // @ts-ignore
-          WebkitAppRegion: 'no-drag',
-        }}
-        maxItems={isDesktopMode ? 2 : 1}
-        itemsAfterCollapse={isDesktopMode ? 1 : 1}
-        itemsBeforeCollapse={isDesktopMode ? 1 : 0}
-        aria-label="breadcrumb"
-        separator={
-          <span
-            style={{
-              marginLeft: -4,
-              marginRight: -5,
-            }}
-          >
-            {'›'}
-          </span>
-        }
-      >
-        {getBreadcrumbs()}
-      </StyledBreadcrumbs>
-      {/*<DirectoryMenu
-        open={Boolean(directoryContextMenuAnchorEl)}
-        onClose={closeDirectoryMenu}
-        anchorEl={directoryContextMenuAnchorEl}
-        perspectiveMode={false}
-        switchPerspectives={true}
-        directoryPath={currentDirectoryPath}
-        openRenameDirectoryDialog={openRenameDirectoryDialog}
-      />*/}
-    </>
+    <StyledBreadcrumbs
+      maxItems={isDesktopMode ? 2 : 1}
+      itemsAfterCollapse={isDesktopMode ? 1 : 1}
+      itemsBeforeCollapse={isDesktopMode ? 1 : 0}
+      aria-label="breadcrumb"
+      separator={
+        <Box
+          sx={{
+            marginLeft: '-3px',
+            marginRight: '-3px',
+          }}
+        >
+          {'›'}
+        </Box>
+      }
+    >
+      {getBreadcrumbs()}
+    </StyledBreadcrumbs>
   );
 }
 

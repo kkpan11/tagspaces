@@ -1,0 +1,131 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Full filesystem access (file manager app) -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+
+    <!-- Fallback for SDK < 30 -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="29" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="29" />
+
+    <!--
+      Granular READ_MEDIA_* permissions are intentionally NOT declared. As a file
+      manager we already hold MANAGE_EXTERNAL_STORAGE (All files access), which
+      covers reading images / video / audio in shared storage (access is via the
+      filesystem by path, not MediaStore — see StoragePermissionPlugin). Declaring
+      READ_MEDIA_IMAGES / READ_MEDIA_VIDEO on top of that violates Google Play's
+      Photo and Video Permissions policy ("permission use not directly related to
+      the app's core purpose") and gets the submission rejected. Gallery picks go
+      through the Android Photo Picker, which needs no permission.
+    -->
+
+    <!-- Other permissions -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+
+    <!-- Keep audio playing while the app is backgrounded (MediaKeepAliveService) -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- Pro: voice-note recording (WebView getUserMedia) -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
+    <!--
+      Mark camera & microphone as NOT required. The CAMERA permission implicitly
+      adds android.hardware.camera AND android.hardware.camera.autofocus as
+      required="true", and RECORD_AUDIO implies android.hardware.microphone — so
+      Google Play filters the app off every device without an autofocus rear camera
+      (tablets with a fixed-focus cam like the Galaxy Tab S6 Lite, most emulators).
+      That dropped the supported-device count from ~20.8k to ~17.1k and made Play
+      serve testers the old Cordova build instead of this one. As a file manager
+      these features are optional, so we declare them not required to stay
+      installable everywhere; the code already handles their absence at runtime.
+    -->
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.any" android:required="false" />
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
+
+    <application
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/AppTheme">
+
+        <activity
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|navigation|density"
+            android:name=".MainActivity"
+            android:label="@string/title_activity_main"
+            android:theme="@style/AppTheme.NoActionBarLaunch"
+            android:launchMode="singleTask"
+            android:exported="true">
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!-- Intent filters for opening files from other apps -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:mimeType="application/pdf" />
+            </intent-filter>
+
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:mimeType="image/png" />
+                <data android:mimeType="image/jpeg" />
+                <data android:mimeType="image/gif" />
+                <data android:mimeType="image/bmp" />
+                <data android:mimeType="image/webp" />
+            </intent-filter>
+
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:mimeType="video/webm" />
+                <data android:mimeType="video/ogg" />
+            </intent-filter>
+
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:mimeType="text/html" />
+                <data android:mimeType="text/plain" />
+                <data android:mimeType="application/json" />
+                <data android:mimeType="text/markdown" />
+            </intent-filter>
+
+        </activity>
+
+        <!-- Keeps WebView audio alive in the background (see MediaKeepAlivePlugin) -->
+        <service
+            android:name="org.tagspaces.plugins.MediaKeepAliveService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths"></meta-data>
+        </provider>
+    </application>
+
+</manifest>

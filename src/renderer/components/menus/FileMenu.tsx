@@ -34,10 +34,12 @@ import {
   PictureIcon,
   RenameIcon,
   ShareIcon,
+  SmallArrowRightIcon,
   TagIcon,
 } from '-/components/CommonIcons';
 import TsMenuList from '-/components/TsMenuList';
 import { useDeleteMultipleEntriesDialogContext } from '-/components/dialogs/hooks/useDeleteMultipleEntriesDialogContext';
+import { useMenuContext } from '-/components/dialogs/hooks/useMenuContext';
 import MenuKeyBinding from '-/components/menus/MenuKeyBinding';
 import { TabNames } from '-/hooks/EntryPropsTabsContextProvider';
 import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
@@ -48,10 +50,16 @@ import { useOpenedEntryContext } from '-/hooks/useOpenedEntryContext';
 import { usePlatformFacadeContext } from '-/hooks/usePlatformFacadeContext';
 import { useSelectedEntriesContext } from '-/hooks/useSelectedEntriesContext';
 import { Pro } from '-/pro';
-import { getKeyBindingObject } from '-/reducers/settings';
+import {
+  getExtensionsFound,
+  getKeyBindingObject,
+  getSupportedFileTypes,
+} from '-/reducers/settings';
 import { supportedImgs } from '-/services/thumbsgenerator';
 import {
+  buildSharingLinkForEntry,
   createNewInstance,
+  findCandidateExtensionsForFile,
   getRelativeEntryPath,
   openDirectoryMessage,
 } from '-/services/utils-io';
@@ -65,12 +73,10 @@ import {
   extractContainingDirectoryPath,
   extractParentDirectoryPath,
   extractTitle,
-  generateSharingLink,
 } from '@tagspaces/tagspaces-common/paths';
-import { useEffect, useReducer, useRef } from 'react';
+import { useEffect, useReducer, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSelector } from 'react-redux';
-import { useMenuContext } from '-/components/dialogs/hooks/useMenuContext';
 
 interface Props {
   anchorEl: Element;
@@ -78,35 +84,27 @@ interface Props {
   mouseY?: number;
   open: boolean;
   onClose: () => void;
-  openShareFilesDialog?: () => void;
-  /**
-   * @deprecated use selectedEntries instead
-   */
-  // selectedFilePath?: string;
-  reorderTop?: () => void;
-  reorderBottom?: () => void;
+  reorderTop?: (entry: TS.FileSystemEntry) => void;
+  reorderBottom?: (entry: TS.FileSystemEntry) => void;
   onDuplicateFile?: (fileDirPath: string) => void;
 }
 
 function FileMenu(props: Props) {
-  const {
-    openShareFilesDialog,
-    reorderTop,
-    reorderBottom,
-    anchorEl,
-    mouseX,
-    mouseY,
-    open,
-    onClose,
-    // selectedFilePath,
-  } = props;
+  const { reorderTop, reorderBottom, anchorEl, mouseX, mouseY, open, onClose } =
+    props;
 
   const keyBindings = useSelector(getKeyBindingObject);
+  const supportedFileTypes = useSelector(getSupportedFileTypes);
+  const extensionsFound = useSelector(getExtensionsFound);
   const { t } = useTranslation();
+  const [openWithAnchor, setOpenWithAnchor] = useState<HTMLElement | null>(
+    null,
+  );
   const {
     openAddRemoveTagsDialog,
     openMoveCopyFilesDialog,
     openRenameEntryDialog,
+    openShareFilesDialog,
   } = useMenuContext();
   const { selectedEntries, lastSelectedEntry } = useSelectedEntriesContext();
   const { openDeleteMultipleEntriesDialog } =
@@ -120,7 +118,7 @@ function FileMenu(props: Props) {
     downloadFsEntry,
     getMetadataID,
   } = useIOActionsContext();
-  const { openEntry } = useOpenedEntryContext();
+  const { openEntry, openedEntry, fileChanged } = useOpenedEntryContext();
   const { openDirectory, currentLocationPath, getAllPropertiesPromise } =
     useDirectoryContentContext();
   const { showNotification } = useNotificationContext();
@@ -141,14 +139,10 @@ function FileMenu(props: Props) {
   }, [currentLocationId, lastSelectedEntry]);
 
   function generateFileLink(): Promise<string> {
-    const entryPath = selectedEntries[0].path;
-    const relativePath = getRelativeEntryPath(currentLocationPath, entryPath);
-    return getMetadataID(
-      selectedEntries[0].path,
-      selectedEntries[0].uuid,
+    return buildSharingLinkForEntry(
+      selectedEntries[0],
       currentLocation,
-    ).then((id) =>
-      generateSharingLink(currentLocationId, relativePath, undefined, id),
+      getMetadataID,
     );
   }
 
@@ -156,6 +150,25 @@ function FileMenu(props: Props) {
     onClose();
     if (selectedEntries && selectedEntries.length === 1) {
       openEntry(selectedEntries[0].path, TabNames.propertiesTab);
+    }
+  }
+
+  function copyRelativePath() {
+    onClose();
+    if (selectedEntries?.length === 1) {
+      const relativePath = getRelativeEntryPath(
+        currentLocationPath,
+        selectedEntries[0].path,
+      );
+      navigator.clipboard
+        .writeText(relativePath)
+        .then(() => {
+          showNotification(t('core:pathCopied'));
+          return true;
+        })
+        .catch((e) => {
+          console.log('Error copying to clipboard ' + e);
+        });
     }
   }
 
@@ -197,7 +210,7 @@ function FileMenu(props: Props) {
 
   function showMoveCopyFilesDialog() {
     onClose();
-    openMoveCopyFilesDialog();
+    openMoveCopyFilesDialog(selectedEntries);
   }
 
   function showShareFilesDialog() {
@@ -209,22 +222,20 @@ function FileMenu(props: Props) {
     onClose();
     setFolderThumbnailPromise(lastSelectedEntry.path)
       .then((thumbPath: string) => {
-        const entry: TS.FileSystemEntry = currentLocation.toFsEntry(
-          extractContainingDirectoryPath(
-            lastSelectedEntry.path,
-            currentLocation?.getDirSeparator(),
-          ),
-          false,
-        );
-        setThumbnailImageChange({
-          ...entry,
-          meta: { id: entry.uuid, thumbPath },
+        getAllPropertiesPromise(
+          extractContainingDirectoryPath(lastSelectedEntry.path),
+          lastSelectedEntry.locationID,
+        ).then((dirEntry) => {
+          setThumbnailImageChange({
+            ...dirEntry,
+            meta: { ...dirEntry.meta, thumbPath },
+          });
         });
         //showNotification('Thumbnail created: ' + thumbPath);
         return true;
       })
       .catch((error) => {
-        showNotification('Thumbnail creation failed.');
+        showNotification(t('core:thumbnailCreationFailed'));
         console.log(
           'Error setting Thumb for entry: ' + lastSelectedEntry.path,
           error,
@@ -258,11 +269,13 @@ function FileMenu(props: Props) {
       .then((dirPath: string) => getAllPropertiesPromise(dirPath))
       .then((fsEntry: TS.FileSystemEntry) => {
         setBackgroundImageChange(fsEntry);
-        showNotification('Background created for: ' + fsEntry.path);
+        showNotification(
+          t('core:backgroundCreatedFor', { path: fsEntry.path }),
+        );
         return true;
       })
       .catch((error) => {
-        showNotification('Background creation failed.');
+        showNotification(t('core:backgroundCreationFailed'));
         console.log(
           'Error setting Background for entry: ' + lastSelectedEntry.path,
           error,
@@ -273,7 +286,20 @@ function FileMenu(props: Props) {
 
   function showAddRemoveTagsDialog() {
     onClose();
-    openAddRemoveTagsDialog();
+    if (
+      openedEntry &&
+      fileChanged &&
+      selectedEntries &&
+      selectedEntries.some((e) => e.path === openedEntry.path)
+    ) {
+      showNotification(
+        t('core:cantEditTagsFileOpened', { path: openedEntry.path }),
+        'default',
+        true,
+      );
+      return;
+    }
+    openAddRemoveTagsDialog(selectedEntries);
   }
 
   function duplicateFileHandler() {
@@ -303,6 +329,22 @@ function FileMenu(props: Props) {
     }
   }
 
+  function openFileWithExtension(
+    extensionId: string,
+    role: 'viewer' | 'editor',
+  ) {
+    setOpenWithAnchor(null);
+    onClose();
+    if (lastSelectedEntry) {
+      return openEntry(
+        lastSelectedEntry.path,
+        undefined,
+        extensionId,
+        role === 'editor',
+      );
+    }
+  }
+
   function openInNewWindow() {
     onClose();
     if (selectedEntries && selectedEntries.length === 1) {
@@ -328,44 +370,135 @@ function FileMenu(props: Props) {
     pathLowerCase?.endsWith('.' + ext),
   );
 
+  const openWithCandidates =
+    lastSelectedEntry && selectedEntries.length < 2
+      ? findCandidateExtensionsForFile(
+          lastSelectedEntry.path,
+          supportedFileTypes || [],
+          extensionsFound || [],
+          currentLocation?.getDirSeparator() || AppConfig.dirSeparator,
+        )
+      : [];
+
   if (selectedEntries.length < 2) {
+    const nativeOpenAllowed = !(
+      (currentLocation &&
+        (currentLocation.haveObjectStoreSupport() ||
+          currentLocation.haveWebDavSupport())) ||
+      AppConfig.isWeb ||
+      AppConfig.isNativeMobile
+    );
+    // "Open ▸" groups every way to open the entry — in TagSpaces, its parent
+    // folder, natively, and with a specific extension — into one submenu.
     menuItems.push(
       <MenuItem
-        key="fileMenuOpenFile"
-        data-tid="fileMenuOpenFile"
-        onClick={openFile}
+        key="fileMenuOpen"
+        data-tid="fileMenuOpen"
+        onClick={(e) => setOpenWithAnchor(e.currentTarget)}
+        onMouseEnter={(e) => setOpenWithAnchor(e.currentTarget)}
       >
         <ListItemIcon>
           <OpenFileIcon />
         </ListItemIcon>
-        <ListItemText primary={t('core:openFile')} />
-        <MenuKeyBinding keyBinding={keyBindings['openEntry']} />
+        <ListItemText primary={t('core:open')} />
+        <SmallArrowRightIcon fontSize="small" />
       </MenuItem>,
     );
     menuItems.push(
-      <MenuItem
-        key="fileMenuOpenFileNewWindow"
-        data-tid="fileMenuOpenFileNewWindow"
-        onClick={openInNewWindow}
+      <Menu
+        key="fileMenuOpenSubmenu"
+        anchorEl={openWithAnchor}
+        open={Boolean(openWithAnchor)}
+        onClose={() => setOpenWithAnchor(null)}
+        anchorOrigin={{ vertical: 'top', horizontal: 'right' }}
+        transformOrigin={{ vertical: 'top', horizontal: 'left' }}
+        // Desktop: let the submenu's modal backdrop pass pointer events through
+        // to the parent menu so its other items stay clickable while this
+        // hover-opened submenu is shown (the paper re-enables clicks). Since it
+        // opens on hover, close it on hover-out. On touch there is no hover, so
+        // keep a normal modal backdrop — tapping outside dismisses it.
+        slotProps={
+          AppConfig.isNativeMobile
+            ? undefined
+            : {
+                root: { sx: { pointerEvents: 'none' } },
+                paper: {
+                  sx: { pointerEvents: 'auto' },
+                  onMouseLeave: () => setOpenWithAnchor(null),
+                },
+              }
+        }
       >
-        <ListItemIcon>
-          <OpenNewWindowIcon />
-        </ListItemIcon>
-        <ListItemText primary={t('core:openInWindow')} />
-      </MenuItem>,
+        <TsMenuList>
+          <MenuItem
+            key="fileMenuOpenFile"
+            data-tid="fileMenuOpenFile"
+            onClick={openFile}
+          >
+            <ListItemIcon>
+              <OpenFileIcon />
+            </ListItemIcon>
+            <ListItemText primary={t('core:openFile')} />
+            <MenuKeyBinding keyBinding={keyBindings['openEntry']} />
+          </MenuItem>
+          <MenuItem
+            key="fileMenuOpenParentFolderInternally"
+            data-tid="fileMenuOpenParentFolderInternally"
+            onClick={openParentFolderInternally}
+          >
+            <ListItemIcon>
+              <ParentFolderIcon />
+            </ListItemIcon>
+            <ListItemText primary={t('core:openParentFolder')} />
+          </MenuItem>
+          {nativeOpenAllowed && (
+            <MenuItem
+              key="fileMenuOpenFileNatively"
+              data-tid="fileMenuOpenFileNatively"
+              onClick={openFileNativelyHandler}
+            >
+              <ListItemIcon>
+                <OpenEntryNativelyIcon />
+              </ListItemIcon>
+              <ListItemText primary={t('core:openFileNatively')} />
+              <MenuKeyBinding keyBinding={keyBindings['openFileExternally']} />
+            </MenuItem>
+          )}
+          {openWithCandidates.length > 0 && <Divider key="openWithDivider" />}
+          {openWithCandidates.map((c) => (
+            <MenuItem
+              key={`openWith-${c.extensionId}-${c.role}`}
+              data-tid={`openWith-${c.extensionId}-${c.role}`}
+              onClick={() => openFileWithExtension(c.extensionId, c.role)}
+            >
+              <ListItemText
+                primary={
+                  c.extensionName +
+                  ' (' +
+                  c.role +
+                  (c.isDefault ? ', default' : '') +
+                  ')'
+                }
+              />
+            </MenuItem>
+          ))}
+        </TsMenuList>
+      </Menu>,
     );
-    menuItems.push(
-      <MenuItem
-        key="fileMenuOpenParentFolderInternally"
-        data-tid="fileMenuOpenParentFolderInternally"
-        onClick={openParentFolderInternally}
-      >
-        <ListItemIcon>
-          <ParentFolderIcon />
-        </ListItemIcon>
-        <ListItemText primary={t('core:openParentFolder')} />
-      </MenuItem>,
-    );
+    if (!AppConfig.isNativeMobile) {
+      menuItems.push(
+        <MenuItem
+          key="fileMenuOpenFileNewWindow"
+          data-tid="fileMenuOpenFileNewWindow"
+          onClick={openInNewWindow}
+        >
+          <ListItemIcon>
+            <OpenNewWindowIcon />
+          </ListItemIcon>
+          <ListItemText primary={t('core:openInWindow')} />
+        </MenuItem>,
+      );
+    }
   }
   if (
     !(
@@ -376,19 +509,7 @@ function FileMenu(props: Props) {
     ) &&
     selectedEntries.length < 2
   ) {
-    menuItems.push(
-      <MenuItem
-        key="fileMenuOpenFileNatively"
-        data-tid="fileMenuOpenFileNatively"
-        onClick={openFileNativelyHandler}
-      >
-        <ListItemIcon>
-          <OpenEntryNativelyIcon />
-        </ListItemIcon>
-        <ListItemText primary={t('core:openFileNatively')} />
-        <MenuKeyBinding keyBinding={keyBindings['openFileExternally']} />
-      </MenuItem>,
-    );
+    // "Open file natively" moved into the "Open ▸" submenu above.
     if (AppConfig.isElectron) {
       menuItems.push(
         <MenuItem
@@ -408,7 +529,7 @@ function FileMenu(props: Props) {
         </MenuItem>,
       );
     }
-    menuItems.push(<Divider key="fmDivider" />);
+    menuItems.push(<Divider key={`divider-${menuItems.length}`} />);
   }
   if (!currentLocation?.isReadOnly) {
     menuItems.push(
@@ -431,7 +552,7 @@ function FileMenu(props: Props) {
           data-tid="reorderTopTID"
           onClick={() => {
             onClose();
-            reorderTop();
+            reorderTop(lastSelectedEntry);
           }}
         >
           <ListItemIcon>
@@ -448,7 +569,7 @@ function FileMenu(props: Props) {
           data-tid="reorderBottomTID"
           onClick={() => {
             onClose();
-            reorderBottom();
+            reorderBottom(lastSelectedEntry);
           }}
         >
           <ListItemIcon>
@@ -458,21 +579,22 @@ function FileMenu(props: Props) {
         </MenuItem>,
       );
     }
-    menuItems.push(<Divider key="fmDivider1" />);
-    menuItems.push(
-      <MenuItem
-        key="fileMenuRenameFile"
-        data-tid="fileMenuRenameFile"
-        onClick={showRenameFileDialog}
-      >
-        <ListItemIcon>
-          <RenameIcon />
-        </ListItemIcon>
-        <ListItemText primary={t('core:renameFile')} />
-        <MenuKeyBinding keyBinding={keyBindings['renameFile']} />
-      </MenuItem>,
-    );
+    menuItems.push(<Divider key={`divider-${menuItems.length}`} />);
     if (selectedEntries.length < 2) {
+      menuItems.push(
+        <MenuItem
+          key="fileMenuRenameFile"
+          data-tid="fileMenuRenameFile"
+          onClick={showRenameFileDialog}
+        >
+          <ListItemIcon>
+            <RenameIcon />
+          </ListItemIcon>
+          <ListItemText primary={t('core:renameFile')} />
+          <MenuKeyBinding keyBinding={keyBindings['renameFile']} />
+        </MenuItem>,
+      );
+
       menuItems.push(
         <MenuItem
           key="fileMenuDuplicateFile"
@@ -532,7 +654,7 @@ function FileMenu(props: Props) {
         <MenuKeyBinding keyBinding={keyBindings['deleteDocument']} />
       </MenuItem>,
     );
-    menuItems.push(<Divider key="fmDivider2" />);
+    menuItems.push(<Divider key={`divider-${menuItems.length}`} />);
     if (Pro && selectedEntries.length < 2) {
       menuItems.push(
         <MenuItem
@@ -564,6 +686,18 @@ function FileMenu(props: Props) {
   }
 
   if (selectedEntries.length === 1) {
+    menuItems.push(
+      <MenuItem
+        key="copyRelativePath"
+        data-tid="copyRelativePathTID"
+        onClick={copyRelativePath}
+      >
+        <ListItemIcon>
+          <LinkIcon />
+        </ListItemIcon>
+        <ListItemText primary={t('core:copyRelativePath')} />
+      </MenuItem>,
+    );
     menuItems.push(
       <MenuItem
         key="copySharingLink"
@@ -613,7 +747,7 @@ function FileMenu(props: Props) {
   }
 
   if (selectedEntries.length < 2) {
-    menuItems.push(<Divider key="fmDivider3" />);
+    menuItems.push(<Divider key={`divider-${menuItems.length}`} />);
     menuItems.push(
       <MenuItem
         key="showProperties"

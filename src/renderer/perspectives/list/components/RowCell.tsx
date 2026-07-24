@@ -23,16 +23,23 @@ import {
   SelectedIcon,
   UnSelectedIcon,
 } from '-/components/CommonIcons';
+import FileExtBadge from '-/components/FileExtBadge';
 import TagContainer from '-/components/TagContainer';
 import TagContainerDnd from '-/components/TagContainerDnd';
+import TagsOverflowChip from '-/components/TagsOverflowChip';
 import TagsPreview from '-/components/TagsPreview';
-import Tooltip from '-/components/Tooltip';
 import TsIconButton from '-/components/TsIconButton';
+import TsTooltip from '-/components/TsTooltip';
 import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
 import { usePerspectiveSettingsContext } from '-/hooks/usePerspectiveSettingsContext';
 import { useSelectedEntriesContext } from '-/hooks/useSelectedEntriesContext';
 import { useTaggingActionsContext } from '-/hooks/useTaggingActionsContext';
-import { getSupportedFileTypes, isReorderTags } from '-/reducers/settings';
+import {
+  getDefaultFolderColor,
+  getSupportedFileTypes,
+  getTagDelimiter,
+  isReorderTags,
+} from '-/reducers/settings';
 import i18n from '-/services/i18n';
 import {
   findBackgroundColorForFolder,
@@ -40,7 +47,7 @@ import {
   getDescriptionPreview,
 } from '-/services/utils-io';
 import { TS } from '-/tagspaces.namespace';
-import Grid from '@mui/material/Grid2';
+import Grid from '@mui/material/Grid';
 import Paper from '@mui/material/Paper';
 import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
@@ -52,7 +59,7 @@ import {
   extractTagsAsObjects,
   extractTitle,
 } from '@tagspaces/tagspaces-common/paths';
-import { useMemo } from 'react';
+import React, { useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSelector } from 'react-redux';
 import { defaultSettings } from '../index';
@@ -75,19 +82,20 @@ interface Props {
 }
 
 export function calculateEntryHeight(entrySize: TS.EntrySizes) {
-  let entryHeight = 200;
-  if (entrySize === 'tiny') {
-    entryHeight = 35;
-  } else if (entrySize === 'small') {
-    entryHeight = 55;
-  } else if (entrySize === 'normal') {
-    entryHeight = 75;
-  } else if (entrySize === 'big') {
-    entryHeight = 95;
-  } else if (entrySize === 'huge') {
-    entryHeight = 115;
+  switch (entrySize) {
+    case 'tiny':
+      return 35;
+    case 'small':
+      return 55;
+    case 'normal':
+      return 75;
+    case 'big':
+      return 95;
+    case 'huge':
+      return 115;
+    default:
+      return 200;
   }
-  return entryHeight;
 }
 
 function RowCell(props: Props) {
@@ -105,100 +113,111 @@ function RowCell(props: Props) {
 
   const { t } = useTranslation();
   const theme = useTheme();
-  const { selectedEntries, selectEntry } = useSelectedEntriesContext();
-  const { entrySize, showTags, thumbnailMode } =
+  // Intentionally do not subscribe to selectedEntries here. The cell receives
+  // its own `selected` boolean from the parent; selectEntry is only used in
+  // event handlers, where reading the latest selection from a ref is fine.
+  const { selectEntry } = useSelectedEntriesContext();
+  const { entrySize, showTags, thumbnailMode, maxVisibleTags } =
     usePerspectiveSettingsContext();
   const { addTag, editTagForEntry } = useTaggingActionsContext();
   const { currentLocation } = useCurrentLocationContext();
   const supportedFileTypes = useSelector(getSupportedFileTypes);
+  const defaultFolderColor = useSelector(getDefaultFolderColor);
   const reorderTags: boolean = useSelector(isReorderTags);
-  //const rowCellLocation = findLocation(fsEntry.locationID);
-
-  // You can use the dispatch function to dispatch actions
-  const handleEditTag = (path: string, tag: TS.Tag, newTagTitle?: string) => {
-    editTagForEntry(path, tag, newTagTitle);
-  };
+  const tagDelimiter: string = useSelector(getTagDelimiter);
 
   const handleAddTag = (tag: TS.Tag, parentTagGroupUuid: TS.Uuid) => {
     addTag([tag], parentTagGroupUuid);
   };
 
-  // remove isNewFile on Cell click it will open file in editMode
-  /*const fSystemEntry: TS.FileSystemEntry = (({ isNewFile, ...o }) => o)(
-    fsEntry,
-  );*/
-
-  const entryTitle = extractTitle(
-    fsEntry.name,
-    !fsEntry.isFile,
-    currentLocation?.getDirSeparator(),
+  const entryTitle = useMemo(
+    () =>
+      extractTitle(
+        fsEntry.name,
+        !fsEntry.isFile,
+        currentLocation?.getDirSeparator(),
+      ),
+    [fsEntry.name, fsEntry.isFile, currentLocation],
   );
 
-  let description;
-  if (showEntriesDescription) {
-    description = fsEntry.meta?.description;
-    if (
-      description &&
-      description.length > defaultSettings.maxDescriptionPreviewLength
-    ) {
-      description = getDescriptionPreview(
-        description,
+  const description = useMemo(() => {
+    if (!showEntriesDescription) return '';
+    let desc = fsEntry.meta?.description;
+    if (desc && desc.length > defaultSettings.maxDescriptionPreviewLength) {
+      desc = getDescriptionPreview(
+        desc,
         defaultSettings.maxDescriptionPreviewLength,
       );
     }
+    return desc && fsEntry.isFile ? ` | ${desc}` : desc || '';
+  }, [showEntriesDescription, fsEntry.meta?.description, fsEntry.isFile]);
 
-    if (description && fsEntry.isFile) {
-      description = ' | ' + description;
-    }
-  }
+  const fileSystemEntryColor = useMemo(
+    () => findColorForEntry(fsEntry, supportedFileTypes, defaultFolderColor),
+    [fsEntry, supportedFileTypes, defaultFolderColor],
+  );
+  const fileSystemEntryBgColor = useMemo(
+    () => findBackgroundColorForFolder(fsEntry),
+    [fsEntry],
+  );
 
-  const fileSystemEntryColor = findColorForEntry(fsEntry, supportedFileTypes);
-  const fileSystemEntryBgColor = findBackgroundColorForFolder(fsEntry);
-
-  let fileNameTags = [];
-  if (fsEntry.isFile) {
-    fileNameTags = extractTagsAsObjects(
+  // Prefer the value pre-parsed at load time by DirectoryContentContextProvider.
+  const fileNameTags = useMemo(() => {
+    if (!fsEntry.isFile) return [];
+    if (fsEntry.parsedNameTags !== undefined) return fsEntry.parsedNameTags;
+    return extractTagsAsObjects(
       fsEntry.name,
-      AppConfig.tagDelimiter,
+      tagDelimiter,
       currentLocation?.getDirSeparator(),
     );
-  }
+  }, [
+    fsEntry.isFile,
+    fsEntry.name,
+    fsEntry.parsedNameTags,
+    tagDelimiter,
+    currentLocation,
+  ]);
 
-  const fileSystemEntryTags =
-    fsEntry.meta && fsEntry.meta.tags ? fsEntry.meta.tags : [];
-  const sideCarTagsTitles = fileSystemEntryTags.map((tag) => tag.title);
-  const entryTags = [
-    ...fileSystemEntryTags,
-    ...fileNameTags.filter((tag) => !sideCarTagsTitles.includes(tag.title)),
-  ];
+  const fileSystemEntryTags: TS.Tag[] = fsEntry.meta?.tags ?? [];
+  const sideCarTagsTitles = useMemo(
+    () => fileSystemEntryTags.map((tag) => tag.title),
+    [fileSystemEntryTags],
+  );
+  const entryTags = useMemo(
+    () => [
+      ...fileSystemEntryTags,
+      ...fileNameTags.filter((tag) => !sideCarTagsTitles.includes(tag.title)),
+    ],
+    [fileSystemEntryTags, fileNameTags, sideCarTagsTitles],
+  );
 
   const entrySizeFormatted = fsEntry.isFile
-    ? formatFileSize(fsEntry.size) + ' | '
+    ? `${formatFileSize(fsEntry.size)} | `
     : '';
 
   const entryLMDTFormatted =
-    fsEntry.isFile && fsEntry.lmdt && formatDateTime(fsEntry.lmdt, true);
+    fsEntry.isFile && fsEntry.lmdt ? formatDateTime(fsEntry.lmdt, true) : '';
 
-  let tagTitles = '';
-  if (entryTags) {
-    entryTags.map((tag) => {
-      tagTitles += tag.title + ', ';
-      return true;
-    });
-  }
-  tagTitles = tagTitles.substring(0, tagTitles.length - 2);
   const tagPlaceholder = <TagsPreview tags={entryTags} />;
-
-  function urlGetDelim(url) {
-    return url.indexOf('?') > 0 ? '&' : '?';
-  }
 
   const entryPath = fsEntry.path;
 
+  // In multi-select (selectionMode) the drag operation is on the cell, not on
+  // the tag. Skip the per-tag DnD wiring — same logic as read-only locations.
+  const useStaticTags = currentLocation?.isReadOnly || selectionMode;
+  // Cap inline tag chips; overflow goes into the TagsOverflowChip popover.
+  const cap =
+    typeof maxVisibleTags === 'number' && maxVisibleTags > 0
+      ? maxVisibleTags
+      : Infinity;
+  const visibleTags =
+    entryTags.length > cap ? entryTags.slice(0, cap) : entryTags;
+  const overflowTags =
+    entryTags.length > cap ? entryTags.slice(cap) : undefined;
   const renderTags = useMemo(() => {
     let sideCarLength = 0;
-    return entryTags.map((tag: TS.Tag, index) => {
-      const tagContainer = currentLocation.isReadOnly ? (
+    return visibleTags.map((tag: TS.Tag, index) => {
+      const tagContainer = useStaticTags ? (
         <TagContainer
           tag={tag}
           key={entryPath + tag.title}
@@ -213,155 +232,186 @@ function RowCell(props: Props) {
           entry={fsEntry}
           addTag={handleAddTag}
           handleTagMenu={handleTagMenu}
-          selectedEntries={selectedEntries}
-          editTagForEntry={handleEditTag}
+          editTagForEntry={editTagForEntry}
           reorderTags={reorderTags}
         />
       );
-
       if (tag.type === 'sidecar') {
         sideCarLength = index + 1;
       }
       return tagContainer;
     });
-  }, [entryTags, currentLocation.isReadOnly, reorderTags, entryPath]);
-
-  function generateExtension() {
-    return selectionMode ? (
-      <TsIconButton
-        style={{
-          width: 40,
-          height: 35,
-          alignSelf: 'center',
-        }}
-        onClick={(e) => {
-          e.stopPropagation();
-          if (selected) {
-            selectEntry(fsEntry, false);
-          } else {
-            selectEntry(fsEntry);
-          }
-        }}
-      >
-        {selected ? <SelectedIcon /> : <UnSelectedIcon />}
-      </TsIconButton>
-    ) : (
-      <Tooltip title={i18n.t('clickToSelect') + ' ' + fsEntry.path}>
-        <Typography
-          style={{
-            paddingTop: 1,
-            paddingBottom: 9,
-            paddingLeft: 3,
-            paddingRight: 3,
-            fontSize: 13,
-            minWidth: 40,
-            color: 'white',
-            borderRadius: 3,
-            textAlign: 'center',
-            display: 'inline',
-            backgroundColor: fileSystemEntryColor,
-            textShadow: '1px 1px #8f8f8f',
-            textOverflow: 'unset',
-            height: 15,
-            alignSelf: 'center',
-          }}
-          noWrap={true}
-          variant="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            selectEntry(fsEntry);
-          }}
-        >
-          {fsEntry.isFile ? fsEntry.extension : <FolderOutlineIcon />}
-        </Typography>
-      </Tooltip>
-    );
-  }
+  }, [
+    visibleTags,
+    useStaticTags,
+    entryPath,
+    fsEntry,
+    handleTagMenu,
+    addTag,
+    editTagForEntry,
+    reorderTags,
+  ]);
 
   const entryHeight = calculateEntryHeight(entrySize);
-  const isSmall = entrySize === 'tiny'; // || entrySize === 'small';
+  const isSmall = entrySize === 'tiny';
 
-  let entryBackgroundColor = fileSystemEntryBgColor;
-  if (entryBackgroundColor === 'transparent') {
-    entryBackgroundColor = theme.palette.background.default;
-  }
+  const entryBackgroundColor =
+    fileSystemEntryBgColor === 'transparent'
+      ? theme.palette.background.default
+      : fileSystemEntryBgColor;
 
   const backgroundColor = selected
     ? theme.palette.primary.light
     : entryBackgroundColor;
 
+  const handleBadgeClick = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      if (selectionMode) {
+        selectEntry(fsEntry, !selected);
+      } else {
+        selectEntry(fsEntry);
+      }
+    },
+    [selectionMode, selectEntry, fsEntry, selected],
+  );
+
+  const handlePaperClick = useCallback(
+    (event: React.MouseEvent) => {
+      event.stopPropagation();
+      AppConfig.isCapacitoriOS
+        ? handleGridCellDblClick(event, fsEntry)
+        : handleGridCellClick(event, fsEntry);
+    },
+    [handleGridCellClick, handleGridCellDblClick, fsEntry],
+  );
+
+  const handlePaperDoubleClick = useCallback(
+    (event: React.MouseEvent) => {
+      handleGridCellDblClick(event, fsEntry);
+    },
+    [handleGridCellDblClick, fsEntry],
+  );
+
+  const handlePaperContextMenu = useCallback(
+    (event: React.MouseEvent) => {
+      handleGridContextMenu(event, fsEntry);
+    },
+    [handleGridContextMenu, fsEntry],
+  );
+
+  const handlePaperDrag = useCallback(
+    (event: React.DragEvent) => {
+      handleGridCellClick(event, fsEntry);
+    },
+    [handleGridCellClick, fsEntry],
+  );
+
+  function urlGetDelim(url: string) {
+    return url.indexOf('?') > 0 ? '&' : '?';
+  }
+
   return (
     <Paper
       data-entry-id={fsEntry.uuid}
-      style={{
+      sx={{
         boxShadow: 'none',
         borderRadius: 0,
         borderLeft: '1px solid transparent',
         borderRight: '1px solid transparent',
         borderTop: '1px solid transparent',
-        borderBottom: '1px solid ' + theme.palette.divider,
+        borderBottom: `1px solid ${theme.palette.divider}`,
         background: 'transparent',
         margin: 0,
-        paddingBottom: 5,
-        marginLeft: 5,
+        paddingBottom: '5px',
+        marginLeft: '5px',
         minHeight: entryHeight,
-        marginBottom: isLast ? 40 : 'auto',
+        marginBottom: isLast ? '40px' : 'auto',
       }}
-      onContextMenu={(event) => handleGridContextMenu(event, fsEntry)}
-      onDoubleClick={(event) => {
-        handleGridCellDblClick(event, fsEntry);
-      }}
-      onClick={(event) => {
-        event.stopPropagation();
-        AppConfig.isCordovaiOS // TODO DoubleClick not fired in Cordova IOS
-          ? handleGridCellDblClick(event, fsEntry)
-          : handleGridCellClick(event, fsEntry);
-      }}
-      onDrag={(event) => {
-        handleGridCellClick(event, fsEntry);
-      }}
+      onContextMenu={handlePaperContextMenu}
+      onDoubleClick={handlePaperDoubleClick}
+      onClick={handlePaperClick}
+      onDrag={handlePaperDrag}
     >
       <Grid
         container
         wrap="nowrap"
-        style={{
-          borderRadius: AppConfig.defaultCSSRadius,
-        }}
         sx={{
+          borderRadius: AppConfig.defaultCSSRadius,
           backgroundColor,
           '&:hover': {
-            backgroundColor: theme.palette.divider + ' !important',
+            backgroundColor: `${theme.palette.divider} !important`,
           },
         }}
       >
         <Grid
-          style={{
+          sx={{
             minHeight: entryHeight,
             minWidth: 50,
             height: 30,
-            padding: 3,
+            padding: '3px',
             textAlign: 'left',
             display: 'flex',
             alignSelf: 'center',
           }}
         >
-          {generateExtension()}
+          <TsTooltip
+            title={
+              <>
+                {fsEntry.isBrokenSymlink ? (
+                  <>
+                    {i18n.t('core:brokenSymbolicLink')}
+                    <br />
+                  </>
+                ) : fsEntry.isSymbolicLink ? (
+                  <>
+                    {i18n.t('core:symbolicLinkTo', {
+                      target: fsEntry.symlinkTargetPath || '?',
+                    })}
+                    <br />
+                  </>
+                ) : null}
+                {i18n.t('clickToSelect')}: {fsEntry.name}
+              </>
+            }
+          >
+            <FileExtBadge
+              sx={{
+                backgroundColor: fileSystemEntryColor,
+              }}
+              noWrap
+              variant="button"
+              onClick={handleBadgeClick}
+            >
+              {selectionMode ? (
+                selected ? (
+                  <SelectedIcon />
+                ) : (
+                  <UnSelectedIcon />
+                )
+              ) : fsEntry.isFile ? (
+                fsEntry.extension
+              ) : (
+                <FolderOutlineIcon />
+              )}
+            </FileExtBadge>
+          </TsTooltip>
         </Grid>
         {isSmall ? (
           <Grid
-            style={{
+            sx={{
               display: 'flex',
               width: '100%',
-              marginLeft: 5,
+              marginLeft: '5px',
             }}
           >
             <Typography
               variant="body2"
-              style={{
+              sx={{
                 overflowX: 'hidden',
                 textWrap: 'nowrap',
                 alignSelf: 'center',
-                marginRight: 5,
+                marginRight: '5px',
               }}
               title={
                 fsEntry.name +
@@ -370,31 +420,41 @@ function RowCell(props: Props) {
                 formatDateTime(fsEntry.lmdt, true)
               }
             >
-              <>{entryTitle}</>
-              &nbsp;
-              {showTags && entryTags ? renderTags : tagPlaceholder}
+              {entryTitle}
+              {showTags && entryTags.length > 0 ? (
+                <>
+                  {renderTags}
+                  {overflowTags && (
+                    <TagsOverflowChip
+                      remaining={overflowTags}
+                      entry={fsEntry}
+                      handleTagMenu={handleTagMenu}
+                    />
+                  )}
+                </>
+              ) : (
+                tagPlaceholder
+              )}
             </Typography>
           </Grid>
         ) : (
-          <Grid style={{ alignSelf: 'center', width: '100%', marginLeft: 5 }}>
+          <Grid sx={{ alignSelf: 'center', width: '100%', marginLeft: '5px' }}>
             <Typography
               variant="body1"
-              title={fsEntry.name}
-              style={{ wordBreak: 'break-all' }}
+              title={fsEntry.path}
+              sx={{ wordBreak: 'break-all' }}
             >
               {entryTitle}
             </Typography>
             <Typography
               data-tid="gridCellDescription"
-              style={{
-                color: 'gray',
-              }}
+              sx={{ color: 'gray' }}
               variant="body2"
             >
-              <Tooltip title={fsEntry.size + ' ' + t('core:sizeInBytes')}>
-                {entrySizeFormatted}
-              </Tooltip>
-              <Tooltip
+              <TsTooltip title={fsEntry.size + ' ' + t('core:sizeInBytes')}>
+                <span>{entrySizeFormatted}</span>
+              </TsTooltip>
+              <TsTooltip
                 title={
                   t('core:modifiedDate') +
                   ': ' +
@@ -402,34 +462,46 @@ function RowCell(props: Props) {
                 }
               >
                 <span>{entryLMDTFormatted}</span>
-              </Tooltip>
+              </TsTooltip>
               <span>{description}</span>
             </Typography>
-            {showTags && entryTags ? renderTags : tagPlaceholder}
+            {showTags && entryTags.length > 0 ? (
+              <>
+                {renderTags}
+                {overflowTags && (
+                  <TagsOverflowChip
+                    remaining={overflowTags}
+                    entry={fsEntry}
+                    handleTagMenu={handleTagMenu}
+                  />
+                )}
+              </>
+            ) : (
+              tagPlaceholder
+            )}
           </Grid>
         )}
-        {fsEntry.meta && fsEntry.meta.thumbPath && (
+        {fsEntry.meta?.thumbPath && (
           <Grid
-            style={{
+            sx={{
               display: 'flex',
               width: entryHeight,
               alignItems: 'center',
             }}
           >
             <img
-              alt="thumbnail"
+              alt={t('core:thumbnailOfEntry', { name: fsEntry.name })}
               src={
-                fsEntry.meta?.thumbPath +
-                (fsEntry.meta &&
-                fsEntry.meta.thumbPath &&
-                !currentLocation.haveObjectStoreSupport() &&
+                fsEntry.meta.thumbPath +
+                (!currentLocation.haveObjectStoreSupport() &&
                 !currentLocation.haveWebDavSupport()
-                  ? urlGetDelim(fsEntry.meta?.thumbPath) +
+                  ? urlGetDelim(fsEntry.meta.thumbPath) +
                     fsEntry.meta.lastUpdated
                   : '')
               }
-              // @ts-ignore
-              onError={(i) => (i.target.style.display = 'none')}
+              onError={(e) => {
+                (e.target as HTMLImageElement).style.display = 'none';
+              }}
               loading="lazy"
               style={{
                 backgroundRepeat: 'no-repeat',
@@ -442,16 +514,16 @@ function RowCell(props: Props) {
           </Grid>
         )}
         <Grid
-          style={{
+          sx={{
             display: 'flex',
             alignItems: 'center',
-            marginRight: 5,
-            paddingRight: 10,
+            marginRight: '5px',
+            paddingRight: '10px',
           }}
         >
           <TsIconButton
             aria-label="entry context menu"
-            onClick={(event) => handleGridContextMenu(event, fsEntry)}
+            onClick={handlePaperContextMenu}
           >
             <MoreMenuIcon />
           </TsIconButton>
@@ -461,4 +533,20 @@ function RowCell(props: Props) {
   );
 }
 
-export default RowCell;
+// Custom comparator: re-render only when something the row actually displays
+// changes. Mirrors GridCell's memoization so single-file selection doesn't
+// repaint the entire visible page.
+export default React.memo(RowCell, (prev, next) => {
+  return (
+    prev.selected === next.selected &&
+    prev.selectionMode === next.selectionMode &&
+    prev.fsEntry === next.fsEntry &&
+    prev.fsEntry.meta === next.fsEntry.meta &&
+    prev.isLast === next.isLast &&
+    prev.showEntriesDescription === next.showEntriesDescription &&
+    prev.handleTagMenu === next.handleTagMenu &&
+    prev.handleGridContextMenu === next.handleGridContextMenu &&
+    prev.handleGridCellClick === next.handleGridCellClick &&
+    prev.handleGridCellDblClick === next.handleGridCellDblClick
+  );
+});

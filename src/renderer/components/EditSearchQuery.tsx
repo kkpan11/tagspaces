@@ -17,6 +17,7 @@
  */
 
 import AppConfig from '-/AppConfig';
+import { getSearchTypeGroupExts } from '-/services/utils-io';
 import {
   ArchiveIcon,
   AudioIcon,
@@ -33,27 +34,31 @@ import {
   VideoIcon,
 } from '-/components/CommonIcons';
 import TagsSelect from '-/components/TagsSelect';
-import TooltipTS from '-/components/Tooltip';
+import TsTooltip from '-/components/TsTooltip';
 import TsDatePicker from '-/components/TsDatePicker';
 import TsIconButton from '-/components/TsIconButton';
 import TsSelect from '-/components/TsSelect';
+import TsSwitch from '-/components/TsSwitch';
 import TsTextField from '-/components/TsTextField';
 import TsToggleButton from '-/components/TsToggleButton';
 import { useLocationIndexContext } from '-/hooks/useLocationIndexContext';
 import { useSearchQueryContext } from '-/hooks/useSearchQueryContext';
+import { Pro } from '-/pro';
 import { isDesktopMode } from '-/reducers/settings';
+import { TS } from '-/tagspaces.namespace';
 import { ListItemText, Stack } from '@mui/material';
 import Box from '@mui/material/Box';
 import FormControl from '@mui/material/FormControl';
+import FormControlLabel from '@mui/material/FormControlLabel';
 import FormHelperText from '@mui/material/FormHelperText';
 import InputAdornment from '@mui/material/InputAdornment';
 import MenuItem from '@mui/material/MenuItem';
 import ToggleButtonGroup from '@mui/material/ToggleButtonGroup';
 import Typography from '@mui/material/Typography';
-import { LocalizationProvider } from '@mui/x-date-pickers';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
+import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { formatFileSize } from '@tagspaces/tagspaces-common/misc';
-import React from 'react';
+import React, { useContext } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSelector } from 'react-redux';
 
@@ -69,6 +74,16 @@ function EditSearchQuery(props: Props) {
     useSearchQueryContext();
   const { isIndexing } = useLocationIndexContext();
 
+  const workSpacesContext = Pro?.contextProviders?.WorkSpacesContext
+    ? useContext<TS.WorkSpacesContextData>(
+        Pro.contextProviders.WorkSpacesContext,
+      )
+    : undefined;
+  const currentWorkSpace =
+    workSpacesContext && workSpacesContext.getCurrentWorkSpace
+      ? workSpacesContext?.getCurrentWorkSpace()
+      : undefined;
+
   const handleFileSizeChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const { target } = event;
     const { value, name } = target;
@@ -82,6 +97,15 @@ function EditSearchQuery(props: Props) {
     const { value, name } = target;
 
     setTempSearchQuery({ lastModified: value });
+  };
+
+  const handleDateCreatedChange = (
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const { target } = event;
+    const { value, name } = target;
+
+    setTempSearchQuery({ dateCreated: value });
   };
 
   function removeTags(tagsArray, removeTagsArray) {
@@ -149,7 +173,7 @@ function EditSearchQuery(props: Props) {
     const { target } = event;
     const { value, name } = target;
 
-    const types = AppConfig.SearchTypeGroups[value];
+    const types = getSearchTypeGroupExts(value);
     setTempSearchQuery({ fileTypes: types });
   };
 
@@ -186,13 +210,23 @@ function EditSearchQuery(props: Props) {
           input: {
             endAdornment: (
               <InputAdornment position="end">
-                <TooltipTS
+                <TsTooltip
                   title={
                     <>
-                      <Typography variant="subtitle1" color="inherit">
+                      <Typography
+                        variant="subtitle1"
+                        sx={{
+                          color: 'inherit',
+                        }}
+                      >
                         Tips for the extended search
                       </Typography>
-                      <Typography variant="subtitle2" color="inherit">
+                      <Typography
+                        variant="subtitle2"
+                        sx={{
+                          color: 'inherit',
+                        }}
+                      >
                         💡 <b>{'sun'}</b> - will match entries having the word
                         sun but also san or sum in the name
                         <br />
@@ -225,7 +259,7 @@ function EditSearchQuery(props: Props) {
                   }
                 >
                   <InfoTooltipIcon />
-                </TooltipTS>
+                </TsTooltip>
               </InputAdornment>
             ),
           },
@@ -236,11 +270,11 @@ function EditSearchQuery(props: Props) {
           onChange={switchSearchBoxing}
           size="small"
           exclusive
-          style={{ marginBottom: 0, alignSelf: 'center' }}
+          sx={{ marginBottom: 0, alignSelf: 'center' }}
           value={tempSearchQuery.searchBoxing}
         >
           <TsToggleButton
-            style={{
+            sx={{
               borderTopRightRadius: 0,
               borderBottomRightRadius: 0,
             }}
@@ -250,7 +284,7 @@ function EditSearchQuery(props: Props) {
             {t('location')}
           </TsToggleButton>
           <TsToggleButton
-            style={{
+            sx={{
               borderRadius: 0,
             }}
             tooltip={t('searchCurrentFolderWithSubFolders')}
@@ -259,14 +293,20 @@ function EditSearchQuery(props: Props) {
             {t('folder')}
           </TsToggleButton>
           <TsToggleButton
-            style={{
+            sx={{
               borderTopLeftRadius: 0,
               borderBottomLeftRadius: 0,
             }}
-            tooltip={t('searchInAllLocationTooltip')}
+            tooltip={
+              currentWorkSpace
+                ? t('currentWorkspace')
+                : t('searchInAllLocationTooltip')
+            }
             value="global"
           >
-            {t('globalSearch')}
+            {currentWorkSpace
+              ? currentWorkSpace.fullName + ' - ' + currentWorkSpace.shortName
+              : t('globalSearch')}
           </TsToggleButton>
         </ToggleButtonGroup>
       </FormControl>
@@ -275,11 +315,11 @@ function EditSearchQuery(props: Props) {
           onChange={switchSearchType}
           size="small"
           exclusive
-          style={{ marginBottom: 0, alignSelf: 'center' }}
+          sx={{ marginBottom: 0, alignSelf: 'center' }}
           value={tempSearchQuery.searchType}
         >
           <TsToggleButton
-            style={{
+            sx={{
               borderTopRightRadius: 0,
               borderBottomRightRadius: 0,
             }}
@@ -290,7 +330,7 @@ function EditSearchQuery(props: Props) {
             {t('searchTypeFuzzy')}
           </TsToggleButton>
           <TsToggleButton
-            style={{
+            sx={{
               borderRadius: 0,
             }}
             tooltip={t('searchTypeSemiStrictTooltip')}
@@ -300,7 +340,7 @@ function EditSearchQuery(props: Props) {
             {t('searchTypeSemiStrict')}
           </TsToggleButton>
           <TsToggleButton
-            style={{
+            sx={{
               borderTopLeftRadius: 0,
               borderBottomLeftRadius: 0,
             }}
@@ -313,39 +353,23 @@ function EditSearchQuery(props: Props) {
         </ToggleButtonGroup>
       </FormControl>
       <FormControl disabled={isIndexing !== undefined}>
-        <ToggleButtonGroup
-          onChange={() => {
-            setTempSearchQuery({
-              forceIndexing: !tempSearchQuery.forceIndexing,
-            });
-          }}
-          size="small"
-          exclusive
-          style={{ marginBottom: 0, alignSelf: 'center' }}
-          value={tempSearchQuery.forceIndexing}
-        >
-          <TsToggleButton
-            tooltip={t('useCurrentIndexTooltip')}
-            style={{
-              borderTopRightRadius: 0,
-              borderBottomRightRadius: 0,
-            }}
-            value={false}
-          >
-            {t('useCurrentIndex')}
-          </TsToggleButton>
-          <TsToggleButton
-            tooltip={t('forceReindexTooltip')}
-            style={{
-              borderTopLeftRadius: 0,
-              borderBottomLeftRadius: 0,
-            }}
-            value={true}
-            data-tid="forceIndexingTID"
-          >
-            {t('forceReindex')}
-          </TsToggleButton>
-        </ToggleButtonGroup>
+        <FormControlLabel
+          labelPlacement="start"
+          sx={{ justifyContent: 'space-between', marginLeft: 0 }}
+          control={
+            <TsSwitch
+              data-tid="forceIndexingTID"
+              tooltip={t('forceReindexTooltip')}
+              checked={!!tempSearchQuery.forceIndexing}
+              onChange={(event) =>
+                setTempSearchQuery({
+                  forceIndexing: event.target.checked,
+                })
+              }
+            />
+          }
+          label={t('forceReindex')}
+        />
       </FormControl>
       <FormControl disabled={isIndexing !== undefined}>
         <TagsSelect
@@ -381,7 +405,7 @@ function EditSearchQuery(props: Props) {
         />
       </FormControl>
       <FormControl disabled={isIndexing !== undefined}>
-        <FormHelperText style={{ marginLeft: 0 }}></FormHelperText>
+        <FormHelperText sx={{ marginLeft: 0 }}></FormHelperText>
         <TsSelect
           value={findPropertiesByValues(tempSearchQuery.fileTypes)}
           onChange={handleFileTypeChange}
@@ -410,7 +434,7 @@ function EditSearchQuery(props: Props) {
             {t('core:searchUntaggedEntries')}
           </MenuItem>
           <MenuItem
-            title={AppConfig.SearchTypeGroups.images.toString()}
+            title={AppConfig.SearchTypeGroups.images?.toString()}
             value={AppConfig.SearchTypes.images}
           >
             <TsIconButton size="small">
@@ -419,7 +443,7 @@ function EditSearchQuery(props: Props) {
             {t('core:searchPictures')}
           </MenuItem>
           <MenuItem
-            title={AppConfig.SearchTypeGroups.documents.toString()}
+            title={AppConfig.SearchTypeGroups.documents?.toString()}
             value={AppConfig.SearchTypes.documents}
           >
             <TsIconButton size="small">
@@ -428,7 +452,7 @@ function EditSearchQuery(props: Props) {
             {t('core:searchDocuments')}
           </MenuItem>
           <MenuItem
-            title={AppConfig.SearchTypeGroups.notes.toString()}
+            title={AppConfig.SearchTypeGroups.notes?.toString()}
             value={AppConfig.SearchTypes.notes}
           >
             <TsIconButton size="small">
@@ -437,7 +461,7 @@ function EditSearchQuery(props: Props) {
             {t('core:searchNotes')}
           </MenuItem>
           <MenuItem
-            title={AppConfig.SearchTypeGroups.audio.toString()}
+            title={AppConfig.SearchTypeGroups.audio?.toString()}
             value={AppConfig.SearchTypes.audio}
           >
             <TsIconButton size="small">
@@ -446,7 +470,7 @@ function EditSearchQuery(props: Props) {
             {t('core:searchAudio')}
           </MenuItem>
           <MenuItem
-            title={AppConfig.SearchTypeGroups.video.toString()}
+            title={AppConfig.SearchTypeGroups.video?.toString()}
             value={AppConfig.SearchTypes.video}
           >
             <TsIconButton size="small">
@@ -455,7 +479,7 @@ function EditSearchQuery(props: Props) {
             {t('core:searchVideoFiles')}
           </MenuItem>
           <MenuItem
-            title={AppConfig.SearchTypeGroups.archives.toString()}
+            title={AppConfig.SearchTypeGroups.archives?.toString()}
             value={AppConfig.SearchTypes.archives}
           >
             <TsIconButton size="small">
@@ -464,7 +488,7 @@ function EditSearchQuery(props: Props) {
             {t('core:searchArchives')}
           </MenuItem>
           <MenuItem
-            title={AppConfig.SearchTypeGroups.bookmarks.toString()}
+            title={AppConfig.SearchTypeGroups.bookmarks?.toString()}
             value={AppConfig.SearchTypes.bookmarks}
           >
             <TsIconButton size="small">
@@ -473,7 +497,7 @@ function EditSearchQuery(props: Props) {
             {t('core:searchBookmarks')}
           </MenuItem>
           <MenuItem
-            title={AppConfig.SearchTypeGroups.ebooks.toString()}
+            title={AppConfig.SearchTypeGroups.ebooks?.toString()}
             value={AppConfig.SearchTypes.ebooks}
           >
             <TsIconButton size="small">
@@ -482,7 +506,7 @@ function EditSearchQuery(props: Props) {
             {t('core:searchEbooks')}
           </MenuItem>
           <MenuItem
-            title={AppConfig.SearchTypeGroups.emails.toString()}
+            title={AppConfig.SearchTypeGroups.emails?.toString()}
             value={AppConfig.SearchTypes.emails}
           >
             <TsIconButton size="small">
@@ -571,12 +595,47 @@ function EditSearchQuery(props: Props) {
           </MenuItem>
         </TsSelect>
       </FormControl>
+      <FormControl disabled={isIndexing !== undefined}>
+        <TsSelect
+          value={tempSearchQuery.dateCreated}
+          onChange={handleDateCreatedChange}
+          label={t('core:creationDate')}
+        >
+          <MenuItem value="">{t('core:anyTime')}</MenuItem>
+          <MenuItem value={AppConfig.SearchTimePeriods.today.key}>
+            {t('core:today')}
+          </MenuItem>
+          <MenuItem value={AppConfig.SearchTimePeriods.yesterday.key}>
+            {t('core:yesterday')}
+          </MenuItem>
+          <MenuItem value={AppConfig.SearchTimePeriods.past7Days.key}>
+            {t('core:past7Days')}
+          </MenuItem>
+          <MenuItem value={AppConfig.SearchTimePeriods.past30Days.key}>
+            {t('core:past30Days')}
+          </MenuItem>
+          <MenuItem value={AppConfig.SearchTimePeriods.past6Months.key}>
+            {t('core:past6Months')}
+          </MenuItem>
+          <MenuItem value={AppConfig.SearchTimePeriods.pastYear.key}>
+            {t('core:pastYear')}
+          </MenuItem>
+          <MenuItem value={AppConfig.SearchTimePeriods.moreThanYear.key}>
+            {t('core:moreThanYear')}
+          </MenuItem>
+        </TsSelect>
+      </FormControl>
       <FormControl>
-        <TooltipTS title={t('enterTimePeriodTooltip')}>
+        <TsTooltip title={t('enterTimePeriodTooltip')}>
           <LocalizationProvider dateAdapter={AdapterDateFns}>
-            <Box position="relative" display="inline-flex">
-              <div>
-                <FormHelperText style={{ marginLeft: 0, marginTop: 0 }}>
+            <Box
+              sx={{
+                position: 'relative',
+                display: 'inline-flex',
+              }}
+            >
+              <div style={{ maxWidth: 180 }}>
+                <FormHelperText sx={{ marginLeft: 0, marginTop: 0 }}>
                   {t('core:enterTagTimePeriodFrom')}
                 </FormHelperText>
                 <TsDatePicker
@@ -595,8 +654,8 @@ function EditSearchQuery(props: Props) {
                   }}
                 />
               </div>
-              <div style={{ marginLeft: 5 }}>
-                <FormHelperText style={{ marginLeft: 0, marginTop: 0 }}>
+              <div style={{ marginLeft: 5, maxWidth: 180 }}>
+                <FormHelperText sx={{ marginLeft: 0, marginTop: 0 }}>
                   {t('core:enterTagTimePeriodTo')}
                 </FormHelperText>
                 <TsDatePicker
@@ -617,7 +676,7 @@ function EditSearchQuery(props: Props) {
               </div>
             </Box>
           </LocalizationProvider>
-        </TooltipTS>
+        </TsTooltip>
       </FormControl>
     </Stack>
   );

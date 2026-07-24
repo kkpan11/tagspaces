@@ -16,26 +16,28 @@
  *
  */
 
+import AppConfig from '-/AppConfig';
+import { NavigateBeforeIcon, NavigateNextIcon } from '-/components/CommonIcons';
 import DraggablePaper from '-/components/DraggablePaper';
 import TsButton from '-/components/TsButton';
+import TsIconButton from '-/components/TsIconButton';
 import TsDialogTitle from '-/components/dialogs/components/TsDialogTitle';
+import { BuyProDialogContext } from '-/components/dialogs/hooks/BuyProDialogContextProvider';
+import { getProTeaserSlides } from '-/content/ProTeaserSlides';
+import { openURLExternally } from '-/services/utils-io';
+import { Box, ButtonGroup } from '@mui/material';
 import Dialog from '@mui/material/Dialog';
+import DialogActions from '@mui/material/DialogActions';
 import DialogContent from '@mui/material/DialogContent';
 import Paper from '@mui/material/Paper';
 import Typography from '@mui/material/Typography';
-import React from 'react';
-
-import AppConfig from '-/AppConfig';
-import { getProTeaserSlides } from '-/content/ProTeaserSlides';
-import { openURLExternally } from '-/services/utils-io';
-import NavigateBeforeIcon from '@mui/icons-material/NavigateBefore';
-import NavigateNextIcon from '@mui/icons-material/NavigateNext';
-import { Box } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import Links from 'assets/links';
+import React, { useContext, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import Slider from 'react-slick';
+import { Pagination } from 'swiper/modules';
+import { Swiper, SwiperSlide } from 'swiper/react';
 
 interface Props {
   open: boolean;
@@ -70,19 +72,33 @@ function Slide(props: SlideProps) {
     pictureShadow,
   } = props;
   const { t } = useTranslation();
+  const { openBuyProDialog } = useContext(BuyProDialogContext);
+
+  // On Capacitor mobile (App Store / Play) we cannot link out to an
+  // external upgrade page from the purchase CTA — both stores reject
+  // builds that do. Route the upgrade CTA to the in-app StoreKit / Play
+  // Billing sheet via BuyProDialog instead. Desktop and web keep the
+  // external link. The "Show me more" / image CTA points at documentation
+  // (and the AI/Pro-Web slides at a contact mailto) — these are
+  // informational, not purchase links, so they open externally on every
+  // platform (App Store allows non-purchase outbound links).
+  const onUpgradeClick = AppConfig.isCapacitor
+    ? () => openBuyProDialog?.()
+    : () => openURLExternally(Links.links.productsOverview, true);
+  const onCtaClick = () => {
+    if (ctaURL) openURLExternally(ctaURL, true);
+  };
 
   return (
-    <div
-      style={{
-        padding: 15,
-        textAlign: 'left',
-        overflowY: 'hidden',
-        overflowX: 'hidden',
+    <Box
+      sx={{
+        padding: '40px',
+        marginTop: '-40px',
       }}
     >
       <Typography
         variant="h5"
-        style={{ textAlign: 'center', paddingBottom: 10 }}
+        sx={{ textAlign: 'center', paddingBottom: '10px' }}
       >
         {title}
       </Typography>
@@ -95,12 +111,13 @@ function Slide(props: SlideProps) {
             &#x2605;&nbsp;{item}
           </Typography>
         ))}
-      <div style={{ textAlign: 'center', paddingTop: 10 }}>
+      <Box sx={{ textAlign: 'center', paddingTop: '10px' }}>
         {pictureURL && (
           <a
             href="#"
-            onClick={() => {
-              openURLExternally(ctaURL, true);
+            onClick={(e) => {
+              e.preventDefault();
+              onCtaClick();
             }}
             style={{
               paddingTop: 15,
@@ -109,6 +126,7 @@ function Slide(props: SlideProps) {
           >
             <img
               style={{
+                borderRadius: AppConfig.defaultCSSRadius,
                 cursor: 'pointer',
                 maxHeight: pictureHeight,
                 margin: 'auto',
@@ -119,7 +137,7 @@ function Slide(props: SlideProps) {
                 maxWidth: '95%',
               }}
               src={pictureURL}
-              alt=""
+              alt="slide picture"
             />
           </a>
         )}
@@ -127,88 +145,57 @@ function Slide(props: SlideProps) {
           <video
             src={videoURL}
             poster={videoPosterUrl}
-            autoPlay={true}
+            autoPlay
+            muted
             loop
             controls
             style={{ width: '100%', marginBottom: 15 }}
           />
         )}
         <br />
-        <Box style={{ whiteSpace: 'nowrap' }}>
-          <TsButton
-            onClick={() => {
-              openURLExternally(Links.links.productsOverview, true);
-            }}
-          >
-            {t('core:compareAndUpgrade')}
-          </TsButton>
-          {ctaTitle && (
-            <TsButton
-              onClick={() => {
-                openURLExternally(ctaURL, true);
-              }}
-              style={{ marginLeft: AppConfig.defaultSpaceBetweenButtons }}
-            >
-              {ctaTitle}
+        <Box sx={{ whiteSpace: 'nowrap' }}>
+          <ButtonGroup>
+            <TsButton onClick={onUpgradeClick}>
+              {AppConfig.isCapacitor
+                ? t('core:upgrade')
+                : t('core:compareAndUpgrade')}
             </TsButton>
-          )}
+            {ctaTitle && (
+              <TsButton
+                onClick={onCtaClick}
+                sx={{ marginLeft: AppConfig.defaultSpaceBetweenButtons }}
+              >
+                {ctaTitle}
+              </TsButton>
+            )}
+          </ButtonGroup>
         </Box>
-      </div>
-    </div>
+      </Box>
+    </Box>
   );
 }
 
 function ProTeaserDialog(props: Props) {
   const { t } = useTranslation();
-  //const swiperElRef = useRef(null); //<SwiperRef>
-  //const slideIndex = useSelector(getProTeaserIndex);
+  const swiperRef = useRef(null);
 
   const slidesEN = getProTeaserSlides(t);
+  const slideEntries = Object.values(slidesEN);
+  const totalSlides = slideEntries.length;
 
   const { open, onClose, slideIndex } = props;
 
   const theme = useTheme();
   const smallScreen = useMediaQuery(theme.breakpoints.down('md'));
 
-  const slides = [];
-  for (let index in slidesEN) {
-    slides.push(<Slide key={index} {...slidesEN[index]} />);
-  }
-
   const initialSlide = slideIndex && slideIndex > -1 ? Number(slideIndex) : 0;
+  const [activeIndex, setActiveIndex] = useState<number>(initialSlide);
 
-  function NextArrow(props) {
-    const { className, style, onClick } = props;
-    return (
-      <div className={className} onClick={onClick}>
-        <NavigateNextIcon fontSize="large" color="primary" />
-      </div>
-    );
-  }
-
-  function PrevArrow(props) {
-    const { className, style, onClick } = props;
-    return (
-      <div className={className} onClick={onClick}>
-        <NavigateBeforeIcon fontSize="large" color="primary" />
-      </div>
-    );
-  }
-
-  const sliderSettings = {
-    className: 'center',
-    centerMode: true,
-    // dots: true,
-    infinite: false,
-    initialSlide: initialSlide,
-    centerPadding: '0px',
-    speed: 500,
-    slidesToShow: 1,
-    slidesToScroll: 1,
-    adaptiveHeight: true,
-    nextArrow: <NextArrow />,
-    prevArrow: <PrevArrow />,
-  };
+  // Sync activeIndex when the dialog is re-opened on a different slide
+  // (e.g. user clicks a Pro feature → dialog opens at that slide's index).
+  useEffect(() => {
+    if (open) setActiveIndex(initialSlide);
+  }, [open, initialSlide]);
 
   return (
     <Dialog
@@ -226,29 +213,124 @@ function ProTeaserDialog(props: Props) {
         dialogTitle={''}
       />
       <DialogContent
-        style={{
-          overflowY: 'auto',
-          overflowX: 'hidden',
+        sx={{
+          padding: 0,
+          paddingBottom: 0,
         }}
       >
-        <style>
-          {`
-            .slick-arrow {
-              height: 200px;
-              width: 50px;
-              display: flex;
-              align-items: center;
-            } 
-            .slick-next:before {
-              content: '';
-            }
-            .slick-prev:before {
-              content: '';
-            }
-        `}
-        </style>
-        <Slider {...sliderSettings}>{slides}</Slider>
+        {open && (
+          <>
+            <style>
+              {`
+                .pro-teaser-swiper {
+                  width: 100%;
+                  height: 100%;
+                }
+                .pro-teaser-swiper .swiper-slide {
+                  box-sizing: border-box;
+                  height: auto;
+                }
+                ${
+                  smallScreen
+                    ? `
+                /* Fullscreen (mobile) dialog: the Swiper container has a
+                   fixed height and overflow:hidden, so a slide taller than
+                   the screen would be clipped and unscrollable — Swiper also
+                   eats the vertical drag on iOS. Give each slide its own
+                   vertical scroll area with native momentum scrolling. */
+                .pro-teaser-swiper,
+                .pro-teaser-swiper .swiper-wrapper {
+                  height: 100%;
+                }
+                .pro-teaser-swiper .swiper-slide {
+                  height: 100%;
+                  overflow-y: auto;
+                  -webkit-overflow-scrolling: touch;
+                }`
+                    : ''
+                }
+                .proteaser-pagination {
+                  display: flex;
+                  justify-content: center;
+                  flex: 1;
+                  gap: 8px;
+                }
+                .proteaser-pagination .swiper-pagination-bullet {
+                  width: 10px;
+                  height: 10px;
+                  border-radius: 50%;
+                  background: ${theme.palette.text.secondary};
+                  opacity: 0.35;
+                  cursor: pointer;
+                  transition: opacity 0.2s, transform 0.2s;
+                }
+                .proteaser-pagination .swiper-pagination-bullet:hover {
+                  opacity: 0.6;
+                }
+                .proteaser-pagination .swiper-pagination-bullet-active {
+                  background: ${theme.palette.primary.main};
+                  opacity: 1;
+                  transform: scale(1.2);
+                }
+              `}
+            </style>
+            <Swiper
+              ref={swiperRef}
+              modules={[Pagination]}
+              pagination={{
+                clickable: true,
+                el: '.proteaser-pagination',
+              }}
+              slidesPerView={1}
+              speed={500}
+              initialSlide={initialSlide}
+              loop={false}
+              onSlideChange={(s) => setActiveIndex(s.activeIndex)}
+              className="pro-teaser-swiper"
+            >
+              {slideEntries.map((slideData, index) => (
+                <SwiperSlide key={index}>
+                  <Slide {...slideData} />
+                </SwiperSlide>
+              ))}
+            </Swiper>
+          </>
+        )}
       </DialogContent>
+      <DialogActions
+        sx={{
+          // env(safe-area-inset-*) handles the iPhone home indicator and
+          // the curved-screen edges on fullScreen dialogs. The max() keeps
+          // a comfortable buffer even when env() resolves to 0 (older
+          // browsers, missing viewport-fit=cover) so the buttons never
+          // sit flush against the rounded display.
+          paddingLeft: 'max(16px, env(safe-area-inset-left))',
+          paddingRight: 'max(16px, env(safe-area-inset-right))',
+          paddingTop: 1,
+          paddingBottom: 'max(16px, env(safe-area-inset-bottom))',
+          borderTop: '1px solid',
+          borderColor: 'divider',
+          gap: 1,
+        }}
+      >
+        <TsIconButton
+          data-tid="proTeaserBackTID"
+          tooltip={t('core:goback')}
+          onClick={() => (swiperRef.current as any)?.swiper?.slidePrev()}
+          disabled={activeIndex === 0}
+        >
+          <NavigateBeforeIcon />
+        </TsIconButton>
+        <Box className="proteaser-pagination" />
+        <TsIconButton
+          data-tid="proTeaserNextTID"
+          tooltip={t('core:next')}
+          onClick={() => (swiperRef.current as any)?.swiper?.slideNext()}
+          disabled={activeIndex === totalSlides - 1}
+        >
+          <NavigateNextIcon />
+        </TsIconButton>
+      </DialogActions>
     </Dialog>
   );
 }

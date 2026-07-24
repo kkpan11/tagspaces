@@ -16,18 +16,24 @@
  *
  */
 
-import React from 'react';
-import { useSelector } from 'react-redux';
-import ListItemIcon from '@mui/material/ListItemIcon';
-import LayersClearIcon from '@mui/icons-material/LayersClear';
-import ListItemText from '@mui/material/ListItemText';
+import AppConfig from '-/AppConfig';
+import { BetaLabel } from '-/components/HelperComponents';
 import TsSelect from '-/components/TsSelect';
-import MenuItem from '@mui/material/MenuItem';
-import { AvailablePerspectives, PerspectiveIDs } from '-/perspectives';
+import { getVisiblePerspectives, PerspectiveIDs } from '-/perspectives';
 import { Pro } from '-/pro';
-import { BetaLabel, ProLabel } from '-/components/HelperComponents';
+import {
+  getEnabledPerspectives,
+  isDesktopMode,
+  isDevMode,
+  isHideProFeatures,
+} from '-/reducers/settings';
+import LayersClearIcon from '@mui/icons-material/LayersClear';
+import { Box } from '@mui/material';
+import ListItemIcon from '@mui/material/ListItemIcon';
+import ListItemText from '@mui/material/ListItemText';
+import MenuItem from '@mui/material/MenuItem';
 import { useTranslation } from 'react-i18next';
-import { isDesktopMode } from '-/reducers/settings';
+import { useSelector } from 'react-redux';
 
 interface Props {
   defaultValue: string;
@@ -39,45 +45,45 @@ interface Props {
 
 function PerspectiveSelector(props: Props) {
   const { defaultValue, onChange, testId, label, fullWidth = true } = props;
+  const devMode: boolean = useSelector(isDevMode);
   const desktopMode = useSelector(isDesktopMode);
+  const hideProFeatures: boolean = useSelector(isHideProFeatures);
+  const enabledPerspectives: string[] = useSelector(getEnabledPerspectives);
   const { t } = useTranslation();
+
+  const visiblePerspectives = getVisiblePerspectives(
+    enabledPerspectives,
+    hideProFeatures,
+    Pro,
+  );
 
   const perspectiveSelectorMenuItems = [];
   perspectiveSelectorMenuItems.push(
     <MenuItem
-      style={{ display: 'flex' }}
       key={PerspectiveIDs.UNSPECIFIED}
       value={PerspectiveIDs.UNSPECIFIED}
     >
-      <div style={{ display: 'flex' }}>
-        <ListItemIcon style={{ paddingLeft: 3, paddingTop: 3 }}>
+      <Box sx={{ display: 'flex', alignItems: 'center' }}>
+        <ListItemIcon>
           <LayersClearIcon />
         </ListItemIcon>
         <ListItemText>{t('core:unspecified')}</ListItemText>
-      </div>
+      </Box>
     </MenuItem>,
   );
 
-  AvailablePerspectives.forEach((perspective) => {
-    let includePerspective = true;
-    if (!Pro && perspective.pro === true) {
-      includePerspective = false;
-    }
-    if (includePerspective) {
-      perspectiveSelectorMenuItems.push(
-        <MenuItem key={perspective.key} value={perspective.id}>
-          <div style={{ display: 'flex' }}>
-            <ListItemIcon style={{ paddingLeft: 3, paddingTop: 3 }}>
-              {perspective.icon}
-            </ListItemIcon>
-            <ListItemText>
-              {perspective.title}&nbsp;
-              {perspective.beta && <BetaLabel />}
-            </ListItemText>
-          </div>
-        </MenuItem>,
-      );
-    }
+  visiblePerspectives.forEach((perspective) => {
+    perspectiveSelectorMenuItems.push(
+      <MenuItem key={perspective.key} value={perspective.id}>
+        <Box sx={{ display: 'flex', alignItems: 'center' }}>
+          <ListItemIcon>{perspective.icon}</ListItemIcon>
+          <ListItemText>
+            {perspective.title}&nbsp;
+            {perspective.beta && <BetaLabel />}
+          </ListItemText>
+        </Box>
+      </MenuItem>,
+    );
   });
 
   return (

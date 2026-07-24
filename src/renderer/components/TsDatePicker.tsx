@@ -18,55 +18,55 @@
 
 import AppConfig from '-/AppConfig';
 import { isDesktopMode } from '-/reducers/settings';
+import { Box } from '@mui/material';
 import FormHelperText from '@mui/material/FormHelperText';
 import { alpha, useTheme } from '@mui/material/styles';
 import { DatePicker } from '@mui/x-date-pickers';
 import { useSelector } from 'react-redux';
 
 function TsDatePicker(props) {
-  const { children, label } = props;
+  const { label, ...restProps } = props;
   const theme = useTheme();
   const desktopMode = useSelector(isDesktopMode);
 
   return (
-    <div>
+    <Box>
       {label && (
-        <FormHelperText style={{ marginLeft: 5, marginTop: 0 }}>
+        <FormHelperText sx={{ marginLeft: '5px', marginTop: 0 }}>
           {label}
         </FormHelperText>
       )}
       <DatePicker
         sx={{
+          border: '0px transparent !important',
+          borderRadius: AppConfig.defaultCSSRadius,
           backgroundColor: alpha(theme.palette.divider, 0.2),
+          transition: '0.3s',
           '&:hover': {
             backgroundColor: alpha(theme.palette.divider, 0.5),
           },
           '& .Mui-focused': {
             backgroundColor: 'transparent !important',
-            borderRadius: AppConfig.defaultCSSRadius + 'px',
+            borderRadius: AppConfig.defaultCSSRadius,
           },
-          borderRadius: AppConfig.defaultCSSRadius + 'px',
-          transition: '0.3s',
-          '&:hover .MuiOutlinedInput-notchedOutline': {
-            border: '2px solid transparent !important',
-            borderRadius: AppConfig.defaultCSSRadius + 'px',
+          '& .MuiPickersOutlinedInput-root': {
+            border: '0px solid transparent !important',
+            borderRadius: AppConfig.defaultCSSRadius,
           },
-          '& .MuiOutlinedInput-notchedOutline': {
-            border: '2px solid transparent',
-            borderRadius: AppConfig.defaultCSSRadius + 'px',
+          '&:hover .MuiPickersOutlinedInput-root': {
+            border: '0px transparent !important',
+            borderRadius: AppConfig.defaultCSSRadius,
           },
-          '& .Mui-focused .MuiOutlinedInput-notchedOutline': {
-            border: `2px solid ${alpha(theme.palette.divider, 0.5)} !important`,
-            borderRadius: AppConfig.defaultCSSRadius + 'px',
+          '& .Mui-focused .MuiPickersOutlinedInput-root': {
+            border: `0px solid ${alpha(theme.palette.divider, 0.5)} !important`,
+            borderRadius: AppConfig.defaultCSSRadius,
           },
         }}
         format="yyyy-MM-dd"
-        {...props}
+        {...restProps}
         label={undefined}
-      >
-        {children}
-      </DatePicker>
-    </div>
+      />
+    </Box>
   );
 }
 

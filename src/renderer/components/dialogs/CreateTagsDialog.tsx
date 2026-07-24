@@ -93,10 +93,11 @@ function CreateTagsDialog(props: Props) {
       onClick={onConfirm}
       data-tid="createTagsConfirmButton"
       variant="contained"
-      style={{
-        // @ts-ignore
-        WebkitAppRegion: 'no-drag',
-      }}
+      sx={
+        {
+          WebkitAppRegion: 'no-drag',
+        } as React.CSSProperties & { WebkitAppRegion?: string }
+      }
     >
       {t('core:ok')}
     </TsButton>
@@ -124,7 +125,7 @@ function CreateTagsDialog(props: Props) {
         onClose={onClose}
         actionSlot={okButton}
       />
-      <DialogContent style={{ minWidth: 300, paddingTop: 10 }}>
+      <DialogContent sx={{ minWidth: '300px', paddingTop: '10px' }}>
         <FormControl fullWidth={true} error={inputError}>
           <TsTextField
             error={inputError}

@@ -19,37 +19,41 @@
 import { Typography } from '@mui/material';
 import { ButtonProps } from '@mui/material/Button';
 import React from 'react';
-import TooltipTS from './Tooltip';
+import TsTooltip from './TsTooltip';
 
 export type TSButtonProps = ButtonProps & {
   title: string;
   tooltip?: string;
   menuButton?: React.ReactNode;
+  titleAdornment?: React.ReactNode;
 };
 
 function SidePanelTitle(props: TSButtonProps) {
-  const { title, tooltip, menuButton, ...rest } = props;
+  const { title, tooltip, menuButton, titleAdornment, ...rest } = props;
   return (
     <div
       style={{
         display: 'flex',
+        alignItems: 'center',
         paddingRight: 5, //AppConfig.defaultSpaceBetweenButtons,
       }}
     >
-      <TooltipTS title={tooltip}>
+      <TsTooltip title={tooltip}>
         <Typography
           variant="subtitle1"
-          style={{
+          sx={{
             textTransform: 'uppercase',
             fontSize: '0.9rem',
-            flex: 1,
-            paddingLeft: 7,
-            paddingTop: 12,
+            flex: titleAdornment ? 'none' : 1,
+            paddingLeft: '7px',
+            paddingTop: '12px',
           }}
         >
           {title}
         </Typography>
-      </TooltipTS>
+      </TsTooltip>
+      {titleAdornment}
+      {titleAdornment && <div style={{ flex: 1 }} />}
       {menuButton && menuButton}
     </div>
   );

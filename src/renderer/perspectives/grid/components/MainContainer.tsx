@@ -16,39 +16,42 @@
  *
  */
 
-import React, { useEffect, useRef, useState } from 'react';
-import { useSelector } from 'react-redux';
-import { GlobalHotKeys } from 'react-hotkeys';
-import { getDesktopMode, getKeyBindingObject } from '-/reducers/settings';
-import EntryTagMenu from '-/components/menus/EntryTagMenu';
+import FileSourceDnd from '-/components/FileSourceDnd';
 import TagDropContainer from '-/components/TagDropContainer';
-import GridCell from './GridCell';
-import MainToolbar from '-/perspectives/grid/components/MainToolbar';
-import SortingMenu from '-/perspectives/grid/components/SortingMenu';
-import GridOptionsMenu from '-/perspectives/grid/components/GridOptionsMenu';
+import AddTagToTagGroupDialog from '-/components/dialogs/AddTagToTagGroupDialog';
+import { useDeleteMultipleEntriesDialogContext } from '-/components/dialogs/hooks/useDeleteMultipleEntriesDialogContext';
+import { useMenuContext } from '-/components/dialogs/hooks/useMenuContext';
+import EntryTagMenu from '-/components/menus/EntryTagMenu';
+import { TabNames } from '-/hooks/EntryPropsTabsContextProvider';
+import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
+import { useDirectoryContentContext } from '-/hooks/useDirectoryContentContext';
+import { useIOActionsContext } from '-/hooks/useIOActionsContext';
+import { useNotificationContext } from '-/hooks/useNotificationContext';
+import { useOpenedEntryContext } from '-/hooks/useOpenedEntryContext';
+import { usePerspectiveActionsContext } from '-/hooks/usePerspectiveActionsContext';
+import { usePerspectiveSettingsContext } from '-/hooks/usePerspectiveSettingsContext';
+import { useSelectedEntriesContext } from '-/hooks/useSelectedEntriesContext';
+import { fileOperationsEnabled } from '-/perspectives/common/main-container';
+import { useReloadOnFocus } from '-/perspectives/common/useReloadOnFocus';
 import GridPagination from '-/perspectives/grid/components/GridPagination';
 import GridSettingsDialog from '-/perspectives/grid/components/GridSettingsDialog';
-import AddTagToTagGroupDialog from '-/components/dialogs/AddTagToTagGroupDialog';
-import { TS } from '-/tagspaces.namespace';
-import { Pro } from '-/pro';
-import Links from 'assets/links';
-import { defaultSettings } from '../index';
-import { fileOperationsEnabled } from '-/perspectives/common/main-container';
-import { openURLExternally } from '-/services/utils-io';
-import { useSortedDirContext } from '-/perspectives/grid/hooks/useSortedDirContext';
-import { useOpenedEntryContext } from '-/hooks/useOpenedEntryContext';
-import { useDirectoryContentContext } from '-/hooks/useDirectoryContentContext';
-import { useSelectedEntriesContext } from '-/hooks/useSelectedEntriesContext';
-import { usePerspectiveSettingsContext } from '-/hooks/usePerspectiveSettingsContext';
+import MainToolbar from '-/perspectives/grid/components/MainToolbar';
+import SortingMenu from '-/perspectives/grid/components/SortingMenu';
 import { GridCellsStyleContextProvider } from '-/perspectives/grid/hooks/GridCellsStyleProvider';
-import { useIOActionsContext } from '-/hooks/useIOActionsContext';
-import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
-import { usePerspectiveActionsContext } from '-/hooks/usePerspectiveActionsContext';
+import { useSortedDirContext } from '-/perspectives/grid/hooks/useSortedDirContext';
+import { Pro } from '-/pro';
+import { getDesktopMode, getKeyBindingObject } from '-/reducers/settings';
+import { openURLExternally } from '-/services/utils-io';
+import { TS } from '-/tagspaces.namespace';
 import useFirstRender from '-/utils/useFirstRender';
-import { useDeleteMultipleEntriesDialogContext } from '-/components/dialogs/hooks/useDeleteMultipleEntriesDialogContext';
-import { TabNames } from '-/hooks/EntryPropsTabsContextProvider';
-import FileSourceDnd from '-/components/FileSourceDnd';
-import { useMenuContext } from '-/components/dialogs/hooks/useMenuContext';
+import AppConfig from '-/AppConfig';
+import { Box } from '@mui/material';
+import Links from 'assets/links';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { GlobalHotKeys } from 'react-hotkeys';
+import { useTranslation } from 'react-i18next';
+import { useSelector } from 'react-redux';
+import GridCell from './GridCell';
 
 interface Props {}
 
@@ -58,10 +61,13 @@ function GridPerspective(props: Props) {
     openAddRemoveTagsDialog,
     openMoveCopyFilesDialog,
   } = useMenuContext();
-  const { openEntry, openPrevFile, openNextFile } = useOpenedEntryContext();
+  const { openEntry, openPrevFile, openNextFile, openedEntry, fileChanged } =
+    useOpenedEntryContext();
+  const { showNotification } = useNotificationContext();
+  const { t } = useTranslation();
   const { actions } = usePerspectiveActionsContext();
   const { showDirectories } = usePerspectiveSettingsContext();
-  const { findLocation } = useCurrentLocationContext();
+  const { currentLocation } = useCurrentLocationContext();
   const { openDirectory, currentDirectoryPath } = useDirectoryContentContext();
   const { openFileNatively, duplicateFile } = useIOActionsContext();
   const { openDeleteMultipleEntriesDialog } =
@@ -81,8 +87,6 @@ function GridPerspective(props: Props) {
     setSelectedEntries(selected);
   };
 
-  const ShareFilesDialog = Pro && Pro.UI ? Pro.UI.ShareFilesDialog : false;
-
   const [mouseX, setMouseX] = useState<number>(undefined);
   const [mouseY, setMouseY] = useState<number>(undefined);
   const selectedEntry = useRef<TS.FileSystemEntry>(undefined);
@@ -92,15 +96,17 @@ function GridPerspective(props: Props) {
     useState<null | HTMLElement>(null);
   const [sortingContextMenuAnchorEl, setSortingContextMenuAnchorEl] =
     useState<null | HTMLElement>(null);
-  const [optionsContextMenuAnchorEl, setOptionsContextMenuAnchorEl] =
-    useState<null | HTMLElement>(null);
+  // const [optionsContextMenuAnchorEl, setOptionsContextMenuAnchorEl] =
+  //   useState<null | HTMLElement>(null);
   const [isAddTagDialogOpened, setIsAddTagDialogOpened] =
     useState<TS.Tag>(undefined);
-  const [isShareFilesDialogOpened, setIsShareFilesDialogOpened] =
-    useState<boolean>(false);
   const [isGridSettingsDialogOpened, setIsGridSettingsDialogOpened] =
     useState<boolean>(false);
   const firstRender = useFirstRender();
+
+  useReloadOnFocus(currentLocation?.reloadOnFocus, () =>
+    openDirectory(currentDirectoryPath),
+  );
 
   useEffect(() => {
     if (!firstRender && actions && actions.length > 0) {
@@ -117,6 +123,10 @@ function GridPerspective(props: Props) {
   const handleSortBy = (handleSort) => {
     if (sortBy !== handleSort) {
       setSortBy(handleSort);
+      // Date-based sort defaults to descending (newest first) on first selection
+      if (handleSort === 'byDateModified') {
+        setOrderBy(false);
+      }
     } else {
       setOrderBy(!orderBy);
     }
@@ -130,10 +140,36 @@ function GridPerspective(props: Props) {
 
   const handleExportCsvMenu = () => {
     if (Pro) {
-      if (selectedEntries && selectedEntries.length > 0) {
-        Pro.exportAsCsv.ExportAsCsv(selectedEntries);
-      } else {
-        Pro.exportAsCsv.ExportAsCsv(sortedDirContent);
+      const entries =
+        selectedEntries && selectedEntries.length > 0
+          ? selectedEntries
+          : sortedDirContent;
+      const result = Pro.exportAsCsv.ExportAsCsv(entries);
+      // On native mobile the export is written via the filesystem (no browser
+      // download), so confirm start/completion explicitly — otherwise the tap
+      // looks like a no-op. On web/electron the browser download is feedback.
+      if (
+        AppConfig.isNativeMobile &&
+        result &&
+        typeof result.then === 'function'
+      ) {
+        showNotification(t('core:exportInProgress'));
+        result
+          .then((res: { path?: string; shared?: boolean }) => {
+            // iOS routes through the share sheet (res.shared) — the share UI is
+            // the confirmation, so only toast on the Android Download-folder save.
+            if (!res?.shared) {
+              showNotification(t('core:exportSuccessful'));
+            }
+            return true;
+          })
+          .catch((e: any) => {
+            showNotification(
+              t('core:exportError', { message: e?.message || e }),
+              'error',
+              true,
+            );
+          });
       }
     }
   };
@@ -152,38 +188,28 @@ function GridPerspective(props: Props) {
   };
 
   const openHelpWebPage = () => {
-    closeOptionsMenu();
     openURLExternally(Links.documentationLinks.defaultPerspective, true);
   };
 
   const openSettings = () => {
-    closeOptionsMenu();
     setIsGridSettingsDialogOpened(true);
   };
 
-  const handleTagMenu = (
-    event: React.ChangeEvent<HTMLInputElement>,
-    tag: TS.Tag,
-    entry: TS.FileSystemEntry,
-  ) => {
-    event.preventDefault();
-    event.stopPropagation();
+  const handleTagMenu = useCallback(
+    (
+      event: React.ChangeEvent<HTMLInputElement>,
+      tag: TS.Tag,
+      entry: TS.FileSystemEntry,
+    ) => {
+      event.preventDefault();
+      event.stopPropagation();
 
-    selectedTag.current = tag;
-    selectedEntry.current = entry;
-    setTagContextMenuAnchorEl(event.currentTarget);
-  };
-
-  const closeOptionsMenu = () => {
-    setOptionsContextMenuAnchorEl(null);
-  };
-
-  const openShareFilesDialog = () => {
-    const currentLocation = findLocation();
-    if (currentLocation && currentLocation.haveObjectStoreSupport()) {
-      setIsShareFilesDialogOpened(true);
-    }
-  };
+      selectedTag.current = tag;
+      selectedEntry.current = entry;
+      setTagContextMenuAnchorEl(event.currentTarget);
+    },
+    [],
+  );
 
   const keyMap = {
     nextDocument: keyBindings.nextDocument,
@@ -199,17 +225,6 @@ function GridPerspective(props: Props) {
     openFileExternally: keyBindings.openFileExternally,
     reloadDocument: keyBindings.reloadDocument,
   };
-
-  /*const onContextMenu = (event: React.MouseEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    setMouseX(event.clientX);
-    setMouseY(event.clientY);
-    if (selectedEntries.length > 0) {
-      setSelectedEntries([]);
-    }
-    perspectiveMode.current = false;
-    setDirContextMenuAnchorEl(event.currentTarget);
-  };*/
 
   const onClick = (event: React.MouseEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -228,8 +243,21 @@ function GridPerspective(props: Props) {
       }
     },
     addRemoveTags: () => {
-      if (selectedEntries && selectedEntries.length > 1) {
-        openAddRemoveTagsDialog();
+      if (selectedEntries && selectedEntries.length > 0) {
+        if (
+          openedEntry &&
+          fileChanged &&
+          selectedEntries &&
+          selectedEntries.some((e) => e.path === openedEntry.path)
+        ) {
+          showNotification(
+            `You can't edit tags, because '${openedEntry.path}' is opened for editing`,
+            'default',
+            true,
+          );
+          return;
+        }
+        openAddRemoveTagsDialog(selectedEntries);
       }
     },
     renameFile: () => {
@@ -239,7 +267,7 @@ function GridPerspective(props: Props) {
     },
     copyMoveSelectedEntries: () => {
       if (selectedEntries && selectedEntries.length > 0) {
-        openMoveCopyFilesDialog();
+        openMoveCopyFilesDialog(selectedEntries);
       }
     },
     openEntry: (e) => {
@@ -276,58 +304,53 @@ function GridPerspective(props: Props) {
     },
   };
 
-  const getCellContent = (
-    fsEntry: TS.FileSystemEntry,
-    selectedEntries: Array<TS.FileSystemEntry>,
-    index: number,
-    handleGridContextMenu: (
-      event: React.MouseEvent<HTMLDivElement>,
+  const getCellContent = useCallback(
+    (
       fsEntry: TS.FileSystemEntry,
-    ) => void,
-    handleGridCellClick,
-    handleGridCellDblClick,
-    isLast?: boolean,
-  ) => {
-    let selected = false;
-    if (
-      selectedEntries &&
-      selectedEntries.some((entry) => entry.path === fsEntry.path)
-    ) {
-      selected = true;
-    }
-
-    const selectionMode = selectedEntries.length > 1;
-    return (
-      <FileSourceDnd entry={fsEntry}>
-        <TagDropContainer entry={fsEntry}>
-          <GridCell
-            selected={selected}
-            fsEntry={fsEntry}
-            isLast={isLast}
-            selectionMode={selectionMode}
-            handleTagMenu={handleTagMenu}
-            handleGridContextMenu={(
-              event: React.MouseEvent<HTMLDivElement>,
-              fsEntry: TS.FileSystemEntry,
-            ) => {
-              setMouseX(event.clientX);
-              setMouseY(event.clientY);
-              handleGridContextMenu(event, fsEntry);
-            }}
-            handleGridCellDblClick={handleGridCellDblClick}
-            handleGridCellClick={handleGridCellClick}
-          />
-        </TagDropContainer>
-      </FileSourceDnd>
-    );
-  };
+      selected: boolean,
+      selectionMode: boolean,
+      index: number,
+      handleGridContextMenu: (
+        event: React.MouseEvent<HTMLDivElement>,
+        fsEntry: TS.FileSystemEntry,
+      ) => void,
+      handleGridCellClick,
+      handleGridCellDblClick,
+      isLast?: boolean,
+    ) => {
+      return (
+        <FileSourceDnd entry={fsEntry}>
+          <TagDropContainer entry={fsEntry}>
+            <GridCell
+              selected={selected}
+              fsEntry={fsEntry}
+              isLast={isLast}
+              selectionMode={selectionMode}
+              handleTagMenu={handleTagMenu}
+              handleGridContextMenu={(
+                event: React.MouseEvent<HTMLDivElement>,
+                fsEntry: TS.FileSystemEntry,
+              ) => {
+                setMouseX(event.clientX);
+                setMouseY(event.clientY);
+                handleGridContextMenu(event, fsEntry);
+              }}
+              handleGridCellDblClick={handleGridCellDblClick}
+              handleGridCellClick={handleGridCellClick}
+            />
+          </TagDropContainer>
+        </FileSourceDnd>
+      );
+    },
+    [handleTagMenu],
+  );
 
   return (
-    <div
-      style={{
-        height: '100%', // 'calc(100% - 47px)'
+    <Box
+      sx={{
+        height: '100%',
       }}
-      data-tid={defaultSettings.testID}
+      data-tid="gridPerspectiveContainer"
     >
       <MainToolbar
         prefixDataTID={'grid'}
@@ -335,7 +358,6 @@ function GridPerspective(props: Props) {
         handleSortingMenu={handleSortingMenu}
         handleExportCsvMenu={handleExportCsvMenu}
         openSettings={openSettings}
-        openShareFilesDialog={openShareFilesDialog}
       />
       <GlobalHotKeys
         keyMap={keyMap}
@@ -344,13 +366,10 @@ function GridPerspective(props: Props) {
       >
         <GridCellsStyleContextProvider>
           <GridPagination
-            //directories={sortedDirectories}
             desktopMode={desktopMode}
-            //files={sortedFiles}
             getCellContent={getCellContent}
             currentDirectoryPath={currentDirectoryPath}
             onClick={onClick}
-            selectedEntries={selectedEntries}
             setSelectedEntries={handleSetSelectedEntries}
             clearSelection={clearSelection}
           />
@@ -373,12 +392,6 @@ function GridPerspective(props: Props) {
           handleSortingMenu={handleSortingMenu}
         />
       )}
-      {isShareFilesDialogOpened && Pro && (
-        <ShareFilesDialog
-          open={isShareFilesDialogOpened}
-          onClose={() => setIsShareFilesDialogOpened(false)}
-        />
-      )}
       {/* TODO EntryTagMenu is used in TagSelect we cannot move confirm dialog from menu */}
       <EntryTagMenu
         anchorEl={tagContextMenuAnchorEl}
@@ -396,16 +409,7 @@ function GridPerspective(props: Props) {
           handleSortBy={handleSortBy}
         />
       )}
-      {Boolean(optionsContextMenuAnchorEl) && (
-        <GridOptionsMenu
-          open={Boolean(optionsContextMenuAnchorEl)}
-          onClose={closeOptionsMenu}
-          anchorEl={optionsContextMenuAnchorEl}
-          openHelpWebPage={openHelpWebPage}
-          openSettings={openSettings}
-        />
-      )}
-    </div>
+    </Box>
   );
 }
 export default GridPerspective;

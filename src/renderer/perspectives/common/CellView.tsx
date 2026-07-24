@@ -16,43 +16,51 @@
  *
  */
 
-import React from 'react';
-import { useSelector } from 'react-redux';
 import AppConfig from '-/AppConfig';
-import { TS } from '-/tagspaces.namespace';
-import { getDesktopMode, getEntryContainerTab } from '-/reducers/settings';
-import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
-import { useSelectedEntriesContext } from '-/hooks/useSelectedEntriesContext';
-import { usePerspectiveSettingsContext } from '-/hooks/usePerspectiveSettingsContext';
-import FileSourceDnd from '-/components/FileSourceDnd';
-import { NativeTypes } from 'react-dnd-html5-backend';
-import TargetFileBox from '-/components/TargetFileBox';
 import CustomDragLayer from '-/components/CustomDragLayer';
-import TargetMoveFileBox from '-/components/TargetMoveFileBox';
 import DragItemTypes from '-/components/DragItemTypes';
-import DragHandleIcon from '@mui/icons-material/DragHandleOutlined';
-import Typography from '@mui/material/Typography';
-import { useTheme } from '@mui/material/styles';
+import TargetFileBox from '-/components/TargetFileBox';
+import TargetMoveFileBox from '-/components/TargetMoveFileBox';
+import { useMenuContext } from '-/components/dialogs/hooks/useMenuContext';
+import { TabNames } from '-/hooks/EntryPropsTabsContextProvider';
+import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
+import { useDirectoryContentContext } from '-/hooks/useDirectoryContentContext';
+import { useIOActionsContext } from '-/hooks/useIOActionsContext';
+import { useNotificationContext } from '-/hooks/useNotificationContext';
+import { useOpenedEntryContext } from '-/hooks/useOpenedEntryContext';
+import { usePerspectiveSettingsContext } from '-/hooks/usePerspectiveSettingsContext';
+import { useSelectedEntriesContext } from '-/hooks/useSelectedEntriesContext';
+import { useSelectedEntriesRef } from '-/hooks/useSelectedEntriesRef';
 import {
   fileOperationsEnabled,
   folderOperationsEnabled,
 } from '-/perspectives/common/main-container';
 import { useSortedDirContext } from '-/perspectives/grid/hooks/useSortedDirContext';
-import { useOpenedEntryContext } from '-/hooks/useOpenedEntryContext';
-import { useIOActionsContext } from '-/hooks/useIOActionsContext';
-import { useDirectoryContentContext } from '-/hooks/useDirectoryContentContext';
-import { useNotificationContext } from '-/hooks/useNotificationContext';
-import { useEntryExistDialogContext } from '-/components/dialogs/hooks/useEntryExistDialogContext';
+import { getEntryContainerTab } from '-/reducers/settings';
 import i18n from '-/services/i18n';
-import { TabNames } from '-/hooks/EntryPropsTabsContextProvider';
-import { useMenuContext } from '-/components/dialogs/hooks/useMenuContext';
+import { TS } from '-/tagspaces.namespace';
+import DragHandleIcon from '@mui/icons-material/DragHandleOutlined';
+import { Box } from '@mui/material';
+import Typography from '@mui/material/Typography';
+import { useTheme } from '@mui/material/styles';
+import { extractContainingDirectoryPath } from '@tagspaces/tagspaces-common/paths';
+import React, { memo } from 'react';
+import { NativeTypes } from 'react-dnd-html5-backend';
+import { useSelector } from 'react-redux';
 
 interface Props {
   fsEntry: TS.FileSystemEntry;
   index: number;
+  // Per-cell selection state computed once by the parent (GridPagination /
+  // List MainContainer). Passing booleans here — instead of the full
+  // selectedEntries array — lets the surrounding `memo()` actually skip
+  // re-renders when the global selection changes for some other entry.
+  selected: boolean;
+  selectionMode: boolean;
   cellContent: (
     fsEntry: TS.FileSystemEntry,
-    selectedEntries: Array<TS.FileSystemEntry>,
+    selected: boolean,
+    selectionMode: boolean,
     index: number,
     handleGridContextMenu: (
       event: React.MouseEvent<HTMLDivElement>,
@@ -62,50 +70,41 @@ interface Props {
     handleGridCellDblClick,
     isLast?: boolean,
   ) => any;
+  orderTop?: (entry: TS.FileSystemEntry) => void;
+  orderBottom?: (entry: TS.FileSystemEntry) => void;
   isLast?: boolean;
 }
 
 function CellView(props: Props) {
-  const { fsEntry, index, cellContent, isLast } = props;
+  const {
+    fsEntry,
+    index,
+    cellContent,
+    selected,
+    selectionMode,
+    isLast,
+    orderTop,
+    orderBottom,
+  } = props;
   const { showDirectories, singleClickAction } =
     usePerspectiveSettingsContext();
   const theme = useTheme();
 
-  const { openMenu } = useMenuContext();
+  const { openFileMenu, openDirectoryMenu, openMoveCopyFilesDialog } =
+    useMenuContext();
   const { openEntryInternal, openedEntry } = useOpenedEntryContext();
   const { openDirectory } = useDirectoryContentContext();
-  const { moveFiles, openFileNatively } = useIOActionsContext();
+  const { openFileNatively } = useIOActionsContext();
   const { currentLocationId, currentLocation } = useCurrentLocationContext();
-  const {
-    selectedEntries,
-    setSelectedEntries,
-    addToSelection,
-    lastSelectedEntry,
-  } = useSelectedEntriesContext();
-  const { handleEntryExist, openEntryExistDialog } =
-    useEntryExistDialogContext();
+  // Read latest selectedEntries on demand from a ref so this memoised
+  // component does not re-render on every selection change. Click handlers
+  // (shift-range, ctrl-toggle, drag selection) read .current at gesture time.
+  const { setSelectedEntries, addToSelection, lastSelectedEntry } =
+    useSelectedEntriesContext();
+  const selectedEntriesRef = useSelectedEntriesRef();
   const { sortedDirContent, nativeDragModeEnabled } = useSortedDirContext();
   const { showNotification } = useNotificationContext();
-
-  const desktopMode = useSelector(getDesktopMode);
   const selectedTabName = useSelector(getEntryContainerTab);
-  // const fileSourceRef = useRef<HTMLDivElement | null>(null);
-
-  /*useEffect(() => {
-    const dragItem = fileSourceRef.current;
-    if (dragItem) {
-      const handleDragStart = (e) => {
-        e.preventDefault()
-        window.electronIO.ipcRenderer.startDrag(fsEntry.path);
-      };
-
-      dragItem.addEventListener('dragstart', handleDragStart);
-
-      return () => {
-        dragItem.removeEventListener('dragstart', handleDragStart);
-      };
-    }
-  }, [fileSourceRef.current]);*/
 
   if (!fsEntry || (!fsEntry.isFile && !showDirectories)) {
     return null;
@@ -114,6 +113,7 @@ function CellView(props: Props) {
   const handleGridContextMenu = (event, fsEntry: TS.FileSystemEntry) => {
     event.preventDefault();
     event.stopPropagation();
+    const selectedEntries = selectedEntriesRef.current ?? [];
     const isEntryExist = selectedEntries.some(
       (entry) => entry.uuid === fsEntry.uuid,
     );
@@ -128,7 +128,15 @@ function CellView(props: Props) {
       } else {
         addToSelection(fsEntry);
       }
-      openMenu(event, fsEntry);
+      if (fsEntry.isFile) {
+        const dirPath = extractContainingDirectoryPath(
+          fsEntry.path,
+          currentLocation?.getDirSeparator(),
+        );
+        openFileMenu(event, dirPath, orderTop, orderBottom);
+      } else {
+        openDirectoryMenu(event, fsEntry.path, true);
+      }
     }
   };
 
@@ -136,7 +144,6 @@ function CellView(props: Props) {
     if (fsEntry.isFile) {
       setSelectedEntries([fsEntry]);
       openEntryInternal(fsEntry);
-      //openEntry(fsEntry.path);
     } else {
       console.log('Handle Grid cell db click, selected path : ', fsEntry.path);
       openDirectory(fsEntry.path);
@@ -150,6 +157,7 @@ function CellView(props: Props) {
 
   const handleGridCellClick = (event, fsEntry: TS.FileSystemEntry) => {
     const selectHelperKey = AppConfig.isMacLike ? event.metaKey : event.ctrlKey;
+    const selectedEntries = selectedEntriesRef.current ?? [];
     if (event.shiftKey) {
       let lastSelectedIndex = -1;
       if (lastSelectedEntry) {
@@ -165,7 +173,6 @@ function CellView(props: Props) {
       }
 
       let entriesToSelect;
-      // console.log('lastSelectedIndex: ' + lastSelectedIndex + '  currentSelectedIndex: ' + currentSelectedIndex);
       if (currentSelectedIndex > lastSelectedIndex) {
         entriesToSelect = sortedDirContent.slice(
           lastSelectedIndex,
@@ -214,7 +221,7 @@ function CellView(props: Props) {
             openedEntry.isFile ||
             selectedTabName !== TabNames.aiTab
           ) {
-            // dont open file if chat mode is enabled
+            // do not open file if chat mode is enabled
             openEntryInternal(fsEntry);
           }
         } else if (singleClickAction === 'openExternal') {
@@ -226,79 +233,83 @@ function CellView(props: Props) {
 
   const handleFileMoveDrop = (item, monitor) => {
     if (currentLocation?.isReadOnly) {
-      showNotification(
-        'Importing files is disabled because the location is in read-only mode.',
-        'error',
-        true,
-      ); //i18n.t('core:dndDisabledReadOnlyMode')
+      showNotification(i18n.t('core:dndDisabledReadOnlyMode'), 'error', true);
       return;
     }
     if (item) {
       const { entry } = item;
-      let arrPath;
+      const selectedEntries = selectedEntriesRef.current ?? [];
+      let arrEntries;
       if (
-        selectedEntries &&
         selectedEntries.length > 0 &&
         selectedEntries.some((e) => e.path === entry.path)
       ) {
-        const arrSelected = selectedEntries
-          .map((entry) => entry.path)
-          // remove target folder selection
-          .filter((epath) => epath !== item.targetPath);
+        const arrSelected = selectedEntries.filter(
+          (e) => e.path !== item.targetPath,
+        );
         if (arrSelected.length > 0) {
-          arrPath = arrSelected;
+          arrEntries = arrSelected;
         } else {
-          arrPath = [entry.path];
+          arrEntries = [entry];
         }
       } else if (entry) {
-        arrPath = [entry.path];
+        arrEntries = [entry];
       }
-      console.log('Dropped files: ' + JSON.stringify(arrPath));
-      handleEntryExist(selectedEntries, item.targetPath).then((exist) => {
-        if (exist) {
-          openEntryExistDialog(exist, () => {
-            moveFiles(arrPath, item.targetPath, currentLocationId);
-          });
-        } else {
-          moveFiles(arrPath, item.targetPath, currentLocationId);
-        }
-      });
+      openMoveCopyFilesDialog(arrEntries, item.targetPath, currentLocationId);
     }
   };
 
   const key = fsEntry.path;
 
   if (fsEntry.isFile) {
+    // Drag-out to Finder/Explorer goes through this small handle: a separate
+    // native draggable element that calls Electron's webContents.startDrag
+    // with preventDefault, so the OS drag is the only thing the user sees.
+    // The card body is wrapped by FileSourceDnd → react-dnd, which handles
+    // in-app DnD (Move/Copy dialog on folder drop). The two stacks can't
+    // share one gesture, hence the dedicated handle.
+    const showNativeDragHandle =
+      nativeDragModeEnabled &&
+      AppConfig.isElectron &&
+      currentLocation &&
+      !currentLocation.haveObjectStoreSupport() &&
+      !currentLocation.haveWebDavSupport();
     return (
       <div>
-        {nativeDragModeEnabled &&
-          AppConfig.isElectron &&
-          currentLocation &&
-          !currentLocation.haveObjectStoreSupport() && (
-            <div
-              style={{
-                display: 'flex',
-              }}
-              draggable="true"
-              onDragStart={(e) => {
-                e.preventDefault();
-                window.electronIO.ipcRenderer.startDrag(fsEntry.path);
-              }}
+        {showNativeDragHandle && (
+          <Box
+            sx={{
+              display: 'flex',
+            }}
+            draggable="true"
+            onDragStart={(e) => {
+              e.preventDefault();
+              const selectedNow = selectedEntriesRef.current ?? [];
+              const dragSelection =
+                selectedNow.length > 1 &&
+                selectedNow.some((s) => s.path === fsEntry.path)
+                  ? selectedNow
+                      .filter((s) => s.isFile && s.path)
+                      .map((s) => s.path)
+                  : [fsEntry.path];
+              window.electronIO.ipcRenderer.startDrag(
+                dragSelection.length === 1 ? dragSelection[0] : dragSelection,
+              );
+            }}
+          >
+            <DragHandleIcon sx={{ color: theme.palette.text.primary }} />
+            <Typography
+              variant="caption"
+              sx={{ alignSelf: 'center', opacity: 0.5, marginLeft: '5px' }}
             >
-              <DragHandleIcon style={{ color: theme.palette.text.primary }} />
-              <Typography
-                color="textSecondary"
-                variant="caption"
-                style={{ alignSelf: 'center' }}
-              >
-                {i18n.t('dragOutsideApp')}
-              </Typography>
-            </div>
-          )}
-
+              {i18n.t('core:dragOutsideApp')}
+            </Typography>
+          </Box>
+        )}
         {cellContent(
           fsEntry,
-          selectedEntries,
+          selected,
+          selectionMode,
           index,
           handleGridContextMenu,
           handleGridCellClick,
@@ -311,8 +322,8 @@ function CellView(props: Props) {
   const { FILE } = NativeTypes;
 
   return (
-    <div
-      style={{
+    <Box
+      sx={{
         position: 'relative',
       }}
       key={key}
@@ -326,7 +337,8 @@ function CellView(props: Props) {
         >
           {cellContent(
             fsEntry,
-            selectedEntries,
+            selected,
+            selectionMode,
             index,
             handleGridContextMenu,
             handleGridCellClick,
@@ -335,8 +347,8 @@ function CellView(props: Props) {
           )}
         </TargetMoveFileBox>
       </TargetFileBox>
-    </div>
+    </Box>
   );
 }
 
-export default CellView;
+export default memo(CellView);

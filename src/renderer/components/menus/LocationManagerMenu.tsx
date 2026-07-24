@@ -20,47 +20,69 @@ import AppConfig from '-/AppConfig';
 import {
   CloseIcon,
   ExportIcon,
+  FilterIcon,
   HelpIcon,
   ImportIcon,
   LocalLocationIcon,
   MoreMenuIcon,
   UpdateIndexIcon,
 } from '-/components/CommonIcons';
-import { ProLabel } from '-/components/HelperComponents';
 import TsIconButton from '-/components/TsIconButton';
 import TsMenuList from '-/components/TsMenuList';
-import { useLinkDialogContext } from '-/components/dialogs/hooks/useLinkDialogContext';
 import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
 import { useLocationIndexContext } from '-/hooks/useLocationIndexContext';
 import { Pro } from '-/pro';
+import { isDesktopMode } from '-/reducers/settings';
 import { openURLExternally } from '-/services/utils-io';
+import { TS } from '-/tagspaces.namespace';
 import { Divider } from '@mui/material';
 import ListItemIcon from '@mui/material/ListItemIcon';
 import ListItemText from '@mui/material/ListItemText';
 import Menu from '@mui/material/Menu';
 import MenuItem from '@mui/material/MenuItem';
 import Links from 'assets/links';
-import { useState } from 'react';
+import { useContext, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useSelector } from 'react-redux';
 import SidePanelTitle from '../SidePanelTitle';
 
 interface Props {
   exportLocations: () => void;
   importLocations: () => void;
   showCreateLocationDialog: () => void;
+  toggleFilter: () => void;
+  filterActive: boolean;
 }
 
 function LocationManagerMenu(props: Props) {
-  const { exportLocations, importLocations, showCreateLocationDialog } = props;
+  const {
+    exportLocations,
+    importLocations,
+    showCreateLocationDialog,
+    toggleFilter,
+    filterActive,
+  } = props;
   const { t } = useTranslation();
+  const desktopMode = useSelector(isDesktopMode);
 
   const { createLocationsIndexes } = useLocationIndexContext();
   const { closeAllLocations } = useCurrentLocationContext();
-  const { openLinkDialog } = useLinkDialogContext();
+  //const { openLinkDialog } = useLinkDialogContext();
   const [locationManagerMenuAnchorEl, setLocationManagerMenuAnchorEl] =
     useState<null | HTMLElement>(null);
+  const workSpacesContext = Pro?.contextProviders?.WorkSpacesContext
+    ? useContext<TS.WorkSpacesContextData>(
+        Pro.contextProviders.WorkSpacesContext,
+      )
+    : undefined;
+
+  const currentWorkSpace =
+    workSpacesContext && workSpacesContext.getCurrentWorkSpace
+      ? workSpacesContext?.getCurrentWorkSpace()
+      : undefined;
+
   const menuItems = [];
-  if (!AppConfig.locationsReadOnly) {
+  if (!AppConfig.ExtLocationsReadOnly) {
     menuItems.push(
       <MenuItem
         key="locationManagerMenuCreateLocation"
@@ -76,37 +98,28 @@ function LocationManagerMenu(props: Props) {
         <ListItemText primary={t('core:createLocationTitle')} />
       </MenuItem>,
     );
+    menuItems.push(<Divider key={`divider-${menuItems.length}`} />);
   }
 
-  if (!AppConfig.locationsReadOnly) {
-    // https://trello.com/c/z6ESlqxz/697-exports-to-json-or-csv-do-not-work-on-android
-    menuItems.push(<Divider key="divider1" />);
+  // Export/Import locations are free features available in every build.
+  menuItems.push(
+    <MenuItem
+      key="locationManagerMenuExportLocationsTID"
+      data-tid="locationManagerMenuExportLocationsTID"
+      onClick={() => {
+        setLocationManagerMenuAnchorEl(null);
+        exportLocations();
+      }}
+    >
+      <ListItemIcon>
+        <ExportIcon />
+      </ListItemIcon>
+      <ListItemText primary={t('core:exportLocationTitle')} />
+    </MenuItem>,
+  );
+  if (!AppConfig.ExtLocationsReadOnly) {
     menuItems.push(
       <MenuItem
-        disabled={!Pro}
-        key="locationManagerMenuExportLocationsTID"
-        data-tid="locationManagerMenuExportLocationsTID"
-        onClick={() => {
-          setLocationManagerMenuAnchorEl(null);
-          exportLocations();
-        }}
-      >
-        <ListItemIcon>
-          <ExportIcon />
-        </ListItemIcon>
-        <ListItemText
-          primary={
-            <>
-              {t('core:exportLocationTitle')}
-              <ProLabel />
-            </>
-          }
-        />
-      </MenuItem>,
-    );
-    menuItems.push(
-      <MenuItem
-        disabled={!Pro}
         key="locationManagerMenuImportLocations"
         data-tid="locationManagerMenuImportLocationsTID"
         onClick={() => {
@@ -117,17 +130,10 @@ function LocationManagerMenu(props: Props) {
         <ListItemIcon>
           <ImportIcon />
         </ListItemIcon>
-        <ListItemText
-          primary={
-            <>
-              {t('core:importLocationTitle')}
-              <ProLabel />
-            </>
-          }
-        />
+        <ListItemText primary={t('core:importLocationTitle')} />
       </MenuItem>,
     );
-    menuItems.push(<Divider key="divider2" />);
+    menuItems.push(<Divider key={`divider-${menuItems.length}`} />);
   }
 
   menuItems.push(
@@ -152,7 +158,7 @@ function LocationManagerMenu(props: Props) {
       data-tid="updateAllLocationIndexes"
       onClick={() => {
         setLocationManagerMenuAnchorEl(null);
-        createLocationsIndexes();
+        createLocationsIndexes(true, currentWorkSpace);
       }}
     >
       <ListItemIcon>
@@ -161,7 +167,7 @@ function LocationManagerMenu(props: Props) {
       <ListItemText primary={t('core:updateAllLocationIndexes')} />
     </MenuItem>,
   );
-  menuItems.push(<Divider key="divider3" />);
+  menuItems.push(<Divider key={`divider-${menuItems.length}`} />);
   menuItems.push(
     <MenuItem
       key="locationManagerMenuHelp"
@@ -182,6 +188,33 @@ function LocationManagerMenu(props: Props) {
     <>
       <SidePanelTitle
         title={t('core:locationManager')}
+        titleAdornment={
+          desktopMode ? (
+            <TsIconButton
+              size="small"
+              data-tid="locationManagerFilterTID"
+              tooltip={t('core:filterLocations')}
+              onClick={toggleFilter}
+              sx={{
+                marginTop: '8px',
+                marginLeft: '6px',
+                width: 18,
+                height: 18,
+                padding: '2px',
+                borderRadius: '4px',
+                border: '1px dashed',
+                borderColor: filterActive ? 'text.primary' : 'text.disabled',
+                color: filterActive ? 'text.primary' : 'text.disabled',
+                '&:hover': {
+                  borderColor: 'text.primary',
+                  color: 'text.primary',
+                },
+              }}
+            >
+              <FilterIcon sx={{ fontSize: 13 }} />
+            </TsIconButton>
+          ) : null
+        }
         menuButton={
           <TsIconButton
             data-tid="locationManagerMenu"

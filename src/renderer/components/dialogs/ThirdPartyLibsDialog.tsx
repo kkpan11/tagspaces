@@ -21,6 +21,7 @@ import TsButton from '-/components/TsButton';
 import TsDialogActions from '-/components/dialogs/components/TsDialogActions';
 import TsDialogTitle from '-/components/dialogs/components/TsDialogTitle';
 import ThirdPartyLibs from '-/third-party.txt';
+import { printText } from '-/utils/print';
 import Dialog from '@mui/material/Dialog';
 import DialogContent from '@mui/material/DialogContent';
 import Paper from '@mui/material/Paper';
@@ -40,10 +41,11 @@ function ThirdPartyLibsDialog(props: Props) {
   const smallScreen = useMediaQuery(theme.breakpoints.down('md'));
   const okButton = (
     <TsButton
-      style={{
-        // @ts-ignore
-        WebkitAppRegion: 'no-drag',
-      }}
+      sx={
+        {
+          WebkitAppRegion: 'no-drag',
+        } as React.CSSProperties & { WebkitAppRegion?: string }
+      }
       data-tid="confirmThirdPartyLibsDialog"
       onClick={onClose}
     >
@@ -71,7 +73,22 @@ function ThirdPartyLibsDialog(props: Props) {
           {ThirdPartyLibs}
         </pre>
       </DialogContent>
-      {!smallScreen && <TsDialogActions>{okButton}</TsDialogActions>}
+      {!smallScreen && (
+        <TsDialogActions>
+          {/* Left-aligned (marginRight:auto) so the user can save the notices
+              as a PDF via the OS print dialog. Desktop only — this actions row
+              is hidden on small screens, where WebView printing is unreliable
+              anyway. */}
+          <TsButton
+            data-tid="printThirdPartyLibsDialog"
+            onClick={() => printText(ThirdPartyLibs, t('core:thirdPartyLibs'))}
+            sx={{ marginRight: 'auto' }}
+          >
+            {t('core:print')}
+          </TsButton>
+          {okButton}
+        </TsDialogActions>
+      )}
     </Dialog>
   );
 }

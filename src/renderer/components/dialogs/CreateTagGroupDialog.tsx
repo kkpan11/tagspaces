@@ -18,14 +18,22 @@
 
 import AppConfig from '-/AppConfig';
 import DraggablePaper from '-/components/DraggablePaper';
+import { ProLabel } from '-/components/HelperComponents';
+import InfoIcon from '-/components/InfoIcon';
 import Tag from '-/components/Tag';
+import TransparentBackground from '-/components/TransparentBackground';
 import TsButton from '-/components/TsButton';
 import TsSelect from '-/components/TsSelect';
 import TsTextField from '-/components/TsTextField';
+import ColorPickerDialog from '-/components/dialogs/ColorPickerDialog';
 import TsDialogActions from '-/components/dialogs/components/TsDialogActions';
+import TsDialogTitle from '-/components/dialogs/components/TsDialogTitle';
+import WorkSpacesDropdown from '-/components/dialogs/components/WorkSpacesDropdown';
 import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
+import { Pro } from '-/pro';
 import { getSaveTagInLocation } from '-/reducers/settings';
 import { TS } from '-/tagspaces.namespace';
+import { useTheme } from '@mui/material';
 import Dialog from '@mui/material/Dialog';
 import DialogContent from '@mui/material/DialogContent';
 import FormControl from '@mui/material/FormControl';
@@ -34,15 +42,17 @@ import ListItem from '@mui/material/ListItem';
 import ListItemText from '@mui/material/ListItemText';
 import MenuItem from '@mui/material/MenuItem';
 import Paper from '@mui/material/Paper';
-import useTheme from '@mui/material/styles/useTheme';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import { getUuid } from '@tagspaces/tagspaces-common/utils-io';
-import React, { ChangeEvent, useReducer, useRef, useState } from 'react';
+import React, {
+  ChangeEvent,
+  useContext,
+  useReducer,
+  useRef,
+  useState,
+} from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSelector } from 'react-redux';
-import TransparentBackground from '../TransparentBackground';
-import ColorPickerDialog from './ColorPickerDialog';
-import TsDialogTitle from './components/TsDialogTitle';
 
 interface Props {
   open: boolean;
@@ -56,6 +66,7 @@ const defaultTagGroupLocation = 'TAG_LIBRARY';
 
 function CreateTagGroupDialog(props: Props) {
   const { t } = useTranslation();
+  const { open, onClose, createTagGroup } = props;
   const { locations } = useCurrentLocationContext();
   //const locations = useSelector(getLocations);
   const saveTagsInLocation = useSelector(getSaveTagInLocation);
@@ -70,10 +81,16 @@ function CreateTagGroupDialog(props: Props) {
   const color = useRef<string>(props.color);
   const textcolor = useRef<string>(props.textcolor);
   const locationId = useRef<string>(defaultTagGroupLocation);
+  const [workSpaceId, setWorkSpaceId] = useState<string>('');
   // eslint-disable-next-line no-unused-vars
   const [ignored, forceUpdate] = useReducer((x) => x + 1, 0);
 
-  const { open, onClose, createTagGroup } = props;
+  const workSpacesContext = Pro?.contextProviders?.WorkSpacesContext
+    ? useContext<TS.WorkSpacesContextData>(
+        Pro.contextProviders.WorkSpacesContext,
+      )
+    : undefined;
+  const workSpaces = workSpacesContext?.getWorkSpaces() ?? [];
 
   const handleTagGroupTitleChange = (
     event: React.ChangeEvent<HTMLInputElement>,
@@ -120,6 +137,7 @@ function CreateTagGroupDialog(props: Props) {
         color: color.current,
         textcolor: textcolor.current,
         locationId: lId,
+        ...(workSpaceId && { workSpaceId }),
         children: [],
       });
       onClose();
@@ -151,10 +169,11 @@ function CreateTagGroupDialog(props: Props) {
       onClick={onConfirm}
       variant="contained"
       data-tid="createTagGroupConfirmButton"
-      style={{
-        // @ts-ignore
-        WebkitAppRegion: 'no-drag',
-      }}
+      style={
+        {
+          WebkitAppRegion: 'no-drag',
+        } as React.CSSProperties & { WebkitAppRegion?: string }
+      }
     >
       {t('core:ok')}
     </TsButton>
@@ -184,7 +203,9 @@ function CreateTagGroupDialog(props: Props) {
         onClose={onClose}
         actionSlot={okButton}
       />
-      <DialogContent style={{ paddingTop: 10, minWidth: 300 }}>
+      <DialogContent
+        sx={{ overflowY: 'visible', overflowX: 'hidden', minWidth: '300px' }}
+      >
         <FormControl fullWidth={true} error={inputError}>
           <TsTextField
             error={inputError}
@@ -200,10 +221,17 @@ function CreateTagGroupDialog(props: Props) {
           )}
         </FormControl>
         {saveTagsInLocation && (
-          <FormControl fullWidth={true} error={inputError}>
+          <ListItem sx={{ paddingLeft: 0, paddingRight: 0 }}>
             <TsSelect
               data-tid="tagGroupLocationTID"
-              label={t('core:tagGroupLocation')}
+              disabled={!Pro}
+              label={
+                <>
+                  {t('core:tagGroupLocation')}
+                  <InfoIcon tooltip={t('tagGroupLocationHelp')} />
+                  <ProLabel />
+                </>
+              }
               defaultValue={defaultTagGroupLocation}
               onChange={(event: ChangeEvent<HTMLInputElement>) => {
                 locationId.current = event.target.value;
@@ -214,7 +242,7 @@ function CreateTagGroupDialog(props: Props) {
               <MenuItem
                 key={defaultTagGroupLocation}
                 value={defaultTagGroupLocation}
-                data-tid={'tagLibraryTID'}
+                data-tid="tagLibraryTID"
               >
                 {t('tagLibrary')}
               </MenuItem>
@@ -228,16 +256,34 @@ function CreateTagGroupDialog(props: Props) {
                 </MenuItem>
               ))}
             </TsSelect>
-          </FormControl>
+          </ListItem>
         )}
-        <ListItem style={{ paddingLeft: 0, paddingRight: 0 }}>
+        <ListItem sx={{ paddingLeft: 0, paddingRight: 0 }}>
+          <WorkSpacesDropdown
+            disabled={!Pro}
+            dataTid="createTgWorkspaceTID"
+            workSpaceId={workSpaceId}
+            setWorkSpaceId={setWorkSpaceId}
+            workSpaces={workSpaces}
+            label={
+              <>
+                {t('core:workspace')}
+                <ProLabel />
+              </>
+            }
+            onOpenNewWorkspace={() =>
+              workSpacesContext.openNewWorkspaceDialog()
+            }
+          />
+        </ListItem>
+        <ListItem sx={{ paddingLeft: 0, paddingRight: 0 }}>
           <ListItemText primary={t('core:tagBackgroundColor')} />
           <TransparentBackground>
             <TsButton
               onClick={toggleDefaultTagBackgroundColorPicker}
               data-tid="createTagGroupBackgroundColor"
-              style={{
-                height: 30,
+              sx={{
+                height: '30px',
                 borderRadius: AppConfig.defaultCSSRadius,
                 borderWidth: 1,
                 borderStyle: 'solid',
@@ -259,14 +305,14 @@ function CreateTagGroupDialog(props: Props) {
             />
           )}
         </ListItem>
-        <ListItem style={{ paddingLeft: 0, paddingRight: 0 }}>
+        <ListItem sx={{ paddingLeft: 0, paddingRight: 0 }}>
           <ListItemText primary={t('core:tagForegroundColor')} />
           <TransparentBackground>
             <TsButton
               onClick={toggleDefaultTagTextColorPicker}
               data-tid="createTagGroupForegroundColor"
-              style={{
-                height: 30,
+              sx={{
+                height: '30px',
                 borderRadius: AppConfig.defaultCSSRadius,
                 borderWidth: 1,
                 borderStyle: 'solid',
@@ -288,7 +334,7 @@ function CreateTagGroupDialog(props: Props) {
             />
           )}
         </ListItem>
-        <ListItem style={{ paddingLeft: 0, paddingRight: 0 }}>
+        <ListItem sx={{ paddingLeft: 0, paddingRight: 0 }}>
           <ListItemText primary={t('core:tagPreview')} />
           <Tag
             backgroundColor={color.current}

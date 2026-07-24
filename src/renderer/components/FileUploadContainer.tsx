@@ -16,7 +16,14 @@
  *
  */
 
-import React, {
+import AppConfig from '-/AppConfig';
+import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
+import { useEditedEntryMetaContext } from '-/hooks/useEditedEntryMetaContext';
+import { useIOActionsContext } from '-/hooks/useIOActionsContext';
+import { actions as AppActions, AppDispatch } from '-/reducers/app';
+import { takePicture } from '-/services/utils-io';
+import { TS } from '-/tagspaces.namespace';
+import {
   ChangeEvent,
   forwardRef,
   Ref,
@@ -24,13 +31,6 @@ import React, {
   useRef,
 } from 'react';
 import { useDispatch } from 'react-redux';
-import { TS } from '-/tagspaces.namespace';
-import AppConfig from '-/AppConfig';
-import { actions as AppActions, AppDispatch } from '-/reducers/app';
-import { useIOActionsContext } from '-/hooks/useIOActionsContext';
-import { useEditedEntryMetaContext } from '-/hooks/useEditedEntryMetaContext';
-import { useFileUploadDialogContext } from '-/components/dialogs/hooks/useFileUploadDialogContext';
-import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
 
 interface Props {
   id?: string;
@@ -39,6 +39,9 @@ interface Props {
 
 export interface FileUploadContainerRef {
   onFileUpload: (directoryPath: string) => void;
+  onCameraCapture: (directoryPath: string) => void;
+  onMetaUpload: () => void;
+  setMetaUpload: (mUpload: () => void) => void;
 }
 
 const FileUploadContainer = forwardRef(
@@ -46,65 +49,62 @@ const FileUploadContainer = forwardRef(
     const dispatch: AppDispatch = useDispatch();
     const { id } = props;
     const { findLocalLocation } = useCurrentLocationContext();
-    const { openFileUploadDialog } = useFileUploadDialogContext();
-    const { uploadFilesAPI } = useIOActionsContext();
+    //const { openFileUploadDialog } = useFileUploadDialogContext();
+    const { uploadFilesAPI, uploadMeta } = useIOActionsContext();
     const { setReflectMetaActions } = useEditedEntryMetaContext();
     const directoryPath = useRef<string>(undefined);
+    const metaUpload = useRef<() => void>(undefined);
 
     const onUploadProgress = (progress, abort, fileName) => {
       dispatch(AppActions.onUploadProgress(progress, abort, fileName));
     };
 
     useImperativeHandle(ref, () => ({
+      onMetaUpload() {
+        if (metaUpload.current) {
+          metaUpload.current();
+        }
+      },
+      setMetaUpload(mUpload: () => void) {
+        metaUpload.current = mUpload;
+      },
       onFileUpload(dirPath: string) {
         directoryPath.current = dirPath;
-        /* if (AppConfig.isCordovaAndroid) {
-          PlatformIO.selectFileDialog()
-            .then(file => {
-              console.log('file', file.uri);
-              return [file.uri];
-            })
-            .then(arrFiles => {
-              props
-                .uploadFiles(
-                  arrFiles,
-                  props.directoryPath,
-                  props.onUploadProgress
-                )
-                .then(fsEntries => {
-                  props.reflectCreateEntries(fsEntries);
-                  return true;
-                })
-                .catch(error => {
-                  console.log('uploadFiles', error);
-                });
-              props.toggleUploadDialog();
-              return true;
-            })
-            .catch(error => {
-              console.log('uploadFiles', error);
-            });
-        } else { */
         fileInput.current.click();
-        // }
+      },
+      // Capacitor-only: the WebView file chooser can't open the camera, so this
+      // captures a photo via the native camera plugin and runs it through the
+      // same upload pipeline as a picked file.
+      onCameraCapture(dirPath: string) {
+        directoryPath.current = dirPath;
+        takePicture()
+          .then((file) => {
+            if (file) {
+              uploadFiles([file]);
+            }
+            return true;
+          })
+          .catch((error) => {
+            console.log('takePicture', error);
+          });
       },
     }));
-
-    /* if (AppConfig.isCordovaAndroid) {
-      return null;
-    } */
 
     const fileInput = useRef<HTMLInputElement>(null);
 
     function handleFileInputChange(selection: ChangeEvent<HTMLInputElement>) {
       // console.log("Selected File: "+JSON.stringify(selection.currentTarget.files[0]));
       // const file = selection.currentTarget.files[0];
+      uploadFiles(Array.from(selection.currentTarget.files));
+    }
+
+    function uploadFiles(selectedFiles: Array<File>) {
       dispatch(AppActions.resetProgress());
-      openFileUploadDialog();
+      // openFileUploadDialog();
       const localLocation = findLocalLocation();
       const sourceLocationId = localLocation ? localLocation.uuid : undefined;
 
-      let files = Array.from(selection.currentTarget.files);
+      let files = selectedFiles;
       if (AppConfig.isElectron) {
         files = files.map((file) => {
           if (!file.path) {
@@ -117,8 +117,8 @@ const FileUploadContainer = forwardRef(
         files,
         directoryPath.current,
         onUploadProgress,
-        true,
-        true,
+        false,
+        false,
         undefined,
         sourceLocationId,
       )
@@ -133,6 +133,15 @@ const FileUploadContainer = forwardRef(
         .catch((error) => {
           console.log('uploadFiles', error);
         });
+      metaUpload.current = () =>
+        uploadMeta(
+          files.map((f) => f.path),
+          directoryPath.current,
+          onUploadProgress,
+          false,
+          undefined,
+          sourceLocationId,
+        );
     }
     const inputId = id || `id-${Math.random().toString(36).substr(2, 9)}`;
 

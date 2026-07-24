@@ -27,15 +27,15 @@ import {
   PullModelResponse,
 } from '-/components/chat/ChatTypes';
 import {
-  deleteOllamaModel,
-  getOllamaModels,
-  newOllamaMessage,
-  pullOllamaModel,
-} from '-/components/chat/OllamaClient';
+  AiClient,
+  checkProviderAlive as checkAiProviderAlive,
+  getAiClient,
+} from '-/components/chat/AiClient';
 import { generateOptionType } from '-/components/dialogs/hooks/AiGenerationDialogContextProvider';
 import { useFileUploadDialogContext } from '-/components/dialogs/hooks/useFileUploadDialogContext';
 import { TabNames } from '-/hooks/EntryPropsTabsContextProvider';
 import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
+import { useEditedTagLibraryContext } from '-/hooks/useEditedTagLibraryContext';
 import { useIOActionsContext } from '-/hooks/useIOActionsContext';
 import { useNotificationContext } from '-/hooks/useNotificationContext';
 import { useOpenedEntryContext } from '-/hooks/useOpenedEntryContext';
@@ -51,7 +51,7 @@ import {
   getTagColor,
   getTagTextColor,
 } from '-/reducers/settings';
-import { getTagColors, getTagLibrary } from '-/services/taglibrary-utils';
+import { getTagColors } from '-/services/taglibrary-utils';
 import { extractPDFcontent } from '-/services/thumbsgenerator';
 import { toBase64Image } from '-/services/utils-io';
 import {
@@ -60,6 +60,7 @@ import {
   getZodTags,
 } from '-/services/zodObjects';
 import { TS } from '-/tagspaces.namespace';
+import useFirstRender from '-/utils/useFirstRender';
 import { formatDateTime } from '@tagspaces/tagspaces-common/misc';
 import {
   extractFileExtension,
@@ -71,9 +72,10 @@ import {
   loadJSONString,
 } from '@tagspaces/tagspaces-common/utils-io';
 import { format } from 'date-fns';
-import { ChatRequest, ModelResponse, Ollama } from 'ollama';
+import { ChatRequest, ModelResponse } from 'ollama';
 import React, {
   createContext,
+  useContext,
   useEffect,
   useMemo,
   useReducer,
@@ -82,7 +84,6 @@ import React, {
 import { useTranslation } from 'react-i18next';
 import { useDispatch, useSelector } from 'react-redux';
 import { zodToJsonSchema } from 'zod-to-json-schema';
-import useFirstRender from '-/utils/useFirstRender';
 
 /*export type TimelineItem = {
   request: string;
@@ -90,11 +91,9 @@ import useFirstRender from '-/utils/useFirstRender';
 };*/
 
 type ChatData = {
-  //timelineItems: TimelineItem[];
   models: ModelResponse[];
   images: ChatImage[];
   currentModel: ModelResponse;
-  //openedEntryModel: ModelResponse;
   chatHistoryItems: ChatItem[];
   isTyping: boolean;
   checkOllamaModels: () => Promise<boolean>;
@@ -109,6 +108,7 @@ type ChatData = {
   changeCurrentModel: (
     newModelName: string,
     confirmCallback?: () => void,
+    provider?: AIProvider,
   ) => Promise<boolean>;
   getModel: (modelName: string) => Promise<ModelResponse>;
   addChatHistory: (txt: string, replace?: boolean) => ChatItem[];
@@ -131,8 +131,8 @@ type ChatData = {
   ) => Promise<string>;
   initHistory: () => void;
   deleteHistory: () => Promise<boolean>;
-  checkProviderAlive: (providerUrl: string) => Promise<boolean>;
-  getOllamaClient: (ollamaApiUrl: string) => Promise<Ollama>;
+  checkProviderAlive: (provider: AIProvider) => Promise<boolean>;
+  getAiClient: (provider: AIProvider) => Promise<AiClient>;
   getEntryModel: (entryName: string, aiProvider: AIProvider) => ModelResponse;
   tagsGenerate: (
     entry: TS.FileSystemEntry,
@@ -172,7 +172,7 @@ export const ChatContext = createContext<ChatData>({
   initHistory: undefined,
   deleteHistory: undefined,
   checkProviderAlive: undefined,
-  getOllamaClient: undefined,
+  getAiClient: undefined,
   getEntryModel: undefined,
   tagsGenerate: undefined,
   descriptionGenerate: undefined,
@@ -203,6 +203,7 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
   const { showNotification } = useNotificationContext();
   const { deleteDirectory } = useIOActionsContext();
   const { addTagsToFsEntry } = useTaggingActionsContext();
+  const { tagGroups } = useEditedTagLibraryContext();
   const { openFileUploadDialog } = useFileUploadDialogContext();
   const { selectedEntries } = useSelectedEntriesContext();
   const { findLocation } = useCurrentLocationContext();
@@ -217,81 +218,41 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
   const generationSettings = useRef<GenerationSettings>(
     getGenerationSettings(),
   );
-  /*const openedEntryModel = useRef<ModelResponse>(
-    getOpenedEntryModel(openedEntry?.name, defaultAiProvider),
-  );*/
   const images = useRef<ChatImage[]>([]);
-  //const defaultAiProviderId: string = useSelector(getDefaultAIProviderId);
-  //const aiProviders: AIProvider[] = useSelector(getAIProviders);getDefaultAIProvider(defaultAiProviderId,aiProviders);
   const chatHistoryItems = useRef<ChatItem[]>([]);
-  const DEFAULT_QUESTION_PROMPT =
-    Pro && Pro.UI ? Pro.UI.DEFAULT_QUESTION_PROMPT : false;
-  const DEFAULT_SYSTEM_PROMPT =
-    Pro && Pro.UI ? Pro.UI.DEFAULT_SYSTEM_PROMPT : false;
-  const SUMMARIZE_PROMPT = Pro && Pro.UI ? Pro.UI.SUMMARIZE_PROMPT : false;
-  const IMAGE_DESCRIPTION = Pro && Pro.UI ? Pro.UI.IMAGE_DESCRIPTION : false;
-  const IMAGE_DESCRIPTION_STRUCTURED =
-    Pro && Pro.UI ? Pro.UI.IMAGE_DESCRIPTION_STRUCTURED : false;
-  const TEXT_DESCRIPTION = Pro && Pro.UI ? Pro.UI.TEXT_DESCRIPTION : false;
-  const GENERATE_TAGS = Pro && Pro.UI ? Pro.UI.GENERATE_TAGS : false;
-  const GENERATE_IMAGE_TAGS =
-    Pro && Pro.UI ? Pro.UI.GENERATE_IMAGE_TAGS : false;
+  const aiTemplatesContext = Pro?.contextProviders?.AiTemplatesContext
+    ? useContext<TS.AiTemplatesContextData>(
+        Pro.contextProviders.AiTemplatesContext,
+      )
+    : undefined;
   const isTyping = useRef<boolean>(false);
-  //const timelineItems = useRef<TimelineItem[]>([]);
-  const ollamaClient = useRef<Ollama>(undefined);
+  const aiClient = useRef<AiClient>(undefined);
+  const lastProviderId = useRef<string>(defaultAiProvider?.id);
   const dispatch: AppDispatch = useDispatch();
   const [ignored, forceUpdate] = useReducer((x) => x + 1, 0, undefined);
   const currentLocation = findLocation();
   const firstRender = useFirstRender();
 
-  /*
-  useEffect(() => {
-      //refreshOllamaModels();
-      window.electronIO.ipcRenderer.on(
-        'PullModel',
-        (message: PullModelResponse) => {
-          //console.log('ChatMessage:' + message);
-          if (message.status) {
-            dispatch(
-              AppActions.onUploadProgress(
-                {
-                  key: message.model || message.status,
-                  loaded: message.completed,
-                  total: message.total,
-                },
-                undefined,
-                message.model,
-              ),
-            );
-          }
-        },
-      );
-
-      return () => {
-        window.electronIO.ipcRenderer.removeAllListeners('ChatMessage');
-        unloadCurrentModel();
-      };
-  }, []);*/
-
   useEffect(() => {
     images.current = [];
+    // When the active provider changes (e.g. Ollama → LM Studio), drop the
+    // cached client + model list so they are rebuilt for the new engine/url.
+    if (lastProviderId.current !== defaultAiProvider?.id) {
+      lastProviderId.current = defaultAiProvider?.id;
+      aiClient.current = undefined;
+      models.current = [];
+      currentModel.current = undefined;
+    }
     if (
       !firstRender &&
       defaultAiProvider &&
       openedEntry &&
-      !openedEntry.isFile &&
+      // !openedEntry.isFile &&
       selectedTabName === TabNames.aiTab
     ) {
       checkOllamaModels().then(() => initHistory());
     }
   }, [defaultAiProvider, openedEntry]);
-
-  /*useEffect(() => {
-    //setOpenedEntryModel();
-    if (selectedTabName === TabNames.aiTab && models.current.length===0) {
-      refreshOllamaModels().then(() => initHistory());
-    }
-  }, [selectedTabName]);*/
 
   function getGenerationSettings(
     option: generateOptionType = 'tags',
@@ -314,20 +275,6 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
     };
   }
 
-  async function getOllamaClient(ollamaApiUrl: string) {
-    if (ollamaApiUrl) {
-      try {
-        //@ts-ignore
-        const { Ollama } = await import('ollama/browser');
-
-        return new Ollama({ host: ollamaApiUrl });
-      } catch (error) {
-        console.error('Failed to load Ollama module:', error);
-      }
-    }
-    return undefined;
-  }
-
   function initHistory() {
     if (openedEntry) {
       if (
@@ -339,23 +286,12 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
           chatHistoryItems.current = historyItems;
           forceUpdate();
         });
-      }
-    }
-  }
-
-  /* function setOpenedEntryModel() {
-    if (openedEntry) {
-      const newModel = getOpenedEntryModel(openedEntry.name, defaultAiProvider);
-      if (
-        !newModel ||
-        !openedEntryModel.current ||
-        newModel.name !== openedEntryModel.current.name
-      ) {
-        openedEntryModel.current = newModel;
+      } else {
+        chatHistoryItems.current = [];
         forceUpdate();
       }
     }
-  }*/
+  }
 
   function getEntryModel(
     fileName: string,
@@ -398,7 +334,9 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
             const historyModel = loadJSONString(jsonContent) as HistoryModel;
             if (historyModel) {
               refreshOllamaModels(historyModel.lastModelName);
-              return historyModel.history ? historyModel.history : [];
+              return Array.isArray(historyModel.history)
+                ? historyModel.history
+                : [];
             }
           }
           return [];
@@ -415,32 +353,41 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
     return Promise.resolve([]);
   }
 
-  function checkProviderAlive(providerUrl: string): Promise<boolean> {
-    return getOllamaClient(providerUrl).then((client) =>
-      getOllamaModels(client).then((m) => {
-        return !!m;
-      }),
-    );
+  function checkProviderAlive(provider: AIProvider): Promise<boolean> {
+    return checkAiProviderAlive(provider);
   }
 
   /**
    * return true if model is loaded successful false otherwise
    */
   function checkOllamaModels(): Promise<boolean> {
-    if (!models.current || models.current.length === 0) {
-      if (defaultAiProvider) {
-        return getOllamaClient(defaultAiProvider.url).then((client) => {
-          ollamaClient.current = client;
-          return refreshOllamaModels();
-        });
-      }
+    if (!defaultAiProvider) {
+      // No AI provider configured/enabled — generation cannot start.
+      return Promise.resolve(false);
+    }
+    // Rebuild when the client is missing even if a model list is cached: the
+    // two refs can fall out of sync (e.g. the provider-switch effect clears
+    // aiClient.current), and a stale model list would otherwise let generation
+    // proceed into newChatMessage, which then fails with "service not alive".
+    if (!aiClient.current || !models.current || models.current.length === 0) {
+      return getAiClient(defaultAiProvider).then((client) => {
+        aiClient.current = client;
+        return refreshOllamaModels();
+      });
     }
     return Promise.resolve(true);
   }
 
-  function refreshOllamaModels(modelName = undefined): Promise<boolean> {
+  async function refreshOllamaModels(modelName = undefined): Promise<boolean> {
     if (defaultAiProvider) {
-      return getOllamaModels(ollamaClient.current)
+      if (!aiClient.current) {
+        aiClient.current = await getAiClient(defaultAiProvider);
+      }
+      if (!aiClient.current) {
+        return false;
+      }
+      return aiClient.current
+        .list()
         .then((m) => {
           if (m) {
             models.current = m;
@@ -476,16 +423,13 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
     ) {
       currentModel.current = model;
       forceUpdate();
+      // Preloading a model with an empty-messages request is an Ollama warm-up
+      // trick; OpenAI-compatible servers would reject it, so skip it there.
+      if (defaultAiProvider?.engine !== 'ollama') {
+        return Promise.resolve(true);
+      }
       //load model
       return newChatMessage().then(() => {
-        /*const newItem: ChatItem = {
-          request: 'Model ' + model.name + ' loaded',
-          timestamp: new Date().getTime(),
-          role: 'system',
-          modelName: currentModel.current?.name,
-          engine: 'ollama',
-        };*/
-        //saveHistoryItems([newItem, ...chatHistoryItems.current]);
         showNotification(
           format(new Date().getTime(), 'dd.MM.yyyy HH:mm:ss') +
             ' Model ' +
@@ -539,6 +483,12 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
 
   function unloadCurrentModel() {
     if (currentModel.current) {
+      // Unloading via keep_alive:0 is Ollama-only; for other engines just drop
+      // the local reference without an HTTP round-trip.
+      if (defaultAiProvider?.engine !== 'ollama') {
+        currentModel.current = undefined;
+        return;
+      }
       //unload model
       newChatMessage(undefined, true).then(
         () => (currentModel.current = undefined),
@@ -548,12 +498,16 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
 
   function removeModel(modelName: string) {
     const model = findModel(modelName);
-    if (model && defaultAiProvider) {
-      const result = confirm('Do you want to remove ' + model.name + ' model?');
+    // Model deletion is Ollama-only; OpenAI-compatible servers manage models
+    // externally and expose no delete endpoint.
+    if (model && defaultAiProvider && aiClient.current?.delete) {
+      const result = confirm(
+        t('core:confirmRemoveModel', { name: model.name }),
+      );
       if (result) {
         //addTimeLineRequest('deleting ' + model.name, 'system');
-        showNotification('deleting ' + model.name + ' succeeded');
-        deleteOllamaModel(ollamaClient.current, model.name).then((response) => {
+        showNotification(t('core:modelDeletedSuccess', { name: model.name }));
+        aiClient.current.delete(model.name).then((response) => {
           console.log('deleteOllamaModel response:' + response);
           if (response) {
             if (model.name === currentModel.current?.name) {
@@ -562,19 +516,6 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
             refreshOllamaModels();
           }
         });
-        /*window.electronIO.ipcRenderer
-          .invoke('deleteOllamaModel', defaultAiProvider.url, {
-            name: model.name,
-          })
-          .then((response) => {
-            console.log('deleteOllamaModel response:' + response);
-            if (response) {
-              if (model.name === currentModel.current?.name) {
-                currentModel.current = undefined;
-              }
-              refreshOllamaModels();
-            }
-          });*/
       }
     }
   }
@@ -589,11 +530,17 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
    * check if model is installed and return details
    * @param modelName
    */
-  function getModel(modelName: string): Promise<ModelResponse> {
+  async function getModel(modelName: string): Promise<ModelResponse> {
     if (!modelName || !defaultAiProvider) {
-      return Promise.resolve(undefined);
+      return undefined;
     }
-    return getOllamaModels(ollamaClient.current).then((m) => {
+    if (!aiClient.current) {
+      aiClient.current = await getAiClient(defaultAiProvider);
+    }
+    if (!aiClient.current) {
+      return undefined;
+    }
+    return aiClient.current.list().then((m) => {
       if (m && m.length > 0) {
         return m.find(
           (mm) => mm.name === modelName || mm.name === modelName + ':latest',
@@ -606,24 +553,38 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
   async function changeCurrentModel(
     newModelName: string,
     confirmCallback?,
+    provider: AIProvider = defaultAiProvider,
   ): Promise<boolean> {
-    let model;
-    if (!ollamaClient.current) {
-      const client = await getOllamaClient(defaultAiProvider.url);
-      ollamaClient.current = client;
-      const m = await getOllamaModels(client);
-      if (m) {
-        models.current = m;
-        model = models.current.find(
-          (m) => m.name === newModelName || m.name === newModelName + ':latest',
-        );
-      }
-    } else {
-      model = findModel(newModelName);
+    if (!provider) {
+      return true;
     }
-    if (!model && defaultAiProvider) {
-      // return setModel(model);
-      // } else {
+    // The model picker in settings calls this per-provider, so resolve the
+    // model (and the pull capability) against the provider being edited — not
+    // the active one. Only reuse the cached active client/models when they
+    // belong to the same provider; otherwise build a throwaway client so we
+    // never check a model against the wrong engine.
+    const isActiveProvider = provider.id === defaultAiProvider?.id;
+    let client = isActiveProvider ? aiClient.current : undefined;
+    let providerModels = isActiveProvider ? models.current : undefined;
+    if (!client) {
+      client = await getAiClient(provider);
+      if (isActiveProvider) {
+        aiClient.current = client;
+      }
+      const m = client ? await client.list() : undefined;
+      if (m) {
+        providerModels = m;
+        if (isActiveProvider) {
+          models.current = m;
+        }
+      }
+    }
+    const model = providerModels?.find(
+      (m) => m.name === newModelName || m.name === newModelName + ':latest',
+    );
+    // Downloading a model on demand is Ollama-only; other engines manage
+    // their models externally, so just bail out without a pull prompt.
+    if (!model && client?.pull) {
       const result = confirm(
         'Do you want to download and install ' + newModelName + ' model?',
       );
@@ -648,11 +609,7 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
             );
           }
         };
-        return pullOllamaModel(
-          ollamaClient.current,
-          newModelName,
-          onProgressHandler,
-        ).then((response) => {
+        return client.pull(newModelName, onProgressHandler).then((response) => {
           console.log('pullOllamaModel response:' + response);
           return refreshOllamaModels(newModelName);
         });
@@ -674,7 +631,7 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
   function addHistoryItem(txt: string, role: ChatRole) {
     if (txt) {
       const newItem: ChatItem = {
-        engine: 'ollama',
+        engine: defaultAiProvider?.engine || 'ollama',
         modelName: currentModel.current?.name,
         role: role,
         request: txt,
@@ -691,22 +648,12 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
     }
   }
 
-  /*function getImages() {
-    if (images.current.length > 0) {
-      const img = images.current.map(
-        (i) => '![chat image](data:image/!*;base64,' + i.base64 + ')',
-      );
-      return img.join(' ');
-    }
-    return '';
-  }*/
-
   function getHistoryFilePath(name?: string) {
     const dirSeparator = currentLocation
       ? currentLocation.getDirSeparator()
       : AppConfig.dirSeparator;
     const metaFolder = getMetaDirectoryPath(openedEntry.path, dirSeparator);
-    const fileName = name ? name : 'tsc.json';
+    const fileName = name ? name : AppConfig.aiChatFileName;
     return (
       metaFolder + dirSeparator + AppConfig.aiFolder + dirSeparator + fileName
     );
@@ -730,6 +677,7 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
         lastModelName: currentModel.current?.name,
         engine: defaultAiProvider?.engine,
       };
+      if (openedEntry.isFile) return;
       saveFilePromise(
         { path: getHistoryFilePath() },
         JSON.stringify(model, null, 2),
@@ -789,12 +737,16 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
 
   function getMessage(msg: string, mode: ChatMode) {
     if (mode === 'helpful') {
-      if (DEFAULT_SYSTEM_PROMPT) {
-        return DEFAULT_SYSTEM_PROMPT.replace('{question}', msg);
+      if (aiTemplatesContext) {
+        return aiTemplatesContext
+          .getTemplate('DEFAULT_SYSTEM_PROMPT')
+          .replace('{question}', msg);
       }
     } else if (mode === 'summary') {
-      if (SUMMARIZE_PROMPT) {
-        let prompt = SUMMARIZE_PROMPT.replace('{summarize_text}', msg);
+      if (aiTemplatesContext) {
+        let prompt = aiTemplatesContext
+          .getTemplate('SUMMARIZE_PROMPT')
+          .replace('{summarize_text}', msg);
         if (selectedEntries && selectedEntries.length > 0) {
           prompt = prompt.replace(
             '{file_path}',
@@ -825,55 +777,67 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
       }
     } else if (mode === 'description') {
       if (msg) {
-        return TEXT_DESCRIPTION?.replace('{input_text}', msg)
-          .replace(
-            '{max_chars}',
-            generationSettings.current.maxChars
-              ? 'max ' + generationSettings.current.maxChars + ' characters'
-              : '',
-          )
-          .replace(
-            '{language}',
-            generationSettings.current.language
-              ? generationSettings.current.language
-              : 'native',
-          );
-      } else {
-        if (generationSettings.current.option === 'analyseImages') {
-          return IMAGE_DESCRIPTION_STRUCTURED;
+        if (aiTemplatesContext) {
+          return aiTemplatesContext
+            .getTemplate('TEXT_DESCRIPTION_PROMPT')
+            ?.replace('{input_text}', msg)
+            .replace(
+              '{max_chars}',
+              generationSettings.current.maxChars
+                ? 'max ' + generationSettings.current.maxChars + ' characters'
+                : '',
+            )
+            .replace(
+              '{language}',
+              generationSettings.current.language
+                ? generationSettings.current.language
+                : 'native',
+            );
         }
-        return IMAGE_DESCRIPTION?.replace(
-          '{file_name}',
-          openedEntry ? openedEntry.name : '',
-        ).replace(
-          '{language}',
-          generationSettings.current.language
-            ? generationSettings.current.language
-            : 'English',
-        );
+      } else {
+        if (aiTemplatesContext) {
+          if (generationSettings.current.option === 'analyseImages') {
+            return aiTemplatesContext.getTemplate(
+              'IMAGE_DESCRIPTION_STRUCTURED_PROMPT',
+            );
+          }
+          return aiTemplatesContext
+            .getTemplate('IMAGE_DESCRIPTION_PROMPT')
+            ?.replace('{file_name}', openedEntry ? openedEntry.name : '')
+            .replace(
+              '{language}',
+              generationSettings.current.language
+                ? generationSettings.current.language
+                : 'English',
+            );
+        }
       }
     } else if (mode === 'tags') {
-      if (msg) {
-        if (GENERATE_TAGS && openedEntry) {
-          return GENERATE_TAGS.replace('{input_text}', msg);
-        }
-      } else {
-        // image
-        if (GENERATE_IMAGE_TAGS && openedEntry) {
-          return GENERATE_IMAGE_TAGS;
+      if (aiTemplatesContext) {
+        if (msg) {
+          if (openedEntry) {
+            return aiTemplatesContext
+              .getTemplate('TEXT_TAGS_PROMPT')
+              ?.replace('{input_text}', msg);
+          }
+        } else {
+          // image
+          if (openedEntry) {
+            return aiTemplatesContext.getTemplate('IMAGE_TAGS_PROMPT');
+          }
         }
       }
     } else if (mode === 'rephrase') {
-      if (DEFAULT_QUESTION_PROMPT) {
+      if (aiTemplatesContext) {
         const historyMap = chatHistoryItems.current.map((item) =>
           item.role !== 'system'
             ? `${item.request ? 'Human: ' + item.request : ''}${item.response ? ' Assistant: ' + item.response : ''}`
             : '',
         );
-        return DEFAULT_QUESTION_PROMPT.replace('{question}', msg).replace(
-          '{chat_history}',
-          historyMap.join(' '),
-        );
+        return aiTemplatesContext
+          .getTemplate('DEFAULT_QUESTION_PROMPT')
+          .replace('{question}', msg)
+          .replace('{chat_history}', historyMap.join(' '));
       }
     }
     return msg;
@@ -893,9 +857,8 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
       generationSettings.current.tagsFromLibrary &&
       generationSettings.current.tagGroupsIds.length > 0
     ) {
-      const tagLibrary: TS.TagGroup[] = getTagLibrary();
       generationSettings.current.tagGroupsIds.forEach((tagGroupId) => {
-        const tagGroup = tagLibrary.find((tg) => tg.uuid === tagGroupId);
+        const tagGroup = tagGroups.find((tg) => tg.uuid === tagGroupId);
         if (tagGroup) {
           tagsFromLibrary.push(...tagGroup.children.map((tag) => tag.title));
         }
@@ -933,8 +896,14 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
     const msgContent = getMessage(msg, mode);
     const imagesArray =
       imgArray.length > 0 ? imgArray : images.current.map((i) => i.base64);
+    // Build a message when there's prompt text OR an image to send. An image
+    // alone is a valid request (vision models), so it must not be dropped just
+    // because the prompt template resolved empty — otherwise `messages` ends up
+    // [] and OpenAI-compatible servers reject it ("messages array cannot be
+    // empty"). The empty-on-both case is preserved: it's the Ollama model
+    // load/unload idiom.
     const messages =
-      msgContent && !unload
+      (msgContent || imagesArray.length > 0) && !unload
         ? [
             ...getOllamaMessages(
               includeHistory ? chatHistoryItems.current : [],
@@ -942,7 +911,7 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
             ),
             {
               role: role,
-              content: msgContent,
+              content: msgContent || '',
               ...(imagesArray.length > 0 && { images: imagesArray }),
             },
           ]
@@ -993,136 +962,133 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
       ...(format && format),
     };
     // console.log('AI question: ' + JSON.stringify(messages));
-    return newOllamaMessage(
-      ollamaClient.current,
-      request,
-      chatMessageHandler,
-    ).then((apiResponse) => {
-      // console.log('apiResponse:' + apiResponse);
+    if (!aiClient.current) {
+      showNotification(t('core:aiServiceNotReachable'));
       isTyping.current = false;
       forceUpdate();
-      if (apiResponse === undefined && stream === false) {
-        showNotification('Error check if Ollama service is alive');
-        return undefined;
-      }
-      if (msg && includeHistory) {
-        saveHistoryItems();
-      }
-      if (mode === 'tags') {
-        if (imgArray.length > 0) {
-          const response = JSON.parse(apiResponse); // ImageDescription.parse(JSON.parse(apiResponse));
-          const tags = response.objects
-            ? response.objects.map((obj) => obj.name)
-            : [];
-          if (response.time_of_day && response.time_of_day !== 'Unknown') {
-            tags.push(response.time_of_day);
-          }
-          if (response.setting && response.setting !== 'Unknown') {
-            tags.push(response.setting);
-          }
-          if (response.topics) {
-            tags.push(response.topics);
-          }
-          return [...tags, ...response.colors];
-        } else {
-          let tags: string[] = [];
-          try {
-            const response = JSON.parse(apiResponse);
-            tags = response.topics;
-          } catch (e) {
-            console.log('JSON.parse error for:' + apiResponse, e);
-            if (apiResponse) {
-              tags = apiResponse.split(' ');
+      return Promise.resolve(undefined);
+    }
+    return aiClient.current
+      .chat(request, chatMessageHandler)
+      .then((apiResponse) => {
+        // console.log('apiResponse:' + apiResponse);
+        isTyping.current = false;
+        forceUpdate();
+        if (apiResponse === undefined && stream === false) {
+          // The client returned nothing — the service is reachable but the
+          // request failed (bad model, rejected schema/image, etc.). Not a
+          // liveness problem, so don't claim the service is down.
+          showNotification(t('core:aiGenerationFailed'));
+          return undefined;
+        }
+        if (msg && includeHistory) {
+          saveHistoryItems();
+        }
+        if (mode === 'tags') {
+          if (imgArray.length > 0) {
+            const response = JSON.parse(apiResponse); // ImageDescription.parse(JSON.parse(apiResponse));
+            const tags = response.objects
+              ? response.objects.map((obj) => obj.name)
+              : [];
+            if (response.time_of_day && response.time_of_day !== 'Unknown') {
+              tags.push(response.time_of_day);
             }
-            //const zodTags = getZodTags(generationSettings.current.maxTags);
-            //response = zodTags.parse(JSON.parse(apiResponse));
-          }
+            if (response.setting && response.setting !== 'Unknown') {
+              tags.push(response.setting);
+            }
+            if (response.topics) {
+              tags.push(response.topics);
+            }
+            return [...tags, ...response.colors];
+          } else {
+            let tags: string[] = [];
+            try {
+              const response = JSON.parse(apiResponse);
+              tags = response.topics;
+            } catch (e) {
+              console.log('JSON.parse error for:' + apiResponse, e);
+              if (apiResponse) {
+                tags = apiResponse.split(' ');
+              }
+            }
 
-          return tags.slice(0, generationSettings.current.maxTags);
-        }
-      } else if (mode === 'description' || mode === 'summary') {
-        if (format) {
-          const response = JSON.parse(apiResponse);
-          const arrReturn = [];
-          if (
-            generationSettings.current.structuredDataProps.name &&
-            response.name
-          ) {
-            arrReturn.push('**Name:** ' + response.name);
+            return tags.slice(0, generationSettings.current.maxTags);
           }
-          if (
-            generationSettings.current.structuredDataProps.objects &&
-            response.objects
-          ) {
-            arrReturn.push(
-              response.objects.map(
-                (obj) =>
-                  (obj.name ? '\n\n> > **Object Name:** ' + obj.name : '') +
-                  (obj.attributes
-                    ? '\n\n> > **Attributes:** ' +
-                      JSON.stringify(obj.attributes, null, 4).replace(
-                        /[{}\[\]]/g,
-                        '',
-                      )
-                    : ''),
-              ),
-            );
-          }
+        } else if (mode === 'description' || mode === 'summary') {
+          if (format) {
+            const response = JSON.parse(apiResponse);
+            const arrReturn = [];
+            if (
+              generationSettings.current.structuredDataProps.name &&
+              response.name
+            ) {
+              arrReturn.push('**Name:** ' + response.name);
+            }
+            if (
+              generationSettings.current.structuredDataProps.objects &&
+              response.objects
+            ) {
+              arrReturn.push(
+                response.objects.map(
+                  (obj) =>
+                    (obj.name ? '\n\n> > **Object Name:** ' + obj.name : '') +
+                    (obj.attributes
+                      ? '\n\n> > **Attributes:** ' +
+                        JSON.stringify(obj.attributes, null, 4).replace(
+                          /[{}\[\]]/g,
+                          '',
+                        )
+                      : ''),
+                ),
+              );
+            }
 
-          if (
-            generationSettings.current.structuredDataProps.scene &&
-            response.scene
-          ) {
-            arrReturn.push('**Scene:** ' + response.scene);
+            if (
+              generationSettings.current.structuredDataProps.scene &&
+              response.scene
+            ) {
+              arrReturn.push('**Scene:** ' + response.scene);
+            }
+            if (
+              generationSettings.current.structuredDataProps.colors &&
+              response.colors
+            ) {
+              arrReturn.push('**Colors:** ' + response.colors);
+            }
+            if (
+              generationSettings.current.structuredDataProps.summary &&
+              response.summary
+            ) {
+              arrReturn.push('**Summary:** ' + response.summary);
+            }
+            if (
+              generationSettings.current.structuredDataProps.time_of_day &&
+              response.time_of_day
+            ) {
+              arrReturn.push('**Day Time:** ' + response.time_of_day);
+            }
+            if (
+              generationSettings.current.structuredDataProps.settings &&
+              response.setting
+            ) {
+              arrReturn.push('**Setting:** ' + response.setting);
+            }
+            if (
+              response.text_content &&
+              generationSettings.current.structuredDataProps.text_content
+            ) {
+              arrReturn.push('**Content:** ' + response.text_content);
+            }
+            return arrReturn.join('\n\n') + '\n\n';
           }
-          if (
-            generationSettings.current.structuredDataProps.colors &&
-            response.colors
-          ) {
-            arrReturn.push('**Colors:** ' + response.colors);
-          }
-          if (
-            generationSettings.current.structuredDataProps.summary &&
-            response.summary
-          ) {
-            arrReturn.push('**Summary:** ' + response.summary);
-          }
-          if (
-            generationSettings.current.structuredDataProps.time_of_day &&
-            response.time_of_day
-          ) {
-            arrReturn.push('**Day Time:** ' + response.time_of_day);
-          }
-          if (
-            generationSettings.current.structuredDataProps.settings &&
-            response.setting
-          ) {
-            arrReturn.push('**Setting:** ' + response.setting);
-          }
-          if (
-            response.text_content &&
-            generationSettings.current.structuredDataProps.text_content
-          ) {
-            arrReturn.push('**Content:** ' + response.text_content);
-          }
-          return arrReturn.join('\n\n') + '\n\n';
         }
-      }
-      return stream ? true : apiResponse;
-    });
-    /*return window.electronIO.ipcRenderer
-      .invoke('newOllamaMessage', defaultAiProvider.url, {
-        model,
-        messages,
-        stream: stream,
-        ...(unload && { keep_alive: 0 }),
-      })
-      */
+        return stream ? true : apiResponse;
+      });
   }
 
   function cancelMessage() {
-    if (ollamaClient.current) {
-      ollamaClient.current.abort();
+    if (aiClient.current) {
+      aiClient.current.abort();
       isTyping.current = false;
       saveHistoryItems();
       forceUpdate();
@@ -1197,7 +1163,7 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
         );
       }
     } else {
-      showNotification('Model not found, try pulling it first');
+      showNotification(t('core:modelNotFoundTryPull'));
     }
     return Promise.resolve(undefined);
   }
@@ -1223,6 +1189,7 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
               handleGenDescResults(
                 entry,
                 results,
+                entryModel.name,
                 generationSettings.current.appendAnalysisToDescription,
               ),
             );
@@ -1235,49 +1202,46 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
                 handleGenDescResults(
                   entry,
                   results,
+                  entryModel.name,
                   generationSettings.current.appendToDescription,
                 ),
             );
           }
         } else {
+          // No model resolved for this entry's file type — not a connection
+          // problem. Most often the active provider has no default image/text
+          // model set, or the configured model isn't in the provider's list.
           showNotification(
-            'Error: there is a problem with Ollama service conection', //or Description generation not supported for:' + entry.name,
+            t('core:noModelConfiguredFor', { name: entry.name }),
           );
           return Promise.resolve(undefined);
         }
-        return Promise.resolve(entry);
+        // Extension is neither image, text/pdf nor a folder — skip it instead
+        // of resolving the unchanged entry (which would mark it processed and
+        // could overwrite an existing description with undefined).
+        showNotification(
+          t('core:generationNotSupportedFor', { name: entry.name }),
+        );
+        return Promise.resolve(undefined);
       } else {
-        showNotification('Error No Models loaded');
+        showNotification(t('core:noModelsLoaded'));
         return Promise.resolve(undefined);
       }
     });
   }
 
-  /* function descriptionGenerateAll(
-    generateEntries: TS.FileSystemEntry[],
-  ): Promise<TS.FileSystemEntry[]> {
-    return checkOllamaModels().then((success) => {
-      if (success) {
-        const promises = generateEntries.map((entry) => descriptionGenerate(entry));
-        return Promise.all(promises);
-      } else {
-        showNotification(
-          'Ollama Models not loaded. Check if Ollama service is alive.',
-        );
-        return undefined;
-      }
-    });
-  }*/
-
   function handleGenDescResults(
     entry: TS.FileSystemEntry,
     response: string,
+    modelName: string,
     append: boolean,
   ): TS.FileSystemEntry {
     if (response) {
       const generatedDesc =
         response +
-        '\\\n *Generated with AI on ' +
+        '\\\n *Generated with AI model ' +
+        modelName +
+        ' on ' +
         formatDateTime(new Date(), true) +
         '* \n';
       //dispatch(SettingsActions.setEntryContainerTab(TabNames.descriptionTab));
@@ -1295,40 +1259,51 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
     entry: TS.FileSystemEntry,
     fromDescription: boolean = false,
   ): Promise<boolean> {
-    const entryModel: ModelResponse = getEntryModel(
-      entry.name,
-      defaultAiProvider,
-    );
-    if (entryModel) {
-      const ext = extractFileExtension(entry.name).toLowerCase();
-      if (
-        (fromDescription || generationSettings.current.fromDescription) &&
-        entry.meta.description
-      ) {
-        return newChatMessage(
-          entry.meta.description,
-          false,
-          'user',
-          'tags',
-          defaultAiProvider.defaultTextModel,
-          false,
-          [],
-          false,
-        ).then((results) => handleGenTagsResults(entry, results));
-      } else if (AppConfig.aiSupportedFiletypes.image.includes(ext)) {
-        return generate('image', 'tags', entryModel.name, entry).then(
-          (results) => handleGenTagsResults(entry, results),
-        );
-      } else if (AppConfig.aiSupportedFiletypes.text.includes(ext)) {
-        return generate('text', 'tags', entryModel.name, entry).then(
-          (results) => handleGenTagsResults(entry, results),
+    // Ensure the AI client + model list are ready before generating; otherwise
+    // newChatMessage can fail with "service not alive" when the client ref was
+    // dropped (e.g. after a provider switch) while a stale model list lingers.
+    return checkOllamaModels().then((ready) => {
+      if (!ready) {
+        showNotification(t('core:noModelsLoaded'));
+        return false;
+      }
+      const entryModel: ModelResponse = getEntryModel(
+        entry.name,
+        defaultAiProvider,
+      );
+      if (entryModel) {
+        const ext = extractFileExtension(entry.name).toLowerCase();
+        if (
+          (fromDescription || generationSettings.current.fromDescription) &&
+          entry.meta?.description
+        ) {
+          return newChatMessage(
+            entry.meta.description,
+            false,
+            'user',
+            'tags',
+            defaultAiProvider.defaultTextModel,
+            false,
+            [],
+            false,
+          ).then((results) => handleGenTagsResults(entry, results));
+        } else if (AppConfig.aiSupportedFiletypes.image.includes(ext)) {
+          return generate('image', 'tags', entryModel.name, entry).then(
+            (results) => handleGenTagsResults(entry, results),
+          );
+        } else if (AppConfig.aiSupportedFiletypes.text.includes(ext)) {
+          return generate('text', 'tags', entryModel.name, entry).then(
+            (results) => handleGenTagsResults(entry, results),
+          );
+        }
+      } else {
+        showNotification(
+          t('core:tagsGenerationNotSupportedFor', { name: entry.name }),
         );
       }
-    } else {
-      showNotification('Tags generation not supported for:' + entry.name);
-    }
 
-    return Promise.resolve(false);
+      return false;
+    });
   }
 
   function handleGenTagsResults(entry, response): Promise<boolean> {
@@ -1349,6 +1324,7 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
                 title: tagTitle,
                 ...getTagColors(
                   tagTitle,
+                  tagGroups,
                   defaultTextColor,
                   defaultBackgroundColor,
                 ),
@@ -1362,14 +1338,6 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
             tag && // Exclude undefined or null tags
             index === self.findIndex((t) => t?.title === tag.title),
         );
-        /* const regex = /\{([^}]+)\}/g;
-        const tags: TS.Tag[] = [...response.matchAll(regex)].map((match) => {
-          const tagTitle = match[1].trim().replace(/^,|,$/g, '').toLowerCase();
-          return {
-            title: tagTitle,
-            ...getTagColors(tagTitle, defaultTextColor, defaultBackgroundColor),
-          };
-        });*/
         return addTagsToFsEntry(entry, uniqueTags).then(() => {
           dispatch(
             SettingsActions.setEntryContainerTab(TabNames.propertiesTab),
@@ -1405,7 +1373,6 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
       models: models.current,
       images: images.current,
       currentModel: currentModel.current,
-      //openedEntryModel: openedEntryModel.current,
       chatHistoryItems: chatHistoryItems.current,
       generationSettings: generationSettings.current,
       checkOllamaModels,
@@ -1427,7 +1394,7 @@ export const ChatContextProvider = ({ children }: ChatContextProviderProps) => {
       initHistory,
       deleteHistory,
       checkProviderAlive,
-      getOllamaClient,
+      getAiClient,
       getEntryModel,
       tagsGenerate,
       descriptionGenerate,

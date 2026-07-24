@@ -17,18 +17,17 @@
  */
 
 import AppConfig from '-/AppConfig';
+import { CloseIcon } from '-/components/CommonIcons';
 import TsButton from '-/components/TsButton';
 import TsIconButton from '-/components/TsIconButton';
+import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
 import { useLocationIndexContext } from '-/hooks/useLocationIndexContext';
 import { useNotificationContext } from '-/hooks/useNotificationContext';
 import { getLastPublishedVersion } from '-/reducers/settings';
-import i18n from '-/services/i18n';
 import { openURLExternally } from '-/services/utils-io';
-import CloseIcon from '@mui/icons-material/Close';
 import Snackbar from '@mui/material/Snackbar';
 import { styled } from '@mui/material/styles';
 import Links from 'assets/links';
-import React from 'react';
 import { useTranslation } from 'react-i18next';
 import { useDispatch, useSelector } from 'react-redux';
 import { Pro } from '../pro';
@@ -40,10 +39,8 @@ import {
 
 const TSNotification = styled(Snackbar)(({ theme }) => {
   return {
-    root: {
-      '& .MuiSnackbarContent-root': {
-        borderRadius: AppConfig.defaultCSSRadius,
-      },
+    '& .MuiSnackbarContent-root': {
+      borderRadius: AppConfig.defaultCSSRadius,
     },
   };
 }) as typeof Snackbar;
@@ -58,7 +55,9 @@ function PageNotification() {
     showNotification,
     hideNotifications,
   } = useNotificationContext();
-  const { isIndexing, cancelDirectoryIndexing } = useLocationIndexContext();
+  const { findLocation } = useCurrentLocationContext();
+  const { isIndexing, indexingProgress, cancelDirectoryIndexing } =
+    useLocationIndexContext();
   const updateAvailable = useSelector(isUpdateAvailable);
   const lastPublishedVersion = useSelector(getLastPublishedVersion);
 
@@ -72,7 +71,8 @@ function PageNotification() {
 
   const getLatestVersion = () => {
     if (Pro) {
-      showNotification(t('core:getLatestVersionPro'), 'default', false);
+      // showNotification(t('core:getLatestVersionPro'), 'default', false);
+      openURLExternally(Links.links.downloadProURL, true);
     } else {
       openURLExternally(Links.links.downloadURL, true);
     }
@@ -122,12 +122,21 @@ function PageNotification() {
         anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
         open={isIndexing !== undefined}
         autoHideDuration={undefined}
-        message={i18n.t('indexing') + ': ' + isIndexing}
+        message={
+          t('core:indexing') +
+          ': ' +
+          (findLocation(isIndexing)?.name ?? '') +
+          (indexingProgress
+            ? '  •  ' +
+              indexingProgress.count +
+              '  •  ' +
+              indexingProgress.folder
+            : '')
+        }
         action={[
           <TsButton
             key="cancelIndexButton"
-            color="secondary"
-            onClick={() => cancelDirectoryIndexing()}
+            onClick={() => cancelDirectoryIndexing(isIndexing)}
             data-tid="cancelDirectoryIndexing"
           >
             {t('core:cancelIndexing')}
@@ -135,19 +144,20 @@ function PageNotification() {
         ]}
       />
       <TSNotification
-        anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
         open={updateAvailable}
         autoHideDuration={undefined}
-        message={'Version ' + lastPublishedVersion + ' available.'}
+        message={t('versionAvailable', {
+          version: lastPublishedVersion,
+        })}
         action={[
-          <TsButton key="laterButton" color="secondary" onClick={skipRelease}>
+          <TsButton key="laterButton" onClick={skipRelease}>
             {t('core:later')}
           </TsButton>,
           <TsButton
             key="changelogButton"
-            color="secondary"
             onClick={openChangelogPage}
-            style={{
+            sx={{
               marginLeft: AppConfig.defaultSpaceBetweenButtons,
             }}
           >
@@ -155,7 +165,7 @@ function PageNotification() {
           </TsButton>,
           <TsButton
             key="latestVersionButton"
-            style={{
+            sx={{
               marginLeft: AppConfig.defaultSpaceBetweenButtons,
             }}
             onClick={getLatestVersion}

@@ -16,24 +16,26 @@
  *
  */
 
-import React, { useState } from 'react';
-import Popover from '@mui/material/Popover';
-import SearchPopover from '-/components/SearchPopover';
 import SearchAutocomplete from '-/components/SearchAutocomplete';
+import SearchPopover from '-/components/SearchPopover';
+import { useDirectoryContentContext } from '-/hooks/useDirectoryContentContext';
+import Popover from '@mui/material/Popover';
+import React, { useState } from 'react';
 
 interface Props {
-  open: boolean;
+  //open: boolean;
 }
 
 function SearchBox(props: Props) {
+  const { isSearchMode } = useDirectoryContentContext();
   const [anchorSearch, setAnchorSearch] = useState<HTMLButtonElement | null>(
     null,
   );
 
   return (
     <>
-      <SearchAutocomplete open={props.open} setAnchorSearch={setAnchorSearch} />
-      {props.open && (
+      <SearchAutocomplete setAnchorSearch={setAnchorSearch} />
+      {isSearchMode && (
         <Popover
           open={Boolean(anchorSearch)}
           anchorEl={anchorSearch}
@@ -44,9 +46,9 @@ function SearchBox(props: Props) {
           }}
           slotProps={{
             paper: {
-              style: {
+              sx: {
                 overflow: 'hidden',
-                height: 720,
+                height: '720px',
                 // background: alpha(theme.palette.background.default, 0.95),
                 // backdropFilter: 'blur(5px)',
               },
@@ -56,10 +58,11 @@ function SearchBox(props: Props) {
             vertical: 'top',
             horizontal: 'right',
           }}
-          style={{
-            // @ts-ignore
-            WebkitAppRegion: 'no-drag',
-          }}
+          style={
+            {
+              WebkitAppRegion: 'no-drag',
+            } as React.CSSProperties & { WebkitAppRegion?: string }
+          }
         >
           <SearchPopover onClose={() => setAnchorSearch(null)} />
         </Popover>

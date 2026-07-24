@@ -19,8 +19,9 @@
 import { InfoIcon } from '-/components/CommonIcons';
 import { useTargetPathContext } from '-/components/dialogs/hooks/useTargetPathContext';
 import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
-import Grid from '@mui/material/Grid2';
+import Grid from '@mui/material/Grid';
 import Typography from '@mui/material/Typography';
+import { locationType } from '@tagspaces/tagspaces-common/misc';
 import { useTranslation } from 'react-i18next';
 
 function TargetPath() {
@@ -30,17 +31,18 @@ function TargetPath() {
   const currentLocation = findLocation();
 
   return (
-    <Grid container style={{ marginTop: 20 }}>
+    <Grid container sx={{ marginTop: '20px' }}>
       {targetDirectoryPath ? (
         <Typography
-          style={{ display: 'flex', alignItems: 'center' }}
+          sx={{ display: 'flex', alignItems: 'center' }}
           variant="caption"
         >
-          <InfoIcon style={{ paddingRight: 10 }} />
+          <InfoIcon sx={{ paddingRight: '10px' }} />
           {t('core:entriesWillBeCreatedIn') +
             ' ' +
-            (currentLocation ? currentLocation.name : '') +
-            ' ' +
+            (currentLocation?.type === locationType.TYPE_CLOUD
+              ? currentLocation.name + '/'
+              : '') +
             targetDirectoryPath}
         </Typography>
       ) : (

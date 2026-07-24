@@ -17,54 +17,57 @@
  */
 
 import AppConfig from '-/AppConfig';
-import { CancelIcon, CloseEditIcon, SaveIcon } from '-/components/CommonIcons';
-import EditFileButton from '-/components/EditFileButton';
 import EntryContainerNav from '-/components/EntryContainerNav';
 import EntryContainerTabs from '-/components/EntryContainerTabs';
 import EntryContainerTitle from '-/components/EntryContainerTitle';
+import { ErrorBoundary } from '-/components/ErrorBoundary';
 import FileView from '-/components/FileView';
-import Tooltip from '-/components/Tooltip';
-import TsButton from '-/components/TsButton';
-import ConfirmDialog from '-/components/dialogs/ConfirmDialog';
+import { Splitter } from '-/components/Splitter';
+import { useFilePickerDialogContext } from '-/components/dialogs/hooks/useFilePickerDialogContext';
 import { useResolveConflictContext } from '-/components/dialogs/hooks/useResolveConflictContext';
+import { TabNames } from '-/hooks/EntryPropsTabsContextProvider';
 import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
-import { useEntryPropsTabsContext } from '-/hooks/useEntryPropsTabsContext';
 import { useFilePropertiesContext } from '-/hooks/useFilePropertiesContext';
 import { useFullScreenContext } from '-/hooks/useFullScreenContext';
 import { useIOActionsContext } from '-/hooks/useIOActionsContext';
 import { useNotificationContext } from '-/hooks/useNotificationContext';
 import { useOpenedEntryContext } from '-/hooks/useOpenedEntryContext';
 import { usePerspectiveActionsContext } from '-/hooks/usePerspectiveActionsContext';
-import { Pro } from '-/pro';
+import { usePlatformFacadeContext } from '-/hooks/usePlatformFacadeContext';
+import { AppDispatch } from '-/reducers/app';
 import {
+  actions as SettingsActions,
   getEntryContainerTab,
+  getEntrySplitSize,
   getKeyBindingObject,
   isDesktopMode,
-  isRevisionsEnabled,
 } from '-/reducers/settings';
+import { CLOSE_ENTRY_REQUEST_EVENT } from '-/services/mobileBackAction';
+import { getResizedImageThumbnail } from '-/services/thumbsgenerator';
 import { TS } from '-/tagspaces.namespace';
-import { Switch, useMediaQuery } from '@mui/material';
+import { base64ToUint8Array } from '-/utils/dom';
+import useEventListener from '-/utils/useEventListener';
+import { useMediaQuery } from '@mui/material';
 import Box from '@mui/material/Box';
-import ButtonGroup from '@mui/material/ButtonGroup';
 import { useTheme } from '@mui/material/styles';
 import { extractContainingDirectoryPath } from '@tagspaces/tagspaces-common/paths';
 import React, {
   MutableRefObject,
-  useCallback,
   useEffect,
+  useMemo,
   useReducer,
   useRef,
   useState,
 } from 'react';
 import { GlobalHotKeys } from 'react-hotkeys';
 import { useTranslation } from 'react-i18next';
-import { useSelector } from 'react-redux';
+import { useDispatch, useSelector } from 'react-redux';
 
 function EntryContainer() {
   const { t } = useTranslation();
+  const dispatch: AppDispatch = useDispatch();
   const {
     openedEntry,
-    closeAllFiles,
     reloadOpenedFile,
     toggleEntryFullWidth,
     isEntryInFullWidth,
@@ -73,44 +76,46 @@ function EntryContainer() {
   } = useOpenedEntryContext();
   const { setActions } = usePerspectiveActionsContext();
   const { toggleFullScreen } = useFullScreenContext();
-  const { saveDescription, isEditMode, setEditMode } =
-    useFilePropertiesContext();
-  const { setAutoSave } = useIOActionsContext();
+  const {
+    saveDescription,
+    isEditMode,
+    setEditMode,
+    closeOpenedEntries,
+    isDescriptionChanged,
+  } = useFilePropertiesContext();
   const { findLocation } = useCurrentLocationContext();
-  const { isEditable } = useEntryPropsTabsContext();
+  const { openFilePickerDialog } = useFilePickerDialogContext();
   const { saveFileOpen } = useResolveConflictContext();
+  const { setThumbnailImageChange } = useIOActionsContext();
+  const { saveBinaryFilePromise } = usePlatformFacadeContext();
 
-  const { showNotification } = useNotificationContext();
+  const { showNotification, openConfirmDialog } = useNotificationContext();
   const tabIndex = useSelector(getEntryContainerTab);
   const keyBindings = useSelector(getKeyBindingObject);
   const desktopMode = useSelector(isDesktopMode);
-  const revisionsEnabled = useSelector(isRevisionsEnabled);
   const theme = useTheme();
   const timer = useRef<NodeJS.Timeout>(null);
+  const propsSize = useSelector(getEntrySplitSize);
+  const setPropsSize = (size: number) =>
+    dispatch(SettingsActions.setEntryPropertiesSplitSize(size));
 
-  const openedPanelStyle: React.CSSProperties = {
-    display: 'flex',
-    flexDirection: 'column',
-  };
+  // One-shot cleanup: the old localStorage key stored a broken "flex-basis %"
+  // value interpolated as e.g. `flex: '1 1 200%'`. New storage is pixels in Redux.
+  useEffect(() => {
+    if (localStorage.getItem('tsEntryPropertiesHeight') != null) {
+      localStorage.removeItem('tsEntryPropertiesHeight');
+    }
+  }, []);
+
   const [isPanelOpened, setPanelOpened] = useState<boolean>(
-    tabIndex !== undefined && tabIndex !== -1,
+    tabIndex !== TabNames.closedTabs,
   );
 
   const smallScreen = useMediaQuery(theme.breakpoints.down('md'));
 
   // eslint-disable-next-line no-unused-vars
   const [ignored, forceUpdate] = useReducer((x) => x + 1, 0, undefined);
-  const [
-    isSaveBeforeCloseConfirmDialogOpened,
-    setSaveBeforeCloseConfirmDialogOpened,
-  ] = useState<boolean>(false);
-  const [
-    isSaveBeforeReloadConfirmDialogOpened,
-    setSaveBeforeReloadConfirmDialogOpened,
-  ] = useState<boolean>(false);
   const isSavingInProgress = useRef<boolean>(false);
-  const [entryPropertiesHeight, setEntryPropertiesHeight] =
-    useState<number>(100);
   const fileViewer: MutableRefObject<HTMLIFrameElement> =
     useRef<HTMLIFrameElement>(null);
   const fileViewerContainer: MutableRefObject<HTMLDivElement> =
@@ -149,11 +154,8 @@ function EntryContainer() {
   useEffect(() => {
     try {
       if (
-        fileViewer &&
-        fileViewer.current &&
-        fileViewer.current.contentWindow &&
         // @ts-ignore
-        fileViewer.current.contentWindow.setTheme
+        fileViewer?.current?.contentWindow?.setTheme
       ) {
         // @ts-ignore call setContent from iframe
         fileViewer.current.contentWindow.setTheme(theme.palette.mode);
@@ -161,7 +163,7 @@ function EntryContainer() {
     } catch (e) {
       console.log('Error setTheme', e);
     }
-  }, [theme.palette.mode]); //settings.currentTheme
+  }, [theme.palette.mode]);
 
   const editingSupported: boolean =
     cLocation &&
@@ -192,10 +194,6 @@ function EntryContainer() {
             (success) => {
               if (success) {
                 setFileChanged(false);
-                // showNotification(
-                //   t('core:fileSavedSuccessfully'),
-                //   NotificationTypes.default
-                // );
               }
               // change state will not render DOT before file name too
               isSavingInProgress.current = false;
@@ -230,6 +228,40 @@ function EntryContainer() {
             });
         }
         break;
+      case 'thumbnailGenerated':
+        if (data.content) {
+          getResizedImageThumbnail(data.content)
+            .then((base64Image) => {
+              const data = base64ToUint8Array(base64Image);
+
+              const rawThumbPath = cLocation.getThumbEntryPath(openedEntry);
+              const thumbPath = rawThumbPath.startsWith('tsfile://')
+                ? rawThumbPath.substring(AppConfig.isWin ? 10 : 9)
+                : rawThumbPath;
+              saveBinaryFilePromise(
+                { path: thumbPath },
+                data, //new Blob([data]), //data.buffer ? data.buffer :
+                true,
+              )
+                .then(() => {
+                  return setThumbnailImageChange({
+                    ...(openedEntry as TS.FileSystemEntry),
+                    meta: { ...openedEntry.meta, thumbPath },
+                  });
+                })
+                .catch((error) => {
+                  console.error(
+                    'Save to file ' + openedEntry.path + ' failed ',
+                    error,
+                  );
+                  return true;
+                });
+            })
+            .catch((error) => {
+              console.error('Thumbnail generation failed ' + error);
+            });
+        }
+        break;
       case 'savingFile':
         if (fileChanged) {
           saveFile(data.content);
@@ -243,9 +275,11 @@ function EntryContainer() {
       case 'playbackEnded':
         openNextFileAction();
         break;
-      // case 'openLinkExternally':
-      //   // openLink(data.link);
-      //   break;
+      // 'openLinkExternally' is handled by the global window-message
+      // listener in MainPage.tsx, which routes through openLink() for all
+      // extension iframes. Do NOT handle it here — that would double-fire
+      // openLink() and race the entry-open sequence (ts:// links break,
+      // among other things).
       case 'loadDefaultTextContent':
         if (!openedEntry || !openedEntry.path) {
           // || openedEntry.changed) {
@@ -359,6 +393,57 @@ function EntryContainer() {
         setFileChanged(true);
         break;
       }
+      case 'requestFilePicker': {
+        const opts = data.options || {};
+        const sep = cLocation?.getDirSeparator?.() || '/';
+        const sourceLocationId =
+          opts.sourceLocationId ?? openedEntry?.locationID;
+        const sourceDir =
+          opts.sourceDir ??
+          (openedEntry?.path
+            ? openedEntry.isFile
+              ? extractContainingDirectoryPath(openedEntry.path, sep)
+              : openedEntry.path
+            : undefined);
+
+        const reply = (payload: Record<string, unknown>) => {
+          fileViewer.current?.contentWindow?.postMessage(
+            { eventID: data.eventID, ...payload },
+            '*',
+          );
+        };
+
+        openFilePickerDialog({
+          mode: opts.mode ?? 'any',
+          title: opts.title,
+          // Least-privilege default: open scoped to the current entry's
+          // location. The user can still switch locations manually.
+          initialLocationId: sourceLocationId,
+          sourceLocationId,
+          sourceDir,
+          // Optional: extension can prefill an editable Link-text field
+          // (e.g. with the user's currently-selected text in the editor).
+          showLabelField: opts.showLabelField === true,
+          initialLabel:
+            typeof opts.initialLabel === 'string'
+              ? opts.initialLabel
+              : undefined,
+          onSelect: (entry, link, linkType, label) => {
+            reply({
+              link,
+              linkType,
+              label,
+              name: entry.name,
+              path: entry.path,
+              locationId: entry.locationID,
+              isFile: entry.isFile,
+              extension: entry.extension,
+            });
+          },
+          onCancel: () => reply({ cancelled: true }),
+        });
+        break;
+      }
       default:
         console.log(
           'Not recognized messaging command: ' + JSON.stringify(data),
@@ -370,8 +455,20 @@ function EntryContainer() {
   const reloadDocument = () => {
     if (openedEntry) {
       if (isEditMode && fileChanged) {
-        // openedEntry.changed) {
-        setSaveBeforeReloadConfirmDialogOpened(true);
+        openConfirmDialog(
+          t('core:confirm'),
+          t('core:fileModified'),
+          (result) => {
+            if (result) {
+              startSavingFile();
+            } else {
+              setFileChanged(false);
+            }
+          },
+          'cancelSaveBeforeCloseDialog',
+          'confirmSaveBeforeCloseDialog',
+          'confirmDialogContent',
+        );
       } else {
         setEditMode(false);
         reloadOpenedFile();
@@ -385,17 +482,42 @@ function EntryContainer() {
       event.stopPropagation();
     }
     if (openedEntry && fileChanged && isEditMode) {
-      // openedEntry.changed
-      setSaveBeforeCloseConfirmDialogOpened(true);
+      openConfirmDialog(
+        t('core:confirm'),
+        t('core:saveFileBeforeClosingFile'),
+        (result) => {
+          if (result) {
+            startSavingFile();
+          } else {
+            closeFile();
+            isSavingInProgress.current = false;
+            setFileChanged(false);
+          }
+        },
+        'cancelSaveBeforeCloseDialog',
+        'confirmSaveBeforeCloseDialog',
+        'confirmDialogContent',
+      );
     } else {
       closeFile();
     }
   };
 
   const closeFile = () => {
-    closeAllFiles();
-    // setEditingSupported(false);
+    closeOpenedEntries();
   };
+
+  // Close request from the mobile back chain (Android back button/gesture)
+  // or the iOS edge-swipe gesture. Handled here because this component owns
+  // the unsaved-changes-aware close path. preventDefault() tells gesture
+  // callers a confirm dialog will appear instead of an immediate close.
+  useEventListener(CLOSE_ENTRY_REQUEST_EVENT, (event: Event) => {
+    const needsConfirm = (fileChanged && isEditMode) || isDescriptionChanged;
+    if (needsConfirm && event.cancelable) {
+      event.preventDefault();
+    }
+    startClosingEntry(null);
+  });
 
   const startSavingFile = () => {
     if (isEditMode) {
@@ -408,11 +530,8 @@ function EntryContainer() {
   const savingFile = (force = false) => {
     try {
       if (
-        fileViewer &&
-        fileViewer.current &&
-        fileViewer.current.contentWindow &&
         // @ts-ignore
-        fileViewer.current.contentWindow.getContent
+        fileViewer?.current?.contentWindow?.getContent
       ) {
         //check if file is changed
         if (fileChanged || force) {
@@ -422,12 +541,16 @@ function EntryContainer() {
         }
       } else {
         //console.log('saving crepe file');
-        fileViewer.current.contentWindow.postMessage(
+        fileViewer?.current?.contentWindow.postMessage(
           { action: 'savingFile' },
           '*',
         );
       }
     } catch (e) {
+      fileViewer?.current?.contentWindow.postMessage(
+        { action: 'savingFile' },
+        '*',
+      );
       isSavingInProgress.current = false;
       console.debug('function getContent not exist for file:', e);
     }
@@ -449,26 +572,6 @@ function EntryContainer() {
     setEditMode(true);
   };
 
-  /*const setPercent = (p: number | undefined) => {
-    percent.current = p;
-    // console.log('Percent ' + percent.current);
-    if (p !== undefined) {
-      bufferedSplitResize(() => {
-        // Threshold >10% for automatically close Properties panel
-        if (p <= 10) {
-          // parseInt(defaultSplitSize, 10)) {
-          closePanel();
-        } else {
-          if (entrySplitSize !== p + '%') {
-            setEntryPropertiesSplitSize(p + '%');
-          }
-          openPanel();
-        }
-      });
-    }
-    forceUpdate();
-  };*/
-
   const openPanel = () => {
     if (!isPanelOpened) {
       setPanelOpened(true);
@@ -481,164 +584,25 @@ function EntryContainer() {
   const openNextFileAction = () => {
     const action: TS.PerspectiveActions = { action: 'openNext' };
     setActions(action);
-    // window.dispatchEvent(new Event('next-file'));
   };
 
   const openPrevFileAction = () => {
     const action: TS.PerspectiveActions = { action: 'openPrevious' };
     setActions(action);
-    //window.dispatchEvent(new Event('previous-file'));
   };
 
-  const toggleAutoSave = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const autoSave = event.target.checked;
-    if (Pro) {
-      setAutoSave(openedEntry, autoSave, openedEntry.locationID);
-    } else {
-      showNotification(t('core:thisFunctionalityIsAvailableInPro'));
-    }
-  };
-
-  const toggleEntryPropertiesHeight = () => {
-    if (entryPropertiesHeight === 100) {
-      setEntryPropertiesHeight(200);
-    } else if (entryPropertiesHeight === 200) {
-      setEntryPropertiesHeight(350);
-    } else if (entryPropertiesHeight === 350) {
-      setEntryPropertiesHeight(50);
-    } else if (entryPropertiesHeight === 50) {
-      setEntryPropertiesHeight(100);
-    } else {
-      setEntryPropertiesHeight(200);
-    }
-  };
-
-  const tabs = () => {
-    const autoSave = isEditable(openedEntry) && revisionsEnabled && (
-      <Tooltip
-        title={
-          t('core:autosave') +
-          (!Pro ? ' - ' + t('core:thisFunctionalityIsAvailableInPro') : '')
-        }
-      >
-        <Switch
-          data-tid="autoSaveTID"
-          checked={openedEntry.meta && openedEntry.meta.autoSave}
-          onChange={toggleAutoSave}
-          name="autoSave"
-        />
-      </Tooltip>
-    );
-
-    let closeCancelIcon;
-    if (desktopMode) {
-      closeCancelIcon = fileChanged ? <CancelIcon /> : <CloseEditIcon />;
-    }
-
-    let editFile = null;
-    if (editingSupported) {
-      if (isEditMode) {
-        editFile = (
-          <ButtonGroup>
-            <TsButton
-              tooltip={t('core:cancelEditing')}
-              data-tid="cancelEditingTID"
-              onClick={() => {
-                setEditMode(false);
-                setFileChanged(false);
-              }}
-              style={{
-                borderRadius: 'unset',
-                borderTopLeftRadius: AppConfig.defaultCSSRadius,
-                borderBottomLeftRadius: AppConfig.defaultCSSRadius,
-                borderTopRightRadius: fileChanged
-                  ? 0
-                  : AppConfig.defaultCSSRadius,
-                borderBottomRightRadius: fileChanged
-                  ? 0
-                  : AppConfig.defaultCSSRadius,
-              }}
-              aria-label={t('core:cancelEditing')}
-              startIcon={closeCancelIcon}
-            >
-              {fileChanged ? t('core:cancel') : t('core:exitEditMode')}
-            </TsButton>
-
-            {fileChanged && (
-              <Tooltip
-                title={
-                  t('core:saveFile') +
-                  ' (' +
-                  (AppConfig.isMacLike ? '⌘' : 'CTRL') +
-                  ' + S)'
-                }
-              >
-                <TsButton
-                  disabled={false}
-                  onClick={startSavingFile}
-                  aria-label={t('core:saveFile')}
-                  data-tid="fileContainerSaveFile"
-                  startIcon={desktopMode && <SaveIcon />}
-                  loading={isSavingInProgress.current}
-                  style={{
-                    borderRadius: 'unset',
-                    borderTopRightRadius: AppConfig.defaultCSSRadius,
-                    borderBottomRightRadius: AppConfig.defaultCSSRadius,
-                  }}
-                >
-                  {t('core:save')}
-                </TsButton>
-              </Tooltip>
-            )}
-          </ButtonGroup>
-        );
-      } else {
-        editFile = <EditFileButton />;
-      }
-    }
-
-    const tabsComponent = useCallback(
-      (marginRight: string | undefined = undefined) => (
-        <EntryContainerTabs
-          isPanelOpened={isPanelOpened}
-          openPanel={openPanel}
-          toggleProperties={toggleProperties}
-          marginRight={marginRight}
-        />
-      ),
-      [isPanelOpened],
-    );
-
-    if (!autoSave && !editFile) {
-      return tabsComponent();
-    }
-
-    return (
-      <div
-        style={{
-          position: 'relative',
-          overflow: 'hidden',
-          height: '100%',
-        }}
-      >
-        {tabsComponent('160px')}
-        <div
-          style={{
-            zIndex: 1,
-            position: 'absolute',
-            right: 10,
-            top: 8,
-            backgroundColor: theme.palette.background.default,
-            display: 'flex',
-            alignItems: 'center',
-          }}
-        >
-          {autoSave}
-          {editFile}
-        </div>
-      </div>
-    );
-  };
+  const tabsElement = useMemo(
+    () => (
+      <EntryContainerTabs
+        isPanelOpened={isPanelOpened}
+        openPanel={openPanel}
+        toggleProperties={toggleProperties}
+        isSavingInProgress={isSavingInProgress.current}
+        savingFile={savingFile}
+      />
+    ),
+    [isPanelOpened, isSavingInProgress.current, fileChanged],
+  );
 
   if (!openedEntry || openedEntry.path === undefined) {
     return <div>{t('core:noEntrySelected')}</div>;
@@ -669,133 +633,101 @@ function EntryContainer() {
         toggleFullScreen: keyBindings.toggleFullScreen,
       }}
     >
-      <div
-        style={{
-          height: '100%',
-          ...(isPanelOpened && openedPanelStyle),
-        }}
-      >
-        <div
-          style={{
-            width: '100%',
-            flexDirection: 'column',
-            flex: '1 1 ' + entryPropertiesHeight + '%',
-            display: 'flex',
-            backgroundColor: theme.palette.background.default,
-            overflow: 'hidden',
-            marginBottom: 1,
-          }}
-        >
+      {(() => {
+        const topPane = (
           <Box
-            style={{
-              paddingLeft: 0,
-              paddingRight: 55,
-              paddingTop: 0,
-              minHeight: 48,
+            sx={{
+              width: '100%',
               display: 'flex',
-              flexDirection: 'row',
-              justifyContent: 'flex-start',
+              flexDirection: 'column',
+              height: '100%',
+              backgroundColor: theme.palette.background.default,
+              overflow: 'hidden',
             }}
           >
-            <EntryContainerTitle
-              reloadDocument={reloadDocument}
-              startClosingEntry={startClosingEntry}
-              isEntryInFullWidth={isEntryInFullWidth}
-              fileViewerContainer={fileViewerContainer.current}
-              desktopMode={desktopMode}
-              smallScreen={smallScreen}
-            />
-            <EntryContainerNav
-              isFile={openedEntry.isFile}
-              startClosingEntry={startClosingEntry}
-              smallScreen={smallScreen}
-            />
+            <Box
+              sx={{
+                paddingLeft: 0,
+                paddingRight: '55px',
+                paddingTop: 0,
+                minHeight: '48px',
+                display: 'flex',
+                flexDirection: 'row',
+                justifyContent: 'flex-start',
+              }}
+            >
+              <EntryContainerTitle
+                reloadDocument={reloadDocument}
+                startClosingEntry={startClosingEntry}
+                isEntryInFullWidth={isEntryInFullWidth}
+                fileViewerContainer={fileViewerContainer.current}
+                desktopMode={desktopMode}
+                smallScreen={smallScreen}
+              />
+              <EntryContainerNav
+                isFile={openedEntry.isFile}
+                startClosingEntry={startClosingEntry}
+                smallScreen={smallScreen}
+              />
+            </Box>
+            {tabsElement}
           </Box>
-          {tabs()}
-          {openedEntry.isFile && isPanelOpened && (
-            <Tooltip title={t('core:togglePreviewSize')}>
-              <div
-                style={{
-                  textAlign: 'center',
-                  // maxHeight: 9,
-                  minHeight: 8,
-                  paddingTop: 2,
-                  backgroundColor: theme.palette.background.default,
-                  borderBottom: '1px solid ' + theme.palette.divider,
-                  cursor: 's-resize',
-                }}
-                onClick={toggleEntryPropertiesHeight}
-              >
-                <div
-                  style={{
-                    width: '10%',
-                    border: '1px dashed ' + theme.palette.text.secondary,
-                    margin: '2px auto',
-                  }}
-                ></div>
-              </div>
-            </Tooltip>
-          )}
-        </div>
-        {openedEntry.isFile && (
-          <FileView
-            key="FileViewID"
-            fileViewer={fileViewer}
-            fileViewerContainer={fileViewerContainer}
-            height={tabIndex !== undefined ? '100%' : 'calc(100% - 100px)'}
-            setSavingInProgress={(isSaving: boolean) => {
-              isSavingInProgress.current = isSaving;
-              forceUpdate();
-            }}
-            handleMessage={handleMessage}
-          />
-        )}
-      </div>
-      {isSaveBeforeCloseConfirmDialogOpened && (
-        <ConfirmDialog
-          open={isSaveBeforeCloseConfirmDialogOpened}
-          onClose={() => {
-            setSaveBeforeCloseConfirmDialogOpened(false);
-          }}
-          title={t('core:confirm')}
-          content={t('core:saveFileBeforeClosingFile')}
-          confirmCallback={(result) => {
-            if (result) {
-              startSavingFile();
-            } else {
-              closeFile();
-              setSaveBeforeCloseConfirmDialogOpened(false);
-              isSavingInProgress.current = false;
-              setFileChanged(false);
+        );
+
+        const fileView = openedEntry.isFile ? (
+          <ErrorBoundary
+            title={t('core:error')}
+            label={openedEntry.path}
+            resetKeys={[openedEntry.path]}
+            onError={() =>
+              showNotification(
+                t('core:error'),
+                'error',
+                true,
+                'fileViewCrashTID',
+              )
             }
-          }}
-          cancelDialogTID="cancelSaveBeforeCloseDialog"
-          confirmDialogTID="confirmSaveBeforeCloseDialog"
-          confirmDialogContentTID="confirmDialogContent"
-        />
-      )}
-      {isSaveBeforeReloadConfirmDialogOpened && (
-        <ConfirmDialog
-          open={isSaveBeforeReloadConfirmDialogOpened}
-          onClose={() => {
-            setSaveBeforeReloadConfirmDialogOpened(false);
-          }}
-          title={t('core:confirm')}
-          content="File was modified, do you want to save the changes?"
-          confirmCallback={(result) => {
-            if (result) {
-              setSaveBeforeReloadConfirmDialogOpened(false);
-              startSavingFile();
-            } else {
-              setSaveBeforeReloadConfirmDialogOpened(false);
-              setFileChanged(false);
-            }
-          }}
-          cancelDialogTID="cancelSaveBeforeCloseDialog"
-          confirmDialogTID="confirmSaveBeforeCloseDialog"
-          confirmDialogContentTID="confirmDialogContent"
-        />
-      )}
+          >
+            <FileView
+              key="FileViewID"
+              fileViewer={fileViewer}
+              fileViewerContainer={fileViewerContainer}
+              height="100%"
+              handleMessage={handleMessage}
+            />
+          </ErrorBoundary>
+        ) : null;
+
+        // Folder entry — no preview, topPane fills the container so
+        // EntryContainerTabs has a bounded height and TsTabPanel can scroll.
+        if (!openedEntry.isFile) {
+          return <Box sx={{ height: '100%' }}>{topPane}</Box>;
+        }
+
+        // File entry — always wrap topPane + fileView in the same Splitter
+        // so React keeps FileView (and its iframe) mounted while the user
+        // toggles the properties panel. When the panel is closed we
+        // collapse the splitter to the natural height of the title bar
+        // and tab strip and disable dragging; the file content (size,
+        // scroll, in-flight loads) survives the toggle untouched.
+        const CLOSED_TOP_PANE_HEIGHT = 108; // title (48) + tab strip (60)
+        return (
+          <Box sx={{ height: '100%' }}>
+            <Splitter
+              direction="horizontal"
+              size={isPanelOpened ? propsSize : CLOSED_TOP_PANE_HEIGHT}
+              min={150}
+              defaultSize={200}
+              onChange={setPropsSize}
+              disabled={!isPanelOpened}
+              ariaLabel={t('core:togglePreviewSize')}
+            >
+              {topPane}
+              {fileView}
+            </Splitter>
+          </Box>
+        );
+      })()}
     </GlobalHotKeys>
   );
 }

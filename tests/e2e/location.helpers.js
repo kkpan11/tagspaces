@@ -1,79 +1,25 @@
 /* Copyright (c) 2016-present - TagSpaces GmbH. All rights reserved. */
 import { expect } from '@playwright/test';
-import { delay } from './hook';
-import { firstFile, openContextEntryMenu } from './test-utils';
 import {
   clickOn,
-  getElementText,
   isDisplayed,
   selectorFile,
-  setInputKeys,
-  takeScreenshot,
-  waitForNotification,
+  setInputValue,
+  waitForNotification
 } from './general.helpers';
+import { delay } from './hook';
+import { openContextEntryMenu } from './test-utils';
 
-export const defaultLocationPath =
-  './tests/testdata-tmp/file-structure/supported-filestypes';
 export const defaultLocationName = 'supported-filestypes';
 export const perspectiveGridTable = '//*[@data-tid="perspectiveGridFileTable"]';
 export const newLocationName = 'Location Name Changed';
-export const minioAccessKey = 'minioadmin';
-export const minioSecretAccessKey = 'minioadmin';
-export const minioEndpointURL = 'http://127.0.0.1:9000';
-
-export async function createPwMinioLocation(
-  locationPath,
-  locationName,
-  isDefault = false,
-) {
-  const lastLocationTID = await getPwLocationTid(-1);
-  // Check if location not exist (from extconfig.js)
-  if (locationName !== lastLocationTID) {
-    await clickOn('[data-tid=locationManagerMenu]');
-    await clickOn('[data-tid=locationManagerMenuCreateLocation]');
-    await clickOn('[data-tid=locationTypeTID]');
-    await clickOn('[data-tid=cloudLocationTID]');
-    //await clickOn('[data-tid=createNewLocation]', { timeout: 35000 });
-    // if (global.isMinio) {
-    // await clickOn('[data-tid=objectStorageLocation]');
-    // }
-
-    // SET LOCATION NAME
-    /*await global.client.fill(
-      '[data-tid=locationName] input',
-      locationName || 'Test Location' + new Date().getTime(),
-    );*/
-    await setInputKeys(
-      'locationName',
-      locationName || 'Test Location' + new Date().getTime(),
-      20,
-    );
-    await setInputKeys('locationPath', locationPath, 20);
-    //await global.client.fill('[data-tid=locationPath] input', locationPath);
-    await setInputKeys('accessKeyId', minioAccessKey, 20);
-    //await global.client.fill('[data-tid=accessKeyId] input', minioAccessKey);
-    await setInputKeys('secretAccessKey', minioSecretAccessKey, 20);
-    /*await global.client.fill(
-      '[data-tid=secretAccessKey] input',
-      minioSecretAccessKey,
-    );*/
-    await setInputKeys('bucketName', locationName, 20);
-    //await global.client.fill('[data-tid=bucketName] input', locationName);
-    await setInputKeys('endpointURL', minioEndpointURL, 20);
-    //await global.client.fill('[data-tid=endpointURL] input', minioEndpointURL);
-
-    if (isDefault) {
-      await clickOn('[data-tid=switchAdvancedModeTID]');
-      await global.client.check('[data-tid=locationIsDefault] input');
-    }
-    await clickOn('[data-tid=confirmLocationCreation]');
-  }
-}
 
 export async function createS3Location(
   locationPath,
   locationName,
   isDefault = false,
+  fullTextIndexing = false,
+  isReadOnly = false,
 ) {
   const lastLocationTID = await getPwLocationTid(-1);
   // Check if location not exist (from extconfig.js)
@@ -83,21 +29,34 @@ export async function createS3Location(
     await clickOn('[data-tid=locationTypeTID]');
     await clickOn('[data-tid=cloudLocationTID]');
 
-    await setInputKeys(
-      'locationName',
-      locationName || 'Test Location' + new Date().getTime(),
-      20,
-    );
-    await setInputKeys('locationPath', locationPath, 20);
-    await setInputKeys('accessKeyId', 'S3RVER', 20);
-    await setInputKeys('secretAccessKey', 'S3RVER', 20);
-    await setInputKeys('bucketName', 'supported-filestypes', 20);
-    await setInputKeys('endpointURL', 'http://localhost:4569', 20);
-    //await setInputKeys('regionTID', 'eu-central-1', 20);
+    await setInputValue('[data-tid=locationName] input', locationName || 'Test Location' + new Date().getTime(),);
+    await setInputValue('[data-tid=locationPath] input', locationPath);
+    await setInputValue('[data-tid=accessKeyId] input', 'test');
+    await setInputValue('[data-tid=secretAccessKey] input', 'test');
+    await setInputValue('[data-tid=bucketName] input', 'supported-filestypes');
+    await setInputValue('[data-tid=endpointURL] input', 'http://localhost:4569');
 
-    if (isDefault) {
+    // Expand the Advanced accordion if either isDefault or isReadOnly
+    // needs it. (isDefault itself lives in the always-expanded first
+    // accordion — the original code still clicked Advanced here, so we
+    // preserve that behavior for existing callers.) changeReadOnlyMode
+    // is inside the Advanced accordion and MUI animates the expansion,
+    // so wait for its input to become visible before checking.
+    if (isDefault || isReadOnly) {
       await clickOn('[data-tid=switchAdvancedModeTID]');
-      await global.client.check('[data-tid=locationIsDefault] input');
+      if (isDefault) {
+        await global.client.check('[data-tid=locationIsDefault] input');
+      }
+      if (isReadOnly) {
+        await global.client.waitForSelector(
+          '[data-tid=changeReadOnlyMode] input',
+          { state: 'visible', timeout: 5000 },
+        );
+        await global.client.check('[data-tid=changeReadOnlyMode] input');
+      }
+    }
+    if (fullTextIndexing) {
+      await global.client.check('[data-tid=changeFullTextIndex] input');
     }
     await clickOn('[data-tid=confirmLocationCreation]');
   }
@@ -107,36 +66,28 @@ export async function createPwLocation(
   locationPath,
   locationName,
   isDefault = false,
+  fullTextIndexing = false,
 ) {
   const lastLocationTID = await getPwLocationTid(-1);
   // Check if location not exist (from extconfig.js)
   if (locationName !== lastLocationTID) {
     await clickOn('[data-tid=locationManagerMenu]');
     await clickOn('[data-tid=locationManagerMenuCreateLocation]');
-    //   await global.client.click('[data-tid=locationPath]');
-    await setInputKeys('locationPath', locationPath || defaultLocationPath, 20);
-    await setInputKeys(
-      'locationName',
-      locationName || 'Test Location' + new Date().getTime(),
-      20,
+    await setInputValue('[data-tid=locationPath] input', locationPath); 
+    await setInputValue(
+      '[data-tid=locationName] input',
+      locationName || 'Test Location' + new Date().getTime()
     );
 
     if (isDefault) {
-      await clickOn('[data-tid=switchAdvancedModeTID]');
       await global.client.check('[data-tid=locationIsDefault] input');
+    }
+    if (fullTextIndexing) {
+      await global.client.check('[data-tid=changeFullTextIndex] input');
     }
     await global.client.click('[data-tid=confirmLocationCreation]');
   }
 }
-
-/*async function setInputValue(tid, value) {
-  // keys is workarround for not working setValue await global.client.$('[data-tid=locationPath] input').setValue(locationPath || defaultLocationPath);
-  const elem = await global.client.$('[data-tid=' + tid + ']');
-  await elem.click();
-
-  const elemInput = await global.client.$('[data-tid=' + tid + '] input');
-  await elemInput.keys(value);
-}*/
 
 export async function openLocationMenu(locationName) {
   await clickOn('[data-tid=locationMoreButton_' + locationName + ']');
@@ -150,12 +101,9 @@ export async function closeLocation(locationName = undefined) {
   if (locationName) {
     const locationSelector =
       '[data-tid=locationMoreButton_' + locationName + ']';
-    //const element = await global.client.$(locationSelector);
-    // if (!(await element.isDisplayed())) {
     if (!(await isDisplayed(locationSelector))) {
       await clickOn('[data-tid=mobileMenuButton]');
     }
-    // await global.client.pause(500);
     await clickOn(locationSelector);
     await clickOn('[data-tid=closeLocationTID]');
   } else {
@@ -174,7 +122,6 @@ export async function openLocation(locationName) {
   const lName = await global.client.$(
     '[data-tid=location_' + locationName || defaultLocationName + ']',
   );
-  // await delay(1500);
   await lName.waitForDisplayed();
   await lName.click();
 }
@@ -195,7 +142,6 @@ export async function checkForIdExist(tid) {
   const dataTid = await global.client.$('[data-tid=' + tid + ']');
   await delay(500);
   expect(await dataTid.isDisplayed()).toBe(true);
-  // expect(dataTid.selector).toBe('[data-tid=' + tid + ']');
 }
 
 /**
@@ -204,21 +150,18 @@ export async function checkForIdExist(tid) {
  * @returns {Promise<oldFileName: string>}
  */
 export async function renameFileFromMenu(newFileName, selector = selectorFile) {
-  await openContextEntryMenu(selector, 'fileMenuRenameFile');
-  const fileName = await global.client.inputValue(
-    '[data-tid=renameEntryDialogInput] input',
-  );
-
-  await setInputKeys('renameEntryDialogInput', newFileName);
+  await openContextEntryMenu(selector, 'fileMenuRenameFile'); 
+  const input = await global.client.locator(`[data-tid='renameEntryDialogInput'] input`);
+  const fileName = await input.inputValue();
+  await input.fill(newFileName)
   await clickOn('[data-tid=confirmRenameEntry]');
   await waitForNotification();
   return fileName;
 }
 
-export async function deleteFileFromMenu(fileSelector = selectorFile) {
+export async function deleteFileFromMenu(fileSelector) {
   await openContextEntryMenu(fileSelector, 'fileMenuDeleteFile');
   await clickOn('[data-tid=confirmDeleteFileDialog]');
-  // await waitForNotification();
 }
 
 /**
@@ -237,18 +180,8 @@ export async function getFirstFileName() {
   return fileName;
 }
 
-/*export async function checkForValidExt(selector, ext) {
-  const getExt = await global.client
-    .waitForVisible(selector)
-    .getText(selector, ext);
-  await delay(500);
-  expect(getExt).toBe(ext);
-}*/
-
 export async function aboutDialogExt(title, ext) {
   await delay(500);
-  // should switch focus to iFrame
-  // await global.client.waitForExist('#viewer').frame(0);
   const viewerMainMneuButton = await global.client.$('#viewerMainMenuButton');
   await viewerMainMneuButton.waitForDisplayed();
   await viewerMainMneuButton.click();
@@ -258,14 +191,8 @@ export async function aboutDialogExt(title, ext) {
   await delay(1500);
   const getTitle = await global.client.$('h4=' + title);
   await getTitle.waitForDisplayed();
-  // .waitForVisible('h4=' + title)
-  // .getText('h4=' + title);
-  // should eventually equals('About HTML Viewer');
   expect(getTitle).toBe(title);
   await delay(1500);
-  // await global.client
-  //   .waitForVisible('#closeAboutDialogButton')
-  //   .click('#closeAboutDialogButton');
 }
 
 export async function startupLocation() {
@@ -281,9 +208,6 @@ export async function startupLocation() {
  * @returns {Promise<string|null>} Location Tid ('location_' + name); example usage: getLocationName(-1) will return the last one
  */
 export async function getLocationTid(locationIndex) {
-  /*const locationList = await global.client.$$(
-    '//!*[@data-tid="locationList"]/div'
-  );*/
   const locationList = await global.client.$$(
     '[data-tid=locationTitleElement]',
   );
@@ -291,9 +215,6 @@ export async function getLocationTid(locationIndex) {
     locationIndex < 0
       ? locationList[locationList.length + locationIndex]
       : locationList[locationIndex];
-  // location = await location.$('li');
-  // location = await location.$('div');
-  // return location.getAttribute('data-tid');
   if (location !== undefined) {
     return await location.getText();
   }
@@ -301,12 +222,8 @@ export async function getLocationTid(locationIndex) {
 }
 
 export async function getPwLocationTid(locationIndex) {
-  /*const locationList = await global.client.$$(
-    '//!*[@data-tid="locationList"]/div'
-  );*/
   try {
     await global.client.waitForSelector('[data-tid=locationTitleElement]', {
-      // state: 'attached',
       timeout: 4000,
     });
   } catch (error) {
@@ -320,9 +237,6 @@ export async function getPwLocationTid(locationIndex) {
     locationIndex < 0
       ? locationList[locationList.length + locationIndex]
       : locationList[locationIndex];
-  // location = await location.$('li');
-  // location = await location.$('div');
-  // return location.getAttribute('data-tid');
   if (location !== undefined) {
     return await location.innerText();
   }

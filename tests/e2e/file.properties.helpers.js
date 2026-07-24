@@ -6,8 +6,7 @@ import {
   getElementText,
   isDisplayed,
   removeTagFromTagMenu,
-  selectorFile,
-  setInputKeys,
+  setInputValue
 } from './general.helpers';
 
 export async function getPropertiesTags() {
@@ -34,16 +33,14 @@ export async function getPropertiesTags() {
  */
 export async function AddRemovePropertiesTags(
   tagNames = ['test-props-tag'], // TODO fix camelCase tag name
-  options = { add: true, remove: true },
+  options = { add: true, remove: true, expectProp: false },
 ) {
   if (options.add) {
     for (let i = 0; i < tagNames.length; i++) {
       const tagName = tagNames[i];
       const propsTags = await getPropertiesTags();
       expect(propsTags.includes(tagName)).toBe(false);
-      await setInputKeys('PropertiesTagsSelectTID', tagName, 100);
-      //await setInputValue('[data-tid=PropertiesTagsSelectTID] input', tagName);
-      // await clickOn('[data-tid=PropertiesTagsSelectTID]');
+      await setInputValue('[data-tid=PropertiesTagsSelectTID] input', tagName);
       await global.client.keyboard.press('Enter');
       await expectElementExist(
         '[data-tid=tagContainer_' + tagName + ']',
@@ -51,7 +48,7 @@ export async function AddRemovePropertiesTags(
         8000,
         '[data-tid=perspectiveGridFileTable]',
       );
-      if (!global.isWeb) {
+      if (options.expectProp) {
         // todo selecting by parent PropertiesTagsSelectTID not work for web..
         await expectElementExist(
           '[data-tid=tagContainer_' + tagName + ']',
@@ -60,8 +57,6 @@ export async function AddRemovePropertiesTags(
           '[data-tid=PropertiesTagsSelectTID]',
         );
       }
-      //const propsNewTags = await getPropertiesTags();
-      //expect(propsNewTags.includes(tagName)).toBe(true);
     }
   }
 
@@ -75,15 +70,6 @@ export async function AddRemovePropertiesTags(
         8000,
         '[data-tid=perspectiveGridFileTable]',
       );
-      /*await expectElementExist(
-        '[data-tid=tagContainer_' + tagName + ']',
-        false,
-        8000,
-        '[data-tid=PropertiesTagsSelectTID]',
-      );*/
-      // await global.client.waitForTimeout(1500);
-      //const propsNewTags = await getPropertiesTags();
-      //expect(propsNewTags.includes(tagName)).toBe(false);
     }
   }
 }
@@ -95,9 +81,5 @@ export async function getPropertiesFileName() {
     await clickOn('[data-tid=detailsTabTID]');
   }
   fileName = await global.client.inputValue(selectorFileProps); // https://github.com/microsoft/playwright/issues/3265
-  /*.getAttribute(
-      '[data-tid=fileNameProperties] input',
-      'value'
-    ); */
   return fileName ? fileName.replace(/ *\[[^\]]*]/, '') : undefined;
 }

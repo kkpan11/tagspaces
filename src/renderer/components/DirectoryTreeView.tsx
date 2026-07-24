@@ -25,47 +25,129 @@ import TargetTableMoveFileBox from '-/components/TargetTableMoveFileBox';
 import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
 import { useDirectoryContentContext } from '-/hooks/useDirectoryContentContext';
 import { getShowUnixHiddenEntries } from '-/reducers/settings';
-import { CommonLocation } from '-/utils/CommonLocation';
+import { resolveRelativePath } from '-/services/utils-io';
+import { TS } from '-/tagspaces.namespace';
+import { Box, Typography } from '@mui/material';
 import { alpha, useTheme } from '@mui/material/styles';
 import { locationType } from '@tagspaces/tagspaces-common/misc';
+import { cleanTrailingDirSeparator } from '@tagspaces/tagspaces-common/paths';
 import Table from 'rc-table';
-import { Ref, forwardRef, useImperativeHandle, useState } from 'react';
+import {
+  Ref,
+  forwardRef,
+  useEffect,
+  useImperativeHandle,
+  useState,
+} from 'react';
 import { NativeTypes } from 'react-dnd-html5-backend';
 import { useSelector } from 'react-redux';
 
 interface Props {
-  //classes: any;
-  location: CommonLocation;
-  //data?: any;
+  location: SubFolder;
   handleFileMoveDrop: (item, monitor) => void;
 }
 
 export interface DirectoryTreeViewRef {
-  changeLocation: (location: CommonLocation) => void;
+  changeLocation: (location: SubFolder) => void;
   closeLocation: () => void;
-  // removeLocation: () => void;
+}
+
+// Re‐declare SubFolder with explicit types
+export interface SubFolder extends TS.FileSystemEntry {
+  /* accessKeyId?: string;
+  bucketName?: string;
+  region?: string;
+  endpointURL?: string;
+  secretAccessKey?: string;
+
+  uuid: string;
+  name: string;
+  path: string;
+  type: string; */
+  children?: SubFolder[];
 }
 
 const DirectoryTreeView = forwardRef(
   (props: Props, ref: Ref<DirectoryTreeViewRef>) => {
     const theme = useTheme();
     const { location, handleFileMoveDrop } = props;
-    const { openDirectory } = useDirectoryContentContext();
-    const { findLocation, changeLocation, getLocationPath } =
+    const { openDirectory, currentDirectoryEntries, currentDirectoryPath } =
+      useDirectoryContentContext();
+    const { findLocation, changeLocation, currentLocationId } =
       useCurrentLocationContext();
 
-    const [data, setData] = useState(undefined);
+    // data is a map from location.uuid → SubFolder[]
+    const [data, setData] = useState<Record<string, SubFolder[]> | undefined>(
+      undefined,
+    );
     const [isExpanded, setExpanded] = useState(false);
     const showUnixHiddenEntries = useSelector(getShowUnixHiddenEntries);
     //const dispatch: AppDispatch = useDispatch();
 
+    // When currentLocationId changes refresh `data`
+    /*useEffect(() => {
+      if (data && currentLocationId === location.locationID) {
+        setData(undefined);
+      }
+    }, [currentLocationId]);*/
+
+    // initially loadSubDirectories or whenever data was just cleared from previous useEffect
+    useEffect(() => {
+      if (
+        data === undefined &&
+        currentLocationId === location.locationID &&
+        currentDirectoryEntries?.length > 0
+      ) {
+        if (
+          currentDirectoryEntries[0].locationID === location.locationID &&
+          cleanTrailingDirSeparator(currentDirectoryPath) ===
+            cleanTrailingDirSeparator(location.path)
+        ) {
+          attachNewChildren(
+            {
+              isFile: false,
+              lmdt: 0,
+              name: location.name,
+              path: currentDirectoryPath,
+              size: 0,
+              locationID: location.locationID,
+              children: [],
+            },
+            processDirs(
+              currentDirectoryEntries,
+              location.locationID,
+              showUnixHiddenEntries,
+            ),
+          );
+        }
+        //loadSubDirectories(location);
+      } else if (!currentLocationId) {
+        setData(undefined);
+        if (isExpanded) {
+          setExpanded(false);
+        }
+      }
+    }, [data, currentLocationId, currentDirectoryEntries]);
+
     useImperativeHandle(ref, () => ({
-      changeLocation(location: CommonLocation) {
-        if (isExpanded && data[location.uuid] !== undefined) {
-          setData(undefined); // comment this to use cached data after expand
+      changeLocation(newLocation: SubFolder) {
+        if (currentLocationId === undefined) {
+          changeLocation(findLocation(newLocation.locationID), true);
+        }
+        if (isExpanded) {
+          // Collapse (and clear) if already expanded
+          setData({ [newLocation.uuid]: undefined });
           setExpanded(false);
         } else {
-          loadSubDirectories(location);
+          loadSubDirectories({
+            isFile: false,
+            lmdt: 0,
+            name: newLocation.name,
+            path: newLocation.path,
+            size: 0,
+            locationID: newLocation.locationID,
+            children: [],
+          });
         }
       },
       closeLocation() {
@@ -78,51 +160,64 @@ const DirectoryTreeView = forwardRef(
 
     const { FILE } = NativeTypes;
 
-    const renderBodyRow = (props) => {
-      if (AppConfig.isElectron || location.type !== locationType.TYPE_CLOUD) {
-        // DnD to S3 location is not permitted in web browser without <input> element
-        return (
-          <TargetFileBox
-            accepts={[FILE]}
-            directoryPath={location.path}
-            locationId={location.uuid}
-          >
-            <CustomDragLayer />
-            <TargetTableMoveFileBox
-              accepts={[DragItemTypes.FILE]}
-              onDrop={handleFileMoveDrop}
-              {...props}
-            />
-          </TargetFileBox>
-        );
+    const renderBodyRow = (propsRow: any) => {
+      const subFolderLocation = propsRow.location;
+      if (subFolderLocation) {
+        const loc = findLocation(subFolderLocation.locationID);
+        if (AppConfig.isElectron || loc.type !== locationType.TYPE_CLOUD) {
+          // DnD to S3 location is not permitted in web browser without <input> element
+          return (
+            <TargetFileBox
+              accepts={[FILE]}
+              directoryPath={subFolderLocation.path}
+              locationId={subFolderLocation.locationID}
+            >
+              <CustomDragLayer />
+              <TargetTableMoveFileBox
+                accepts={[DragItemTypes.FILE]}
+                onDrop={handleFileMoveDrop}
+                {...propsRow}
+              />
+            </TargetFileBox>
+          );
+        }
       }
-      return <tr {...props} />;
+      return <tr {...propsRow} />;
     };
 
-    const renderNameColumnAction = (field) => {
+    const renderNameColumnAction = (field: string, record: SubFolder) => {
       const children = (
-        <span style={{ fontSize: 15 }} title={field}>
+        <Box
+          sx={{
+            fontSize: '15px',
+            display: 'inline-block',
+          }}
+          title={field}
+        >
           <FolderOutlineIcon
-            style={{
+            sx={{
               marginTop: 0,
-              marginLeft: 3,
-              marginRight: 6,
-              marginBottom: -8,
+              marginLeft: '3px',
+              marginRight: '6px',
+              marginBottom: '-8px',
+              display: 'inline-block',
+              color: theme.palette.text.secondary,
             }}
           />
-          {field && field.length > 25 ? field.substr(0, 25) + '...' : field}
-        </span>
+          <Typography
+            sx={{
+              color: theme.palette.text.secondary,
+              display: 'inline',
+            }}
+          >
+            {field.length > 25 ? field.substr(0, 25) + '...' : field}
+          </Typography>
+        </Box>
       );
-      return {
-        children,
-        props: {},
-      };
+      return { children, props: {} };
     };
 
-    const handleCellClick = (record, index) => ({
-      /* onContextMenu: (e) => {
-      this.handleFileContextMenu(e, record.path);
-    }, */
+    const handleCellClick = (record: SubFolder, index: number) => ({
       onClick: () => {
         onRowClick(record);
       },
@@ -131,20 +226,18 @@ const DirectoryTreeView = forwardRef(
     } */
     });
 
-    const onExpand = (expanded, record) => {
-      // console.log('onExpand', expanded + JSON.stringify(record));
+    const onExpand = (expanded: boolean, record: SubFolder) => {
       if (expanded) {
         // this.onRowClick(record);
         loadSubDirectories(record);
       }
     };
 
-    const onRowClick = (subDir) => {
-      const location = findLocation(subDir.uuid);
-      if (location) {
-        //loadSubDirectories(location);
-        changeLocation(location, true);
-        openDirectory(subDir.path, undefined, location);
+    const onRowClick = (subDir: SubFolder) => {
+      const foundLoc = findLocation(subDir.locationID);
+      if (foundLoc) {
+        //changeLocation(foundLoc, true);
+        openDirectory(subDir.path, undefined, foundLoc);
       }
     };
 
@@ -159,226 +252,285 @@ const DirectoryTreeView = forwardRef(
       },
     ];
 
-    const loadSubDirectories = (location: CommonLocation) => {
-      getLocationPath(location).then((locationPath) => {
-        const subFolder = {
-          ...(location.accessKeyId && { accessKeyId: location.accessKeyId }),
-          ...(location.bucketName && { bucketName: location.bucketName }),
-          ...(location.region && { region: location.region }),
-          ...(location.endpointURL && { endpointURL: location.endpointURL }),
-          ...(location.secretAccessKey && {
-            secretAccessKey: location.secretAccessKey,
-          }),
-          uuid: location.uuid,
-          name: location.name,
-          type: location.type,
-          path: locationPath,
-        };
-        getDirectoriesTree(subFolder)
+    const loadSubDirectories = (sub: SubFolder) => {
+      resolveRelativePath(sub.path).then((locationPath) => {
+        getDirectoriesTree(locationPath, sub.locationID)
           .then((children) => {
-            if (children instanceof Array) {
-              if (location.uuid) {
-                const dirsTree = {}; // this.state.dirs; (uncomment to allow open multiple Locations folders) //TODO set settings for this
-                if (location.path === undefined) {
-                  // location
-                  dirsTree[location.uuid] = children;
-                } else {
-                  const dirsCopy = getMergedDirsCopy(location.path, children);
-                  if (dirsCopy) {
-                    dirsTree[location.uuid] = dirsCopy;
-                  } else {
-                    // eslint-disable-next-line no-param-reassign
-                    location.children = children;
-                    dirsTree[location.uuid] = [location];
-                  }
-                }
-                setData(dirsTree);
-                setExpanded(true);
-              }
-            } else if (location.path === undefined) {
-              // if is Location
-              // setData({});
-            }
-            return true;
+            attachNewChildren(sub, children);
           })
           .catch((error) => {
-            console.log('loadSubDirectories', error);
+            console.error('loadSubDirectories error:', error);
           });
       });
     };
 
-    type SubFolder = {
-      accessKeyId?: string;
-      bucketName?: string;
-      region?: string;
-      endpointURL?: string;
-      secretAccessKey?: string;
-      uuid: string;
-      name: string;
-      type: string;
-      path: string;
-      children?: Array<SubFolder>;
-    };
+    function attachNewChildren(sub: SubFolder, children: SubFolder[]) {
+      if (Array.isArray(children)) {
+        // Build a new `data` map just for this one location.uuid
+        let newDirsArray: SubFolder[] | undefined = undefined;
 
-    const getDirectoriesTree = (subFolder: SubFolder) =>
+        // If this is first expansion, data===undefined → use children directly
+        if (!data || !data[sub.locationID]) {
+          newDirsArray = children;
+        } else {
+          // Try to merge under an existing subtree
+          const merged = getMergedDirsCopy(sub.path, children);
+          if (merged) {
+            newDirsArray = merged;
+          } else {
+            // No existing match → just put `loc` with its new `children`
+            newDirsArray = [{ ...sub, children: children }]; //path: locationPath,
+          }
+        }
+
+        if (newDirsArray) {
+          setData({ [sub.locationID]: newDirsArray });
+          setExpanded(true);
+        }
+      }
+    }
+
+    const getDirectoriesTree = (
+      path: string,
+      locationID: string,
+    ): Promise<SubFolder[]> =>
       // const { settings } = getState();
       new Promise((resolve, reject) => {
-        findLocation(subFolder.uuid)
-          .listDirectoryPromise(subFolder.path, [])
+        const loc = findLocation(locationID);
+        loc
+          .listDirectoryPromise(path, [])
           .then((dirEntries) => {
             if (dirEntries !== undefined) {
               // console.debug('listDirectoryPromise resolved:' + dirEntries.length);
-              const directoryContent = [];
-              dirEntries.map((entry) => {
-                if (
-                  entry.name === AppConfig.metaFolder ||
-                  entry.name.endsWith('/' + AppConfig.metaFolder) ||
-                  (!showUnixHiddenEntries && entry.name.startsWith('.'))
-                ) {
-                  return true;
-                }
-                // const enhancedEntry = enhanceEntry(entry);
-                if (!entry.isFile) {
-                  // eslint-disable-next-line no-param-reassign
-                  if (subFolder.accessKeyId) {
-                    entry.accessKeyId = subFolder.accessKeyId;
-                  }
-                  if (subFolder.bucketName) {
-                    entry.bucketName = subFolder.bucketName;
-                  }
-                  if (subFolder.region) {
-                    entry.region = subFolder.region;
-                  }
-                  if (subFolder.endpointURL) {
-                    entry.endpointURL = subFolder.endpointURL;
-                  }
-                  if (subFolder.secretAccessKey) {
-                    entry.secretAccessKey = subFolder.secretAccessKey;
-                  }
-                  entry.uuid = subFolder.uuid;
-                  entry.type = subFolder.type;
-                  entry.children = []; // assuming there are sub folders
-                  directoryContent.push(entry);
-                }
-                return true;
-              });
+              const directoryContent = processDirs(
+                dirEntries,
+                loc.uuid,
+                showUnixHiddenEntries,
+              );
               resolve(directoryContent);
             }
           })
           .catch((error) => {
             console.debug('getDirectoriesTree', error);
-            reject();
+            reject(error);
           });
       });
 
     /**
-     * https://codereview.stackexchange.com/questions/47932/recursion-vs-iteration-of-tree-structure
-     * Dynamically set property of nested object
-     * */
-    const getMergedDirsCopy = (path: string, arrChildren: Array<SubFolder>) => {
-      if (!data) {
-        return arrChildren;
+     * Builds a flat SubFolder list from an array of FileSystemEntry,
+     * keeping only "files" (not directories), skipping any hidden or meta-folder entries.
+     *
+     * @param entries             The array of FileSystemEntry; if undefined, returns [].
+     * @param locationID          A locationID whose fields will be copied into each SubFolder.
+     * @param showHiddenEntries   If false, skip any files whose name starts with a dot.
+     * @returns                   An array of SubFolder objects (children always initialized to []).
+     */
+    function processDirs(
+      entries: TS.FileSystemEntry[] | undefined,
+      locationID: string,
+      showHiddenEntries: boolean,
+    ): SubFolder[] {
+      // Early exit if entries is missing or empty
+      if (!entries || entries.length === 0) {
+        return [];
       }
-      const entries = Object.entries(data);
-      for (const [uuid, arrSubDirs] of entries) {
-        const arr: number = (arrSubDirs as Array<any>).length;
-        let a;
-        for (a = 0; a < arr; a += 1) {
-          if (path === arrSubDirs[a].path) {
-            const copyObj = [...data[uuid]];
-            copyObj[a].children = arrChildren;
-            return copyObj;
-          }
-          if (arrSubDirs[a].children !== undefined) {
-            const stack = [
-              {
-                depth: 0,
-                element: arrSubDirs[a],
-                propPath: '',
-              },
-            ];
-            let stackItem = 0;
-            let current;
-            let children;
-            let depth;
-            let stackPath;
-            let propPath = a + '.children';
 
-            while ((current = stack[stackItem++])) {
-              // get the arguments
-              stackPath = current.propPath;
-              depth = current.depth;
-              current = current.element;
-              children = current.children;
-              if (children !== undefined) {
-                const len = children.length;
-                for (let i = 0; i < len; i++) {
-                  if (path === children[i].path) {
-                    propPath =
-                      propPath +
-                      '.' +
-                      (stackPath ? stackPath + '.' : '') +
-                      i +
-                      '.children';
-                    const copyObj = [...data[uuid]];
+      // Destructure the location so we don’t repeat 'loc.' everywhere
+      /* const {
+        uuid,
+        type,
+        accessKeyId,
+        secretAccessKey,
+        bucketName,
+        region,
+        endpointURL,
+      } = loc;*/
 
-                    let schema = copyObj; // a moving reference to internal objects within obj
-                    const pList = propPath.split('.');
-                    const leng = pList.length;
-                    for (let c = 0; c < leng - 1; c++) {
-                      const elem = pList[c];
-                      if (!schema[elem]) schema[elem] = {};
-                      schema = schema[elem];
-                    }
-                    schema[pList[leng - 1]] = arrChildren;
-                    return copyObj;
-                  }
+      return (
+        entries
+          // 1) Keep only file entries
+          .filter((entry) => !entry.isFile)
+          // 2) Exclude any “meta” or hidden entries
+          .filter((entry) => {
+            const { name } = entry;
 
-                  stack.push({
-                    // pass args via object or array
-                    element: children[i],
-                    depth: depth + 1,
-                    propPath:
-                      (stackPath ? stackPath + '.' : '') + i + '.children',
-                  });
-                }
+            // If hidden entries are disallowed and this name starts with '.'
+            if (!showHiddenEntries) {
+              // && name.startsWith('.')) {
+              // Pull out the meta-folder name and "/metaFolder" once
+              const metaFolderName = AppConfig.metaFolder;
+              const metaSuffix = `/${metaFolderName}`;
+
+              // If the base-name itself is exactly “metaFolderName”, skip it
+              if (name === metaFolderName) {
+                return false;
+              }
+
+              // If name ends with "/metaFolder", skip it.
+              // (Only do this check if your FileSystemEntry.name actually includes a slash.)
+              if (name.endsWith(metaSuffix)) {
+                return false;
               }
             }
+
+            return true;
+          })
+          // 3) Map each remaining FileSystemEntry to SubFolder
+          .map((entry) => ({
+            ...entry,
+            locationID: locationID,
+            children: [] as SubFolder[],
+          }))
+      );
+    }
+
+    /**
+     * Returns an array of SubFolder, where the node with .path === targetPath
+     * has its .children replaced by newChildren. Or `undefined` if no match.
+     */
+    function mergeChildrenAtPath(
+      nodes: SubFolder[],
+      targetPath: string,
+      newChildren: SubFolder[],
+    ): SubFolder[] | undefined {
+      let didChange = false;
+
+      const updatedNodes = nodes.map((node) => {
+        // Direct match
+        if (node.path === targetPath) {
+          didChange = true;
+          return {
+            ...node,
+            children: newChildren,
+          };
+        }
+
+        // Recurse if it has children
+        if (node.children && node.children.length > 0) {
+          const mergedDesc = mergeChildrenAtPath(
+            node.children,
+            targetPath,
+            newChildren,
+          );
+          if (mergedDesc) {
+            didChange = true;
+            return {
+              ...node,
+              children: mergedDesc,
+            };
           }
         }
-      }
-    };
 
-    if (isExpanded && data != undefined) {
+        // No change needed for this branch
+        return node;
+      });
+
+      return didChange ? updatedNodes : undefined;
+    }
+
+    /**
+     * If data is undefined → first‐time expand: return arrChildren directly.
+     * Otherwise, try merging under each top‐level key in `data`.
+     */
+    function getMergedDirsCopy(
+      pathToMatch: string,
+      arrChildren: SubFolder[],
+    ): SubFolder[] | undefined {
+      for (const [uuidKey, subtree] of Object.entries(data)) {
+        const newSubtree = mergeChildrenAtPath(
+          subtree,
+          pathToMatch,
+          arrChildren,
+        );
+        if (newSubtree) {
+          return newSubtree;
+        }
+      }
+      return undefined;
+    }
+
+    if (isExpanded && data !== undefined) {
       return (
-        <Table
-          key={location.uuid}
-          style={{
-            borderRadius: AppConfig.defaultCSSRadius,
-            backgroundColor: alpha(theme.palette.grey.A400, 0.2),
-            marginTop: 5,
-            marginBottom: 5,
-          }}
-          components={{
-            // header: { cell: this.renderHeaderRow },
-            body: { row: renderBodyRow },
-          }}
-          showHeader={false}
-          // className="table"
-          rowKey="path"
-          data={data[location.uuid]}
-          columns={columns}
-          indentSize={20}
-          expandable={{ onExpand }}
-          // expandIcon={this.CustomExpandIcon}
-          // expandIconAsCell
-          // @ts-ignore
-          onRow={(record, index) => ({
-            index,
-            location: record,
-            handleFileMoveDrop: handleFileMoveDrop,
-          })}
-        />
+        <>
+          <style>
+            {`
+              .rc-table-row {
+                display: block !important;
+              }
+
+              .rc-table-content {
+                border: none;
+              }
+
+              .rc-table-cell {
+                border: none;
+                display: block !important;
+              }
+
+              .rc-table-cell:hover {
+                border-radius: 5px;
+                background-color: #dcf3ec88 !important;
+              }
+
+              .rc-table td {
+                border: none;
+                padding: 8px;
+                background: transparent !important;
+                white-space: nowrap;
+              }
+
+              .rc-table tr.rc-table-row-current td {
+                background-color: ${alpha(theme.palette.primary.main, 0.15)} !important;
+              }
+
+              .rc-table tr.dropzone td {
+                background-color: #1dd19f40 !important;
+                border: 3px dashed white;
+                padding: 5px;
+              }
+
+              .rc-table-row-expand-icon {
+                width: 13px !important;
+                height: 13px !important;
+                line-height: 13px !important;
+                margin: 5px;
+                cursor: pointer;
+              }
+           `}
+          </style>
+          <Table
+            key={location.locationID}
+            style={{
+              borderRadius: AppConfig.defaultCSSRadius,
+              backgroundColor: alpha(theme.palette.grey.A400, 0.2),
+              marginTop: 0,
+              marginBottom: 5,
+            }}
+            components={{
+              // header: { cell: this.renderHeaderRow },
+              body: { row: renderBodyRow },
+            }}
+            showHeader={false}
+            // className="table"
+            rowKey="path"
+            data={data[location.locationID]}
+            columns={columns}
+            indentSize={20}
+            expandable={{ onExpand }}
+            rowClassName={(record: SubFolder) =>
+              cleanTrailingDirSeparator(record.path) ===
+              cleanTrailingDirSeparator(currentDirectoryPath)
+                ? 'rc-table-row-current'
+                : ''
+            }
+            // @ts-ignore
+            onRow={(record, index) => ({
+              index,
+              location: record,
+              handleFileMoveDrop: handleFileMoveDrop,
+            })}
+          />
+        </>
       );
     }
     return null;

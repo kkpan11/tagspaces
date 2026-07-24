@@ -16,31 +16,35 @@
  *
  */
 
-import Tooltip from '-/components/Tooltip';
+import TsTooltip from '-/components/TsTooltip';
 import { TS } from '-/tagspaces.namespace';
 import { useSelector } from 'react-redux';
 
+import { useEditedTagLibraryContext } from '-/hooks/useEditedTagLibraryContext';
 import { getTagColor, getTagTextColor } from '-/reducers/settings';
 import { getTagColors } from '-/services/taglibrary-utils';
+import { Box } from '@mui/material';
 import { useTranslation } from 'react-i18next';
 
 interface Props {
+  showFirstTag?: boolean;
   tags: Array<TS.Tag>;
 }
 
 function TagsPreview(props: Props) {
   const { t } = useTranslation();
+  const { tagGroups } = useEditedTagLibraryContext();
   const defaultBackgroundColor = useSelector(getTagColor);
   const defaultTextColor = useSelector(getTagTextColor);
 
-  const { tags } = props;
-  // const allTags = useRef<Array<TS.Tag>>(getAllTags(getTagLibrary()));
+  const { tags, showFirstTag = false } = props;
+
   if (!tags || tags.length < 1) {
     return <></>;
   }
-  let tagNames = t('core:searchTags') + ': ';
-  tags.forEach((tag) => {
-    tagNames = tagNames + tag.title + ' ';
+  let tagNames = t('core:tags') + ': ';
+  tags.forEach((tag, index) => {
+    tagNames = tagNames + (index > 0 ? ', ' : '') + tag.title;
   });
 
   let firstTagColor: string;
@@ -51,6 +55,7 @@ function TagsPreview(props: Props) {
   } else {
     const tagColors = getTagColors(
       tags[0].title,
+      tagGroups,
       defaultTextColor,
       defaultBackgroundColor,
     );
@@ -67,6 +72,7 @@ function TagsPreview(props: Props) {
     } else {
       const tag2Colors = getTagColors(
         tags[1].title,
+        tagGroups,
         defaultTextColor,
         defaultBackgroundColor,
       );
@@ -74,30 +80,39 @@ function TagsPreview(props: Props) {
     }
   }
   return (
-    <Tooltip title={tagNames}>
-      <span
-        style={{
-          display: 'inline-block',
-          minWidth: 15,
-          width: 18,
-          height: 15,
-          marginLeft: 4,
-          marginRight: 4,
-          borderRadius: 7,
-          borderRight: moreThanOne ? 'white 1px solid' : 'initial',
-          boxShadow: moreThanOne ? '4px 0px 0px 0px ' + secondTagColor : 'none',
-          backgroundColor: firstTagColor,
-          fontSize: 11,
-          lineHeight: '16px',
-          color: firstTagTextColor || defaultTextColor, //tag1Colors.textcolor ,
-          textAlign: 'center',
-          // @ts-ignore
-          WebkitAppRegion: 'no-drag',
-        }}
+    <TsTooltip title={tagNames}>
+      <Box
+        sx={
+          {
+            display: 'inline-block',
+            verticalAlign: 'middle',
+            minWidth: '15px',
+            maxWidth: '60px',
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            height: '15px',
+            lineHeight: '15px',
+            marginLeft: '4px',
+            marginRight: '4px',
+            paddingLeft: showFirstTag ? '4px' : '0',
+            paddingRight: showFirstTag ? '4px' : '0',
+            borderRadius: '7px',
+            borderRight: moreThanOne ? 'white 1px solid' : 'initial',
+            boxShadow: moreThanOne
+              ? '4px 0px 0px 0px ' + secondTagColor
+              : 'none',
+            backgroundColor: firstTagColor,
+            fontSize: '11px',
+            color: firstTagTextColor || defaultTextColor, //tag1Colors.textcolor ,
+            textAlign: 'center',
+            WebkitAppRegion: 'no-drag',
+          } as React.CSSProperties
+        }
       >
-        {moreThanOne ? tags.length : '1'}
-      </span>
-    </Tooltip>
+        {showFirstTag ? tags[0].title : moreThanOne ? tags.length : '1'}
+      </Box>
+    </TsTooltip>
   );
 }
 export default TagsPreview;

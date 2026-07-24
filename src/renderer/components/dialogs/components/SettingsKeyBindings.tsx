@@ -27,9 +27,10 @@ import {
 } from '-/reducers/settings';
 import DefaultSettings from '-/reducers/settings-default';
 import { setGlobalShortcuts } from '-/services/utils-io';
+import Box from '@mui/material/Box';
 import ListItem from '@mui/material/ListItem';
 import ListItemText from '@mui/material/ListItemText';
-import Switch from '@mui/material/Switch';
+import TsSwitch from '-/components/TsSwitch';
 import Typography from '@mui/material/Typography';
 import { isStr } from '@tagspaces/tagspaces-common/misc';
 import { useTranslation } from 'react-i18next';
@@ -51,15 +52,15 @@ function SettingsKeyBindings() {
   };
 
   return (
-    <div
-      style={{
+    <Box
+      sx={{
         overflowX: 'hidden',
         overflowY: 'auto',
         height: '100%',
-        marginLeft: 10,
+        marginLeft: '10px',
       }}
     >
-      <Typography variant="body2" style={{ marginBottom: 10 }}>
+      <Typography variant="body2" sx={{ marginBottom: '10px' }}>
         The following key names can be used for defining key bindings:{' '}
         <Typography variant="overline">
           ctrl, command, alt, option, shift, space, backspace, escape, enter,
@@ -68,16 +69,16 @@ function SettingsKeyBindings() {
         plus letters and digits from your keyboard.
       </Typography>
       {AppConfig.isElectron && (
-        <ListItem style={{ paddingLeft: 0, paddingRight: 0 }}>
+        <ListItem sx={{ paddingLeft: 0, paddingRight: 0 }}>
           <ListItemText
             primary={
               <>
                 {t('core:enableGlobalKeyboardShortcuts')}
-                <InfoIcon tooltip="Enables global shortcut for creating new files, file navigation, play/pause audio files or opening the search. Global shortcuts are working even if the app window is not currently in focus or visible." />
+                <InfoIcon tooltip={t('core:globalShortcutsTooltip')} />
               </>
             }
           />
-          <Switch
+          <TsSwitch
             onClick={() => {
               setGlobalKeyBinding(!globalKeyBindingEnabled);
             }}
@@ -91,7 +92,7 @@ function SettingsKeyBindings() {
         )[0];
         return (
           <TsTextField
-            style={{ marginTop: 0, marginBottom: 10 }}
+            sx={{ marginTop: 0, marginBottom: '10px' }}
             key={keyBinding.name}
             autoComplete="off"
             onBlur={(event) =>
@@ -106,7 +107,7 @@ function SettingsKeyBindings() {
           />
         );
       })}
-    </div>
+    </Box>
   );
 }
 

@@ -20,10 +20,16 @@ import { ScopeType } from '-/components/SearchOptions';
 import AWS from 'aws-sdk';
 
 export namespace TS {
+  interface WorkSpace {
+    uuid: string;
+    shortName: string;
+    fullName: string;
+  }
   interface Location {
     uuid: string;
     newuuid?: string;
     name: string;
+    workSpaceId?: string;
     type: string; // 0 - local; 1 - S3; 2 - amplify; 3 - webdav
     authType?: string; // none,password,digest,token
     username?: string;
@@ -42,6 +48,7 @@ export namespace TS {
     reloadOnFocus?: boolean;
     disableThumbnailGeneration?: boolean;
     fullTextIndex?: boolean;
+    extractLinks?: boolean;
     maxIndexAge?: number;
     maxLoops?: number;
     persistTagsInSidecarFile?: boolean;
@@ -100,6 +107,7 @@ export namespace TS {
     tagsOR?: Array<Tag>;
     tagsNOT?: Array<Tag>;
     lastModified?: string;
+    dateCreated?: string;
     fileSize?: string;
     searchBoxing?: ScopeType;
     searchType?: 'fuzzy' | 'semistrict' | 'strict';
@@ -125,6 +133,7 @@ export namespace TS {
     oldEntryPath?: string;
     open?: boolean;
     source?: ActionSource;
+    skipSelection?: boolean;
   }
 
   interface EditMetaAction {
@@ -142,11 +151,6 @@ export namespace TS {
   interface PerspectiveActions {
     action: 'openNext' | 'openPrevious' | 'reload';
   }
-
-  /*  interface KanBanMetaActions {
-    action: 'directoryVisibilityChange';
-    meta: TS.FileSystemEntryMeta;
-  }*/
 
   interface Tag {
     title?: string;
@@ -172,6 +176,7 @@ export namespace TS {
     uuid: Uuid;
     title: string;
     locationId?: Uuid;
+    workSpaceId?: string;
     expanded?: boolean;
     description?: string;
     categoryId?: string;
@@ -189,6 +194,9 @@ export namespace TS {
     name: string;
     isFile: boolean;
     isNewFile?: boolean;
+    isSymbolicLink?: boolean;
+    isBrokenSymlink?: boolean;
+    symlinkTargetPath?: string;
     locationID?: string;
     //isAutoSaveEnabled?: boolean; // common with OpenedEntry
     extension?: string;
@@ -196,14 +204,33 @@ export namespace TS {
     tags?: TS.Tag[];
     isEncrypted?: boolean;
     size: number;
+    cdt?: number;
     lmdt: number;
     path: string;
     url?: string;
     meta?: FileSystemEntryMeta;
     links?: Link[];
+    // Filename-encoded tags parsed once at load time. Cells read this instead
+    // of running extractTagsAsObjects() on every render. Optional because
+    // entries that flow through other paths (e.g. legacy callers, search
+    // results pre-enrichment) may not have it set yet.
+    parsedNameTags?: TS.Tag[];
   }
 
-  type LinkType = 'url' | 'email' | 'tslink' | 'hashtag' | 'mention';
+  interface SearchIndex extends FileSystemEntry {
+    fromTime?: number;
+    toTime?: number;
+    lat?: number;
+    lon?: number;
+  }
+
+  type LinkType =
+    | 'url'
+    | 'email'
+    | 'tslink'
+    | 'hashtag'
+    | 'mention'
+    | 'relative';
 
   interface Link {
     /**
@@ -250,7 +277,7 @@ export namespace TS {
     viewingExtensionId: string;
     editingExtensionPath?: string;
     editingExtensionId?: string;
-    //editMode?: boolean; // TODO move in FilePropertiesContextProvider
+    openInEditMode?: boolean;
     focused?: boolean; // TODO make it mandatory once support for multiple files is added
   }
 
@@ -277,6 +304,16 @@ export namespace TS {
 
   type ThumbnailMode = 'contain' | 'cover' | 'fill' | 'none' | 'scale-down';
 
+  type FolderVizType =
+    | 'tree'
+    | 'radial'
+    | 'treemap'
+    | 'sunburst'
+    | 'linksgraph'
+    | 'tagsgraph';
+
+  type CalendarType = 'years' | 'year' | 'month';
+
   type BookmarksContextData = {
     bookmarks: TS.BookmarkItem[];
     setBookmark: (filePath: string, url: string) => void;
@@ -292,8 +329,21 @@ export namespace TS {
     IPTCTags?: boolean;
   };
 
+  type ExtractProgress = { processed: number; total: number };
+
   type ExifExtractionContextData = {
-    extractAndSaveContent: (options: extractOptions) => Promise<boolean>;
+    extractAndSaveContent: (
+      options: extractOptions,
+      progressOpts?: {
+        signal?: AbortSignal;
+        onProgress?: (progress: TS.ExtractProgress) => void;
+      },
+    ) => Promise<boolean>;
+  };
+
+  type ExtractTagsDialogContextData = {
+    openExtractTagsDialog: (directoryPath: string) => void;
+    closeExtractTagsDialog: () => void;
   };
 
   type HistoryContextData = {
@@ -320,6 +370,41 @@ export namespace TS {
   type BgndDialogContextData = {
     openBgndDialog: (fsEntry: TS.FileSystemEntry) => void;
     closeBgndDialog: () => void;
+  };
+
+  type AiTemplatesContextData = {
+    getTemplate: (key: string) => string;
+    getDefaultTemplate: (key: string) => string;
+    setTemplate: (key: string, value: string) => void;
+  };
+
+  interface FileTemplate {
+    id: string;
+    content: string; // e.g: Created with TagSpaces on 20250605'
+    name?: string;
+    description?: string;
+    type?: 'md' | 'txt' | 'html';
+    fileNameTmpl?: string; // e.g. note, issue, task
+    screenshotUrl?: string; //'dataURL'
+  }
+
+  type FileTemplatesContextData = {
+    getTemplate: (type: string) => FileTemplate | undefined;
+    setTemplate: (id: string, value: FileTemplate) => void;
+    setTemplateActive: (id: string) => void;
+    getTemplates: () => TS.FileTemplate[];
+    resetTemplates: () => void;
+    delTemplate: (id: string) => void;
+  };
+
+  type WorkSpacesContextData = {
+    getWorkSpace: (id: string) => WorkSpace | undefined;
+    setWorkSpace: (wSpace: WorkSpace) => void;
+    delWorkSpace: (id: string) => void;
+    getWorkSpaces: () => WorkSpace[];
+    setCurrentWorkSpaceId: (wSpaceId: string) => void;
+    getCurrentWorkSpace: () => TS.WorkSpace;
+    openNewWorkspaceDialog: (workSpace?: TS.WorkSpace) => void;
   };
 
   interface EditedEntryPath {
@@ -349,6 +434,7 @@ export namespace TS {
     | 'grid'
     | 'list'
     | 'gallery'
+    | 'stream'
     | 'mapique'
     | 'kanban'
     | 'unspecified';
@@ -357,13 +443,14 @@ export namespace TS {
     grid?: FolderSettings;
     list?: FolderSettings;
     gallery?: FolderSettings;
+    stream?: FolderSettings;
     mapique?: FolderSettings;
     kanban?: FolderSettings;
     wiki?: FolderSettings;
   }
 
   interface FolderSettings {
-    settingsKey: string;
+    settingsKey?: string;
     showDirectories?: boolean;
     showTags?: boolean;
     showDetails?: boolean;
@@ -375,12 +462,31 @@ export namespace TS {
     // pageOffset?: number; // KanBan
     filesLimit?: number; // KanBan
     layoutType?: string;
+    folderVizType?: FolderVizType;
+    calendarType?: CalendarType;
+    calendarGroupByDateTags?: boolean;
+    calendarGroupByFolderName?: boolean;
+    calendarGroupByLastModifiedDate?: boolean;
+    calendarGroupByCreationDate?: boolean;
     orderBy?: boolean;
     sortBy?: string;
     singleClickAction?: string;
     entrySize?: EntrySizes;
     thumbnailMode?: ThumbnailMode;
     gridPageLimit?: number;
+    // Cap of visible tag chips per cell in Grid/List perspectives. 0 disables.
+    maxVisibleTags?: number;
+    galleryTypeGroup?: string[];
+    // Stream perspective
+    zoomLevel?: number;
+    dataSource?: 'folder' | 'index' | 'search';
+    streamTypeGroups?: string[];
+    // Which date sources drive the timeline sort/grouping (priority:
+    // parent-folder date > date smart tag > last-modified > created).
+    streamGroupByDateTags?: boolean;
+    streamGroupByFolderName?: boolean;
+    streamGroupByLastModifiedDate?: boolean;
+    streamGroupByCreationDate?: boolean;
     // isLocal?: boolean;
   }
 

@@ -2,7 +2,11 @@
  * Copyright (c) 2016-present - TagSpaces GmbH. All rights reserved.
  */
 import { test, expect } from './fixtures';
-import { defaultLocationName } from './location.helpers';
+import {
+  createPwLocation,
+  createS3Location,
+  defaultLocationName,
+} from './location.helpers';
 import {
   clickOn,
   expectElementExist,
@@ -10,31 +14,25 @@ import {
   selectorFile,
   setInputValue,
 } from './general.helpers';
-import { startTestingApp, stopApp, testDataRefresh } from './hook';
+import { startTestingApp, stopApp } from './hook';
 import { clearDataStorage, closeWelcomePlaywright } from './welcome.helpers';
-import { stopServices } from '../setup-functions';
 
-let s3ServerInstance;
-let webServerInstance;
-let minioServerInstance;
 const testFileName = 'sample.pdf';
 const isMac = /^darwin/.test(process.platform);
 
-test.beforeAll(async ({ s3Server, webServer, minioServer }) => {
-  s3ServerInstance = s3Server;
-  webServerInstance = webServer;
-  minioServerInstance = minioServer;
-  if (global.isS3) {
-    await startTestingApp();
+test.beforeAll(async ({ isWeb, isS3, webServerPort }, testInfo) => {
+  if (isS3) {
+    await startTestingApp({ isWeb, isS3, webServerPort, testInfo });
     await closeWelcomePlaywright();
   } else {
-    await startTestingApp('extconfig.js');
+    await startTestingApp(
+      { isWeb, isS3, webServerPort, testInfo },
+      'extconfig.js',
+    );
   }
 });
 
 test.afterAll(async () => {
-  await stopServices(s3ServerInstance, webServerInstance, minioServerInstance);
-  await testDataRefresh(s3ServerInstance);
   await stopApp();
 });
 
@@ -45,30 +43,27 @@ test.afterEach(async ({ page }, testInfo) => {
   await clearDataStorage();
 });
 
-test.beforeEach(async () => {
-  // if (global.isMinio) {
-  //   await createPwMinioLocation('', defaultLocationName, true);
-  // } else {
-  //   await createPwLocation(defaultLocationPath, defaultLocationName, true);
-  // }
+test.beforeEach(async ({ isS3, testDataDir }) => {
+  if (isS3) {
+    await createS3Location('', defaultLocationName, true);
+  } else {
+    await createPwLocation(testDataDir, defaultLocationName, true);
+  }
   await clickOn('[data-tid=location_' + defaultLocationName + ']');
-  await expectElementExist(getGridFileSelector('empty_folder'), true, 8000);
+  await expectElementExist(getGridFileSelector('empty_folder'), true, 15000);
   // If its have opened file
   // await closeFileProperties();
 });
 
 test.describe('TST13 - Settings Key Bindings [electron]', () => {
-  test('TST1311 - Test show search [electron]', async () => {
+  test('TST1311 - Test show search [electron,s3]', async () => {
     await clickOn(selectorFile);
-    if (isMac) {
-      await global.client.keyboard.press('Meta+KeyK');
-    } else {
-      await global.client.keyboard.press('Control+KeyK');
-    }
-    await expectElementExist('#textQuery', true, 2000);
+    await global.client.keyboard.press('ControlOrMeta+KeyF'); //('ControlOrMeta+KeyK');
+    await global.client.keyboard.press('ControlOrMeta+KeyK'); // on Mac
+    await expectElementExist('#textQuery', true, 5000);
   });
 
-  test('TST1312 - Test rename file [electron]', async () => {
+  test('TST1312 - Test rename file [electron,s3]', async () => {
     const newTitle = 'renamed.pdf';
     await clickOn(getGridFileSelector(testFileName));
     await global.client.keyboard.press('F2');
@@ -87,13 +82,13 @@ test.describe('TST13 - Settings Key Bindings [electron]', () => {
     await expectElementExist(getGridFileSelector(oldName), true, 5000);
   });
 
-  test('TST1313 - Test open file [electron]', async () => {
+  test('TST1313 - Test open file [electron,s3]', async () => {
     await clickOn(getGridFileSelector(testFileName));
     await global.client.keyboard.press('Enter');
     await expectElementExist('[data-tid=detailsTabTID]', true, 5000);
   });
 
-  test('TST1315 - Test delete file [electron]', async () => {
+  test('TST1315 - Test delete file [electron,s3]', async () => {
     await clickOn(getGridFileSelector(testFileName));
     if (isMac) {
       await global.client.keyboard.press('F8');
@@ -104,7 +99,7 @@ test.describe('TST13 - Settings Key Bindings [electron]', () => {
     await expectElementExist(getGridFileSelector(testFileName), false);
   });
 
-  test('TST1316 - Show help and feedback panel in the left [electron]', async () => {
+  test('TST1316 - Show help and feedback panel in the left [electron,s3]', async () => {
     await clickOn(getGridFileSelector('sample.txt'));
     await global.client.keyboard.press('F1');
     await expectElementExist('[data-tid=aboutDialog]', true);

@@ -16,22 +16,26 @@
  *
  */
 
-import React, { ReactNode } from 'react';
-import { DropTargetMonitor, useDrop } from 'react-dnd';
-import { alpha, useTheme } from '@mui/material/styles';
-import { useTranslation } from 'react-i18next';
 import AppConfig from '-/AppConfig';
-import { useDispatch } from 'react-redux';
-import { actions as AppActions, AppDispatch } from '-/reducers/app';
-import { TS } from '-/tagspaces.namespace';
-import { Identifier } from 'dnd-core';
+import { useFileUploadDialogContext } from '-/components/dialogs/hooks/useFileUploadDialogContext';
+import { useMenuContext } from '-/components/dialogs/hooks/useMenuContext';
 import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
 import { useDirectoryContentContext } from '-/hooks/useDirectoryContentContext';
-import { useNotificationContext } from '-/hooks/useNotificationContext';
-import { useIOActionsContext } from '-/hooks/useIOActionsContext';
 import { useEditedEntryMetaContext } from '-/hooks/useEditedEntryMetaContext';
-import { useFileUploadDialogContext } from '-/components/dialogs/hooks/useFileUploadDialogContext';
-import { useMoveOrCopyFilesDialogContext } from '-/components/dialogs/hooks/useMoveOrCopyFilesDialogContext';
+import { useFileUploadContext } from '-/hooks/useFileUploadContext';
+import { useIOActionsContext } from '-/hooks/useIOActionsContext';
+import { useNotificationContext } from '-/hooks/useNotificationContext';
+import { actions as AppActions, AppDispatch } from '-/reducers/app';
+import { TS } from '-/tagspaces.namespace';
+import { alpha, useTheme } from '@mui/material/styles';
+import { extractFileExtension } from '@tagspaces/tagspaces-common/paths';
+import { getUuid } from '@tagspaces/tagspaces-common/utils-io';
+import { Identifier } from 'dnd-core';
+import React, { ReactNode } from 'react';
+import { DropTargetMonitor, useDrop } from 'react-dnd';
+import { useTranslation } from 'react-i18next';
+import { useDispatch } from 'react-redux';
+import { CommonLocation } from '-/utils/CommonLocation';
 
 type DragItem = { files: File[]; items: DataTransferItemList };
 type DragProps = {
@@ -52,13 +56,13 @@ function TargetFileBox(props: Props) {
   const theme = useTheme();
   const dispatch: AppDispatch = useDispatch();
   const { openFileUploadDialog } = useFileUploadDialogContext();
-  const { currentLocation, findLocalLocation, findLocation } =
-    useCurrentLocationContext();
-  const { uploadFilesAPI } = useIOActionsContext();
+  const { findLocalLocation, findLocation } = useCurrentLocationContext();
+  const { setMetaUpload } = useFileUploadContext();
+  const { uploadFilesAPI, uploadMeta } = useIOActionsContext();
   const { showNotification } = useNotificationContext();
   const { setReflectMetaActions } = useEditedEntryMetaContext();
   const { currentDirectoryPath } = useDirectoryContentContext();
-  const { openMoveOrCopyFilesDialog } = useMoveOrCopyFilesDialogContext();
+  const { openMoveCopyFilesDialog } = useMenuContext();
   //const ref = useRef<HTMLDivElement>(null);
   const { children, accepts, directoryPath, style, locationId } = props;
   const dirPath = directoryPath ? directoryPath : currentDirectoryPath;
@@ -67,8 +71,11 @@ function TargetFileBox(props: Props) {
     dispatch(AppActions.onUploadProgress(progress, abort, fileName));
   };
 
-  const handleCopyFiles = (files: Array<File>) => {
-    if (currentLocation?.isReadOnly) {
+  const handleCopyFiles = (
+    files: Array<File>,
+    targetLocation: CommonLocation,
+  ) => {
+    if (targetLocation?.isReadOnly) {
       showNotification(t('core:dndDisabledReadOnlyMode'), 'error', true);
       return Promise.reject(t('core:dndDisabledReadOnlyMode'));
     }
@@ -76,7 +83,7 @@ function TargetFileBox(props: Props) {
       console.log('Dropped files: ' + JSON.stringify(files));
       if (dirPath === undefined) {
         showNotification(
-          'Importing files failed, because no folder is opened in TagSpaces!',
+          t('core:importingFilesFailedNoFolderOpen'),
           'error',
           true,
         );
@@ -87,19 +94,29 @@ function TargetFileBox(props: Props) {
         );
       }
       dispatch(AppActions.resetProgress());
-      openFileUploadDialog();
+      openFileUploadDialog(undefined, undefined);
       const localLocation = findLocalLocation();
       const sourceLocationId = localLocation ? localLocation.uuid : undefined;
       return uploadFilesAPI(
         files,
         dirPath,
         onUploadProgress,
-        true,
         false,
-        undefined,
+        false,
+        targetLocation.uuid,
         sourceLocationId,
       )
         .then((fsEntries: Array<TS.FileSystemEntry>) => {
+          setMetaUpload(() =>
+            uploadMeta(
+              files.map((f) => f.path),
+              dirPath,
+              onUploadProgress,
+              false,
+              targetLocation.uuid,
+              sourceLocationId,
+            ),
+          );
           const actions: TS.EditMetaAction[] = fsEntries.map((entry) => ({
             action: 'thumbGenerate',
             entry: entry,
@@ -113,6 +130,38 @@ function TargetFileBox(props: Props) {
     }
     return Promise.reject(new Error('on files'));
   };
+
+  function openDropChoiceDialog(
+    files: File[],
+    targetDirPath: string,
+    targetLocationUuid: string,
+  ) {
+    const isDirsPromise: Promise<boolean[]> = AppConfig.isElectron
+      ? Promise.all(
+          files.map((file) =>
+            window.electronIO.ipcRenderer.invoke('isDirectory', file.path),
+          ),
+        )
+      : Promise.resolve(files.map(() => true));
+    return isDirsPromise.then((isDirsArray) => {
+      const entries: TS.FileSystemEntry[] = files
+        .map((file, index) => ({
+          uuid: getUuid(),
+          name: file.name,
+          path: file.path,
+          isFile: !isDirsArray[index],
+          extension: extractFileExtension(file.path),
+          size: file.size,
+          cdt: (file as any).cdt,
+          lmdt: file.lastModified,
+        }))
+        .filter((entry) => entry.isFile);
+      if (entries.length === 0) {
+        return;
+      }
+      openMoveCopyFilesDialog(entries, targetDirPath, targetLocationUuid, true);
+    });
+  }
 
   const [collectedProps, drop] = useDrop<DragItem, unknown, DragProps>(
     () => ({
@@ -132,15 +181,15 @@ function TargetFileBox(props: Props) {
               return file;
             });
           }
-          const location = findLocation(locationId);
+          const targetLocation = findLocation(locationId);
           if (
             AppConfig.isElectron &&
-            !location.haveObjectStoreSupport() &&
-            !location.haveWebDavSupport()
+            !targetLocation.haveObjectStoreSupport() &&
+            !targetLocation.haveWebDavSupport()
           ) {
-            return openMoveOrCopyFilesDialog(files, dirPath, location.uuid);
+            return openDropChoiceDialog(files, dirPath, targetLocation.uuid);
           } else {
-            return handleCopyFiles(files);
+            return handleCopyFiles(files, targetLocation);
           }
         }
       },
@@ -160,9 +209,9 @@ function TargetFileBox(props: Props) {
       style={{
         ...style,
         ...(isActive && {
-          boxShadow: 'inset 0px 0px 0 5px ' + theme.palette.primary.main,
+          // boxShadow: 'inset 0px 0px 0 5px ' + theme.palette.primary.main,
           borderRadius: 5,
-          backgroundColor: alpha(theme.palette.primary.main, 0.5),
+          backgroundColor: alpha(theme.palette.primary.main, 0.7),
         }),
       }}
     >

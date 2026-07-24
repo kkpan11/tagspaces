@@ -16,20 +16,115 @@
  *
  */
 
+import AppConfig from '-/AppConfig';
 import { CloseDialogIcon } from '-/components/CommonIcons';
 import TsButton from '-/components/TsButton';
 import TsIconButton from '-/components/TsIconButton';
+import { BuyProDialogContext } from '-/components/dialogs/hooks/BuyProDialogContextProvider';
 import { useProTeaserDialogContext } from '-/components/dialogs/hooks/useProTeaserDialogContext';
 import { openURLExternally } from '-/services/utils-io';
+import { keyframes } from '@emotion/react';
+import AccountTreeTwoToneIcon from '@mui/icons-material/AccountTreeTwoTone';
+import AutoAwesomeTwoToneIcon from '@mui/icons-material/AutoAwesomeTwoTone';
+import CalendarMonthTwoToneIcon from '@mui/icons-material/CalendarMonthTwoTone';
 import CameraTwoToneIcon from '@mui/icons-material/CameraTwoTone';
+import FolderTwoToneIcon from '@mui/icons-material/FolderTwoTone';
+import HistoryTwoToneIcon from '@mui/icons-material/HistoryTwoTone';
 import MapTwoToneIcon from '@mui/icons-material/MapTwoTone';
 import ViewKanbanTwoToneIcon from '@mui/icons-material/ViewKanbanTwoTone';
-import { Box, ButtonGroup } from '@mui/material';
+import { Box, ButtonGroup, SvgIconTypeMap } from '@mui/material';
 import CardActions from '@mui/material/CardActions';
 import CardContent from '@mui/material/CardContent';
+import { OverridableComponent } from '@mui/material/OverridableComponent';
 import Typography from '@mui/material/Typography';
 import Links from 'assets/links';
+import { useContext, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+
+const floatAnim = keyframes`
+  0%   { transform: translateY(0px)  scale(1); }
+  50%  { transform: translateY(-7px) scale(1.15); }
+  100% { transform: translateY(0px)  scale(1); }
+`;
+
+const PRO_ADS_STORAGE_KEY = 'tsProTeaserAdIndex';
+
+interface ProAd {
+  slideId: string;
+  Icon: OverridableComponent<SvgIconTypeMap>;
+  color: string;
+  headlineKey: string;
+  subtextKey: string;
+}
+
+const proAds: ProAd[] = [
+  {
+    slideId: 'kanban',
+    Icon: ViewKanbanTwoToneIcon,
+    color: '#a466aa',
+    headlineKey: 'peri:proTeaserKanbanHeadline',
+    subtextKey: 'peri:proTeaserKanbanSubtext',
+  },
+  {
+    slideId: 'gallery',
+    Icon: CameraTwoToneIcon,
+    color: '#f7901e',
+    headlineKey: 'peri:proTeaserGalleryHeadline',
+    subtextKey: 'peri:proTeaserGallerySubtext',
+  },
+  {
+    slideId: 'mapique',
+    Icon: MapTwoToneIcon,
+    color: '#33b5be',
+    headlineKey: 'peri:proTeaserMapiqueHeadline',
+    subtextKey: 'peri:proTeaserMapiqueSubtext',
+  },
+  {
+    slideId: 'folderviz',
+    Icon: AccountTreeTwoToneIcon,
+    color: '#6aaa44',
+    headlineKey: 'peri:proTeaserFoldervizHeadline',
+    subtextKey: 'peri:proTeaserFoldervizSubtext',
+  },
+  {
+    slideId: 'calendar',
+    Icon: CalendarMonthTwoToneIcon,
+    color: '#e57373',
+    headlineKey: 'peri:proTeaserCalendarHeadline',
+    subtextKey: 'peri:proTeaserCalendarSubtext',
+  },
+  {
+    slideId: 'ai',
+    Icon: AutoAwesomeTwoToneIcon,
+    color: '#7c4dff',
+    headlineKey: 'peri:proTeaserAiHeadline',
+    subtextKey: 'peri:proTeaserAiSubtext',
+  },
+  {
+    slideId: 'revisions',
+    Icon: HistoryTwoToneIcon,
+    color: '#0288d1',
+    headlineKey: 'peri:proTeaserRevisionsHeadline',
+    subtextKey: 'peri:proTeaserRevisionsSubtext',
+  },
+  {
+    slideId: 'folderColor',
+    Icon: FolderTwoToneIcon,
+    color: '#ff8f00',
+    headlineKey: 'peri:proTeaserFolderColorHeadline',
+    subtextKey: 'peri:proTeaserFolderColorSubtext',
+  },
+];
+
+function getNextAdIndex(): number {
+  const stored = parseInt(
+    localStorage.getItem(PRO_ADS_STORAGE_KEY) ?? '-1',
+    10,
+  );
+  const next = (stored + 1) % proAds.length;
+  localStorage.setItem(PRO_ADS_STORAGE_KEY, String(next));
+  return next;
+}
 
 interface Props {
   setShowTeaserBanner: (teaserVisibility: boolean) => void;
@@ -38,26 +133,44 @@ interface Props {
 function ProTeaser(props: Props) {
   const { setShowTeaserBanner } = props;
   const { openProTeaserDialog } = useProTeaserDialogContext();
-
+  const { openBuyProDialog } = useContext(BuyProDialogContext);
   const { t } = useTranslation();
+
+  // On Capacitor mobile the upgrade CTA opens the in-app StoreKit / Play
+  // Billing sheet (both stores forbid linking out from the purchase flow).
+  // Desktop and web keep the external products page. Mirrors ProTeaserDialog.
+  const onUpgradeClick = AppConfig.isCapacitor
+    ? () => openBuyProDialog?.()
+    : () => openURLExternally(Links.links.productsOverview, true);
+
+  const [adIndex] = useState<number>(getNextAdIndex);
+  const ad = proAds[adIndex];
+  const { Icon } = ad;
+
   return (
-    <Box style={{ display: 'block', marginBottom: 0 }}>
+    <Box
+      sx={{
+        display: 'block',
+        marginBottom: 0,
+        '&:hover .pro-teaser-icon': {
+          animation: `${floatAnim} 1.2s ease-in-out infinite`,
+          filter: `drop-shadow(0 0 6px ${ad.color}99)`,
+        },
+      }}
+    >
       <CardContent
-        style={{
-          paddingLeft: 5,
-          paddingRight: 5,
+        sx={{
+          paddingLeft: '5px',
+          paddingRight: '5px',
           paddingTop: 0,
           paddingBottom: 0,
           textAlign: 'center',
           cursor: 'pointer',
         }}
       >
-        <Typography color="textSecondary" variant="caption">
-          <span style={{ textTransform: 'lowercase' }}>
-            {t('core:achieveMore')}
-          </span>
+        <Typography variant="caption" sx={{ textTransform: 'lowercase' }}>
           <TsIconButton
-            style={{ right: 5, position: 'absolute' }}
+            sx={{ right: '5px', position: 'absolute' }}
             size="small"
             aria-label="close"
             onClick={(event) => {
@@ -69,52 +182,66 @@ function ProTeaser(props: Props) {
             <CloseDialogIcon fontSize="small" />
           </TsIconButton>
         </Typography>
-        <br />
         <div
           role="button"
-          onClick={() => openProTeaserDialog()}
-          style={{
-            cursor: 'pointer',
-          }}
+          onClick={() => openProTeaserDialog(ad.slideId)}
+          style={{ cursor: 'pointer' }}
         >
-          <b>TagSpaces Pro</b>
-          {/* <img style={{ height: 35 }} src={ProTextLogo} alt="" /> */}
-          <br />
-          <ViewKanbanTwoToneIcon
-            style={{
-              fontSize: 50,
-              color: '#a466aa',
+          <Icon
+            className="pro-teaser-icon"
+            sx={{
+              fontSize: '44px',
+              color: ad.color,
+              mt: '2px',
+              mb: '-4px',
+              transition: 'filter 0.3s ease, color 0.3s ease',
             }}
           />
-          <CameraTwoToneIcon style={{ fontSize: 50, color: '#f7901e' }} />
-          <MapTwoToneIcon style={{ fontSize: 50, color: '#33b5be' }} />
-          {/* <img style={{ maxHeight: 60 }} src={ProTeaserImage} alt="" /> */}
+          <Typography
+            variant="body2"
+            sx={{ fontWeight: 'bold', lineHeight: 1.2 }}
+          >
+            {t(ad.headlineKey)}
+          </Typography>
+          <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+            {t(ad.subtextKey)}
+          </Typography>
         </div>
       </CardContent>
       <CardActions
-        style={{
+        sx={{
           flexDirection: 'row',
           justifyContent: 'center',
-          marginTop: -10,
+          marginTop: '2px',
         }}
       >
         <ButtonGroup>
           <TsButton
-            style={{ borderTopRightRadius: 0, borderBottomRightRadius: 0 }}
+            sx={{
+              borderTopRightRadius: 0,
+              borderBottomRightRadius: 0,
+              fontWeight: 300,
+            }}
+            variant="text"
             onClick={(event: any) => {
               event.preventDefault();
               event.stopPropagation();
-              openProTeaserDialog();
+              openProTeaserDialog(ad.slideId);
             }}
           >
             {t('showMeMore')}
           </TsButton>
           <TsButton
-            style={{ borderTopLeftRadius: 0, borderBottomLeftRadius: 0 }}
+            sx={{
+              borderTopLeftRadius: 0,
+              borderBottomLeftRadius: 0,
+              fontWeight: 300,
+            }}
+            variant="text"
             onClick={(event: any) => {
               event.preventDefault();
               event.stopPropagation();
-              openURLExternally(Links.links.productsOverview, true);
+              onUpgradeClick();
             }}
           >
             {t('upgrade')}

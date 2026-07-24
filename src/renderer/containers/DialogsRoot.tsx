@@ -16,79 +16,87 @@
  *
  */
 
-import React from 'react';
-import { EntryExistDialogContextProvider } from '-/components/dialogs/hooks/EntryExistDialogContextProvider';
-import { CreateEditLocationDialogContextProvider } from '-/components/dialogs/hooks/CreateEditLocationDialogContextProvider';
-import { MoveOrCopyFilesDialogContextProvider } from '-/components/dialogs/hooks/MoveOrCopyFilesDialogContextProvider';
-import { CreateDirectoryDialogContextProvider } from '-/components/dialogs/hooks/CreateDirectoryDialogContextProvider';
-import { ProgressDialogContextProvider } from '-/components/dialogs/hooks/ProgressDialogContextProvider';
-import { NewFileDialogContextProvider } from '-/components/dialogs/hooks/NewFileDialogContextProvider';
-import { NewAudioDialogContextProvider } from '-/components/dialogs/hooks/NewAudioDialogContextProvider';
-import { LicenseDialogContextProvider } from '-/components/dialogs/hooks/LicenseDialogContextProvider';
-import { ThirdPartyLibsDialogContextProvider } from '-/components/dialogs/hooks/ThirdPartyLibsDialogContextProvider';
 import { AboutDialogContextProvider } from '-/components/dialogs/hooks/AboutDialogContextProvider';
-import { OnboardingDialogContextProvider } from '-/components/dialogs/hooks/OnboardingDialogContextProvider';
-import { KeyboardDialogContextProvider } from '-/components/dialogs/hooks/KeyboardDialogContextProvider';
-import { LinkDialogContextProvider } from '-/components/dialogs/hooks/LinkDialogContextProvider';
-import { ProTeaserDialogContextProvider } from '-/components/dialogs/hooks/ProTeaserDialogContextProvider';
-import { SettingsDialogContextProvider } from '-/components/dialogs/hooks/SettingsDialogContextProvider';
-import { DeleteMultipleEntriesDialogContextProvider } from '-/components/dialogs/hooks/DeleteMultipleEntriesDialogContextProvider';
-import { ResolveConflictContextProvider } from '-/components/dialogs/hooks/ResolveConflictContextProvider';
-import { FileUploadContextProvider } from '-/hooks/FileUploadContextProvider';
-import { DownloadUrlContextProvider } from '-/components/dialogs/hooks/DownloadUrlDialogContextProvider';
 import { AiGenerationDialogContextProvider } from '-/components/dialogs/hooks/AiGenerationDialogContextProvider';
+import { CreateDirectoryDialogContextProvider } from '-/components/dialogs/hooks/CreateDirectoryDialogContextProvider';
+import { CreateEditLocationDialogContextProvider } from '-/components/dialogs/hooks/CreateEditLocationDialogContextProvider';
+import { DeleteMultipleEntriesDialogContextProvider } from '-/components/dialogs/hooks/DeleteMultipleEntriesDialogContextProvider';
+import { DownloadUrlContextProvider } from '-/components/dialogs/hooks/DownloadUrlDialogContextProvider';
+import { EntryExistDialogContextProvider } from '-/components/dialogs/hooks/EntryExistDialogContextProvider';
+import { KeyboardDialogContextProvider } from '-/components/dialogs/hooks/KeyboardDialogContextProvider';
+import { LicenseDialogContextProvider } from '-/components/dialogs/hooks/LicenseDialogContextProvider';
+import { FilePickerDialogContextProvider } from '-/components/dialogs/hooks/FilePickerDialogContextProvider';
+import { LinkDialogContextProvider } from '-/components/dialogs/hooks/LinkDialogContextProvider';
 import { MenuContextProvider } from '-/components/dialogs/hooks/MenuContextProvider';
+import { MobileTeaserDialogContextProvider } from '-/components/dialogs/hooks/MobileTeaserDialogContextProvider';
+import { NewAudioDialogContextProvider } from '-/components/dialogs/hooks/NewAudioDialogContextProvider';
+import { NewFileDialogContextProvider } from '-/components/dialogs/hooks/NewFileDialogContextProvider';
+import { OnboardingDialogContextProvider } from '-/components/dialogs/hooks/OnboardingDialogContextProvider';
+import { PerspectiveOnboardingContextProvider } from '-/components/dialogs/hooks/PerspectiveOnboardingContextProvider';
+import { BuyProDialogContextProvider } from '-/components/dialogs/hooks/BuyProDialogContextProvider';
+import { ProTeaserDialogContextProvider } from '-/components/dialogs/hooks/ProTeaserDialogContextProvider';
+import { ProgressDialogContextProvider } from '-/components/dialogs/hooks/ProgressDialogContextProvider';
+import { ResolveConflictContextProvider } from '-/components/dialogs/hooks/ResolveConflictContextProvider';
+import { SettingsDialogContextProvider } from '-/components/dialogs/hooks/SettingsDialogContextProvider';
+import { ThirdPartyLibsDialogContextProvider } from '-/components/dialogs/hooks/ThirdPartyLibsDialogContextProvider';
+import React from 'react';
 
 export type DialogsRootProps = {
   children: React.ReactNode;
 };
 
+// Ordered list of providers - can be easily added/removed/reordered
+const providers = [
+  EntryExistDialogContextProvider,
+  DeleteMultipleEntriesDialogContextProvider,
+  CreateEditLocationDialogContextProvider,
+  CreateDirectoryDialogContextProvider,
+  ProgressDialogContextProvider,
+  // PerspectiveOnboardingContextProvider must wrap SettingsDialogContextProvider
+  // so the "Show intro" button rendered inside the Settings dialog can call
+  // openPerspectiveOnboarding(). React Context respects the React tree (not
+  // the DOM), and the Settings dialog's children are descendants of whichever
+  // providers wrap it from the outside.
+  PerspectiveOnboardingContextProvider,
+  SettingsDialogContextProvider,
+  // FilePickerDialogContextProvider must wrap NewFileDialogContextProvider so
+  // the "Choose file or folder" button in the Create Link File dialog (rendered
+  // by NewFileDialog → CreateLink) can call openFilePickerDialog(). React
+  // Context follows the React tree, and each dialog provider renders its dialog
+  // as a sibling that precedes {children} — so a provider listed later here is
+  // NOT an ancestor of an earlier dialog's content.
+  FilePickerDialogContextProvider,
+  NewFileDialogContextProvider,
+  NewAudioDialogContextProvider,
+  // OnboardingDialogContextProvider must wrap LicenseDialogContextProvider
+  // so the license-accept handler can chain into openOnboardingDialog().
+  OnboardingDialogContextProvider,
+  LicenseDialogContextProvider,
+  ThirdPartyLibsDialogContextProvider,
+  // BuyProDialogContextProvider must wrap every dialog whose CTA opens the
+  // Buy Pro sheet on Capacitor — currently AboutDialog ("Upgrade to Pro")
+  // and ProTeaserDialog ("Upgrade"). Each of those dialogs renders as a
+  // sibling of {children}, and reduceRight makes earlier array entries the
+  // outer (ancestor) providers, so BuyProDialogContextProvider must be
+  // listed BEFORE all of them or useContext(BuyProDialogContext) resolves to
+  // the default (undefined) and the CTA silently no-ops.
+  BuyProDialogContextProvider,
+  AboutDialogContextProvider,
+  KeyboardDialogContextProvider,
+  LinkDialogContextProvider,
+  ProTeaserDialogContextProvider,
+  MobileTeaserDialogContextProvider,
+  AiGenerationDialogContextProvider,
+  ResolveConflictContextProvider,
+  DownloadUrlContextProvider,
+  MenuContextProvider,
+];
+
 function DialogsRoot({ children }: DialogsRootProps) {
-  return (
-    <EntryExistDialogContextProvider>
-      <DeleteMultipleEntriesDialogContextProvider>
-        <FileUploadContextProvider>
-          <CreateEditLocationDialogContextProvider>
-            <MoveOrCopyFilesDialogContextProvider>
-              <CreateDirectoryDialogContextProvider>
-                <ProgressDialogContextProvider>
-                  <NewFileDialogContextProvider>
-                    <NewAudioDialogContextProvider>
-                      <LicenseDialogContextProvider>
-                        <ThirdPartyLibsDialogContextProvider>
-                          <AboutDialogContextProvider>
-                            <OnboardingDialogContextProvider>
-                              <KeyboardDialogContextProvider>
-                                <LinkDialogContextProvider>
-                                  <ProTeaserDialogContextProvider>
-                                    <AiGenerationDialogContextProvider>
-                                      <SettingsDialogContextProvider>
-                                        <ResolveConflictContextProvider>
-                                          <DownloadUrlContextProvider>
-                                            <MenuContextProvider>
-                                              {children}
-                                            </MenuContextProvider>
-                                          </DownloadUrlContextProvider>
-                                        </ResolveConflictContextProvider>
-                                      </SettingsDialogContextProvider>
-                                    </AiGenerationDialogContextProvider>
-                                  </ProTeaserDialogContextProvider>
-                                </LinkDialogContextProvider>
-                              </KeyboardDialogContextProvider>
-                            </OnboardingDialogContextProvider>
-                          </AboutDialogContextProvider>
-                        </ThirdPartyLibsDialogContextProvider>
-                      </LicenseDialogContextProvider>
-                    </NewAudioDialogContextProvider>
-                  </NewFileDialogContextProvider>
-                </ProgressDialogContextProvider>
-              </CreateDirectoryDialogContextProvider>
-            </MoveOrCopyFilesDialogContextProvider>
-          </CreateEditLocationDialogContextProvider>
-        </FileUploadContextProvider>
-      </DeleteMultipleEntriesDialogContextProvider>
-    </EntryExistDialogContextProvider>
-  );
+  return providers.reduceRight(
+    (acc, Provider) => <Provider>{acc}</Provider>,
+    children as any,
+  ) as JSX.Element;
 }
 
 export default DialogsRoot;

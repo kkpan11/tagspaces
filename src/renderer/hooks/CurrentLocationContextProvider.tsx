@@ -16,43 +16,59 @@
  *
  */
 
+import { useNotificationContext } from '-/hooks/useNotificationContext';
+import { AppDispatch } from '-/reducers/app';
+import {
+  actions as LocationActions,
+  getDefaultLocationId,
+  getLocations,
+} from '-/reducers/locations';
+import { getPersistTagsInSidecarFile, isFirstRun } from '-/reducers/settings';
+import AppConfig from '-/AppConfig';
+import {
+  getDevicePaths,
+  instanceId,
+  resolveRelativePath,
+  toTsLocation,
+} from '-/services/utils-io';
+import { TS } from '-/tagspaces.namespace';
+import { CommonLocation } from '-/utils/CommonLocation';
+import { clearAllURLParams, getURLParameter } from '-/utils/dom';
+import {
+  canMoveDown,
+  canMoveUp,
+  findLocalLocation as findLocalLocationUtil,
+  findLocationById,
+  findLocationContainingPath,
+  getDirSeparatorForLocation,
+  getFirstReadWriteLocation,
+  getLocationPathString,
+  getLocationPositionByUUID,
+  validateMoveLocation,
+} from '-/utils/locationUtils';
+import versionMeta from '-/version.json';
+import { locationType } from '@tagspaces/tagspaces-common/misc';
+import { getUuid } from '@tagspaces/tagspaces-common/utils-io';
 import React, {
   createContext,
-  useCallback,
   useEffect,
   useMemo,
   useReducer,
   useRef,
   useState,
 } from 'react';
-import { useDispatch, useSelector } from 'react-redux';
-import { AppDispatch } from '-/reducers/app';
 import { useTranslation } from 'react-i18next';
-import {
-  actions as LocationActions,
-  getDefaultLocationId,
-  getLocations,
-} from '-/reducers/locations';
-import { clearAllURLParams, getURLParameter } from '-/utils/dom';
-import { locationType } from '@tagspaces/tagspaces-common/misc';
-import { getUuid } from '@tagspaces/tagspaces-common/utils-io';
-import { useNotificationContext } from '-/hooks/useNotificationContext';
-import { getPersistTagsInSidecarFile } from '-/reducers/settings';
-import AppConfig from '../AppConfig';
-import versionMeta from '-/version.json';
-import { CommonLocation } from '-/utils/CommonLocation';
-import { getDevicePaths, instanceId, toTsLocation } from '-/services/utils-io';
-import { TS } from '-/tagspaces.namespace';
+import { useDispatch, useSelector } from 'react-redux';
 
 type CurrentLocationContextData = {
   locations: CommonLocation[];
   currentLocation: CommonLocation;
   currentLocationId: string;
-  //readOnlyMode: boolean;
   skipInitialDirList: boolean;
   persistTagsInSidecarFile: boolean;
   getLocationPath: (location: CommonLocation) => Promise<string>;
   findLocation: (locationID?: string) => CommonLocation | undefined;
+  findLocationByPath: (entryPath: string) => CommonLocation | undefined;
   getDirSeparator: (locationID?: string) => string;
   findLocalLocation: () => CommonLocation;
   changeLocation: (location: CommonLocation, skipInitDirList?: boolean) => void;
@@ -91,11 +107,11 @@ export const CurrentLocationContext = createContext<CurrentLocationContextData>(
     locations: undefined,
     currentLocation: undefined,
     currentLocationId: undefined,
-    //readOnlyMode: false,
     skipInitialDirList: false,
     persistTagsInSidecarFile: true,
     getLocationPath: undefined,
     findLocation: undefined,
+    findLocationByPath: undefined,
     getDirSeparator: undefined,
     findLocalLocation: undefined,
     changeLocation: () => {},
@@ -133,6 +149,7 @@ export const CurrentLocationContextProvider = ({
 
   const locations: TS.Location[] = useSelector(getLocations);
   const defaultLocationId = useSelector(getDefaultLocationId);
+  const firstRun: boolean = useSelector(isFirstRun);
   const settingsPersistTagsInSidecarFile: boolean = useSelector(
     getPersistTagsInSidecarFile,
   );
@@ -140,119 +157,122 @@ export const CurrentLocationContextProvider = ({
   const allLocations = useRef<CommonLocation[]>(
     locations.map((l) => new CommonLocation(l)),
   );
-  const currentLocationId = useRef<string>(undefined); //defaultLocationId);
-  const selectedLocation = useRef<CommonLocation>(undefined);
+  const currentLocationId = useRef<string | undefined>(undefined);
+  const selectedLocation = useRef<CommonLocation | undefined>(undefined);
   const skipInitialDirList = useRef<boolean>(false);
   const initLocations = useRef<boolean>(false);
+  const broadcastRef = useRef<BroadcastChannel | null>(null);
   const [
     locationDirectoryContextMenuAnchorEl,
     setLocationDirectoryContextMenuAnchorEl,
   ] = useState<null | HTMLElement>(null);
-  const broadcast = new BroadcastChannel('ts-sync-channel');
-  // Generate a unique ID for the tab
 
-  const [ignored, forceUpdate] = useReducer((x) => x + 1, 0, undefined);
+  const [, forceUpdate] = useReducer((x) => x + 1, 0);
 
+  useEffect(() => {
+    // Initialize BroadcastChannel
+    try {
+      broadcastRef.current = new BroadcastChannel('ts-sync-channel');
+      broadcastRef.current.onmessage = (event: MessageEvent) => {
+        const action = event.data as TS.BroadcastMessage;
+        if (instanceId !== action.uuid) {
+          handleBroadcastMessage(action);
+        }
+      };
+    } catch (e) {
+      console.error('BroadcastChannel initialization error:', e);
+    }
+
+    // Cleanup on unmount
+    return () => {
+      if (broadcastRef.current) {
+        broadcastRef.current.close();
+      }
+    };
+  }, []);
+
+  function handleBroadcastMessage(action: TS.BroadcastMessage) {
+    switch (action.type) {
+      case 'addLocation': {
+        const location = action.payload as TS.Location;
+        addLocationInt(new CommonLocation(location), false);
+        break;
+      }
+      case 'editLocation': {
+        const location = action.payload as TS.Location;
+        skipInitialDirList.current = true;
+        editLocationInt(new CommonLocation(location));
+        break;
+      }
+      case 'deleteLocation':
+        deleteLocationInt(action.payload);
+        break;
+      case 'moveLocationUp':
+        moveLocationUpInt(action.payload);
+        forceUpdate();
+        break;
+      case 'moveLocationDown':
+        moveLocationDownInt(action.payload);
+        forceUpdate();
+        break;
+    }
+  }
+
+  useEffect(() => {
+    // Always keep allLocations.current in sync with Redux locations,
+    // including when the array transitions to empty. Previously this
+    // assignment lived only in the `else` branch, so deleting the last
+    // location left the context exposing a stale (deleted) entry —
+    // which broke any consumer reading `locations` from the context
+    // (e.g. the onboarding dialog's slide-5 finish CTA).
+    allLocations.current = locations.map((l) => new CommonLocation(l));
+
+    if (firstRun && locations.length < 1) {
+      // Auto-bootstrap system folders only on first run, not whenever the
+      // user has emptied their location list. Otherwise deleting all
+      // locations and relaunching would silently re-add them.
+      setDefaultLocations();
+    } else if (locations.length > 0) {
+      // check if current location exist (or is removed)
+      if (currentLocationId.current) {
+        const locationExists = locations.some(
+          (location) => location.uuid === currentLocationId.current,
+        );
+        if (!locationExists) {
+          setCurrentLocation(undefined);
+        }
+      }
+    } else if (currentLocationId.current) {
+      // All locations were just removed — clear current selection.
+      setCurrentLocation(undefined);
+    }
+    forceUpdate();
+  }, [locations]);
+
+  // Open default location if configured
   useEffect(() => {
     if (
       !currentLocationId.current &&
       defaultLocationId &&
       defaultLocationId.length > 0
     ) {
-      const openDefaultLocation =
+      const shouldOpenDefault =
         !getURLParameter('tslid') &&
         !getURLParameter('tsdpath') &&
         !getURLParameter('tsepath') &&
         !getURLParameter('cmdopen');
-      if (openDefaultLocation) {
+      if (shouldOpenDefault) {
         openLocationById(defaultLocationId);
       }
     }
-    try {
-      // Listen for messages from other tabs
-      broadcast.onmessage = (event: MessageEvent) => {
-        const action = event.data as TS.BroadcastMessage;
-        if (instanceId !== action.uuid) {
-          if (action.type === 'addLocation') {
-            const location = action.payload as TS.Location;
-            addLocationInt(new CommonLocation(location), false);
-          } else if (action.type === 'editLocation') {
-            const location = action.payload as TS.Location;
-            skipInitialDirList.current = true; // don't change location dir after reflect
-            editLocationInt(new CommonLocation(location));
-          } else if (action.type === 'deleteLocation') {
-            deleteLocationInt(action.payload);
-          } else if (action.type === 'moveLocationUp') {
-            moveLocationUpInt(action.payload);
-            forceUpdate();
-          } else if (action.type === 'moveLocationDown') {
-            moveLocationDownInt(action.payload);
-            forceUpdate();
-          }
-        }
-      };
-    } catch (e) {
-      console.error('broadcast.onmessage error:', e);
-    }
-  }, []);
+  }, [defaultLocationId]);
 
-  useEffect(() => {
-    if (locations.length < 1) {
-      // init locations
-      setDefaultLocations();
-    } else {
-      // check if current location exist (or is removed)
-      if (currentLocationId.current) {
-        const location = locations.find(
-          (location) => location.uuid === currentLocationId.current,
-        );
-        if (!location) {
-          setCurrentLocation(undefined);
-          //closeLocation(currentLocation.current.uuid);
-        }
-      }
-      // if(!areLocationsEqual(allLocations.current,locations)){
-      allLocations.current = locations.map((l) => new CommonLocation(l));
-      forceUpdate();
-      //  }
-    }
-  }, [locations]); //allLocations.current]);
-
-  /*function areLocationsEqual(arr1: CommonLocation[], arr2: CommonLocation[]) {
-    if (arr1.length !== arr2.length) return false;
-
-    return arr1.every((obj, index) => obj.equal(arr2[index]));
-  }*/
-
+  /**
+   * @deprecated use resolveRelativePath instead
+   */
   function getLocationPath(location: CommonLocation): Promise<string> {
-    let locationPath = '';
-    if (location) {
-      if (location.path) {
-        locationPath = location.path;
-      }
-      if (location.paths && location.paths[0]) {
-        // eslint-disable-next-line prefer-destructuring
-        locationPath = location.paths[0];
-      }
-
-      if (
-        locationPath &&
-        (locationPath.startsWith('.' + AppConfig.dirSeparator) ||
-          locationPath.startsWith('./') ||
-          locationPath.startsWith('..' + AppConfig.dirSeparator) ||
-          locationPath.startsWith('../')) && // location paths are not with platform dirSeparator
-        AppConfig.isElectron
-      ) {
-        // TODO test relative path (Directory Back) with other platforms
-        // relative paths
-        return window.electronIO.ipcRenderer.invoke(
-          'resolveRelativePaths',
-          locationPath,
-        );
-      }
-    }
-
-    return Promise.resolve(locationPath);
+    if (!location) return Promise.resolve('');
+    return resolveRelativePath(getLocationPathString(location));
   }
 
   // Build a map of locations by ID. Rebuilt only when `locations` array changes.
@@ -264,47 +284,31 @@ export const CurrentLocationContextProvider = ({
     return map;
   }, [allLocations.current]);
 
-  // Return the specific location, recomputing only when that entry or the ID changes.
+  // Return the current location, memoized to prevent unnecessary re-renders
   const currentLocation = useMemo(
     () => locationsById[currentLocationId.current],
-    [locationsById[currentLocationId.current], currentLocationId.current],
+    [locationsById, currentLocationId.current],
   );
 
-  /**
-   * @param locationID
-   */
-  function findLocation(
-    locationID: string = undefined,
-  ): CommonLocation | undefined {
-    if (!locationID) {
-      return allLocations.current.find(
-        (l) => l.uuid === currentLocationId.current,
-      );
-    }
-    const loc = allLocations.current.find((l) => l.uuid === locationID);
-    if (loc) {
-      return loc;
-    }
-    return allLocations.current.find(
-      (l) => l.uuid === currentLocationId.current,
+  function findLocation(locationID?: string): CommonLocation | undefined {
+    return findLocationById(
+      allLocations.current,
+      locationID,
+      currentLocationId.current,
     );
-  }
-  function getDirSeparator(locationID: string = undefined): string {
-    const loc = findLocation(locationID);
-    if (loc) {
-      return loc.getDirSeparator();
-    }
-    return AppConfig.dirSeparator;
   }
 
-  function findLocalLocation(): CommonLocation {
-    const loc = allLocations.current.find(
-      (l) => l.type === locationType.TYPE_LOCAL,
-    );
-    if (loc) {
-      return loc;
-    }
-    return undefined;
+  function findLocationByPath(entryPath: string): CommonLocation | undefined {
+    return findLocationContainingPath(allLocations.current, entryPath);
+  }
+
+  function getDirSeparator(locationID?: string): string {
+    const loc = findLocation(locationID);
+    return getDirSeparatorForLocation(loc);
+  }
+
+  function findLocalLocation(): CommonLocation | undefined {
+    return findLocalLocationUtil(allLocations.current);
   }
 
   function setDefaultLocations() {
@@ -312,31 +316,52 @@ export const CurrentLocationContextProvider = ({
       // setDefaultLocations first time only
       initLocations.current = true;
       getDevicePaths()
-        .then((devicePaths) => {
-          if (devicePaths) {
-            Object.keys(devicePaths).forEach((key) => {
+        .then(async (devicePaths) => {
+          if (!devicePaths) return true;
+          const entries = Object.entries(devicePaths) as [string, string][];
+          // Filter out paths that don't actually exist on disk. On Linux,
+          // Electron's app.getPath('music'/'videos'/'pictures') returns the
+          // XDG-spec'd path even if the user never created the folder.
+          // Only filter on Electron — Capacitor/web paths are sandbox-managed.
+          const checked = await Promise.all(
+            entries.map(async ([key, p]) => {
+              if (!AppConfig.isElectron) return [key, p, true] as const;
+              try {
+                const exists = await window.electronIO.ipcRenderer.invoke(
+                  'isDirectory',
+                  p,
+                );
+                return [key, p, !!exists] as const;
+              } catch {
+                return [key, p, false] as const;
+              }
+            }),
+          );
+          checked
+            .filter(([, , exists]) => exists)
+            .forEach(([key, p]) => {
               const location = new CommonLocation({
                 uuid: getUuid(),
                 type: locationType.TYPE_LOCAL,
                 name: t(('core:' + key) as any) as string,
-                path: devicePaths[key] as string,
-                isDefault: false, // AppConfig.isWeb && devicePaths[key] === '/files/', // Used for the web ts demo
+                path: p,
+                isDefault: false, // AppConfig.isWeb && p === '/files/', // Used for the web ts demo
                 isReadOnly: false,
                 disableIndexing: false,
               });
               addLocation(location, false);
             });
-          }
           return true;
         })
         .catch((ex) => console.log('Error getDevicePaths:', ex));
     }
   }
 
-  function sendMessage(type: string, payload?: any) {
+  function sendMessage(type: string, payload?: any): void {
+    if (!broadcastRef.current) return;
     try {
       const message: TS.BroadcastMessage = { uuid: instanceId, type, payload };
-      broadcast.postMessage(message);
+      broadcastRef.current.postMessage(message);
     } catch (e) {
       console.error('broadcast.postMessage error:', e);
     }
@@ -345,8 +370,8 @@ export const CurrentLocationContextProvider = ({
   function addLocation(
     location: CommonLocation,
     openAfterCreate = true,
-    locationPosition: number = undefined,
-  ) {
+    locationPosition?: number,
+  ): void {
     addLocationInt(location, openAfterCreate, locationPosition);
     sendMessage('addLocation', toTsLocation(location));
   }
@@ -354,125 +379,63 @@ export const CurrentLocationContextProvider = ({
   function addLocationInt(
     location: CommonLocation,
     openAfterCreate = true,
-    locationPosition: number = undefined,
-  ) {
-    allLocations.current = [...allLocations.current, location];
+    locationPosition?: number,
+  ): void {
     if (openAfterCreate) {
       openLocation(location);
     }
     dispatch(LocationActions.createLocation(location, locationPosition));
   }
 
-  function deleteLocation(locationId: string) {
+  function deleteLocation(locationId: string): void {
     deleteLocationInt(locationId);
     sendMessage('deleteLocation', locationId);
   }
 
-  function deleteLocationInt(locationId: string) {
-    allLocations.current = allLocations.current.filter(
-      (l) => l.uuid !== locationId,
-    );
+  function deleteLocationInt(locationId: string): void {
     dispatch(LocationActions.deleteLocation(locationId));
-    forceUpdate();
+    if (currentLocationId.current === locationId) {
+      setCurrentLocation(undefined);
+    }
   }
 
-  function moveLocationUp(locationUUID) {
+  function moveLocationUp(locationUUID: string): void {
     moveLocationUpInt(locationUUID);
     sendMessage('moveLocationUp', locationUUID);
   }
 
-  function moveLocationUpInt(locationUUID) {
-    const currentIndex = allLocations.current.findIndex(
-      (l) => l.uuid === locationUUID,
-    );
-
-    // If location is not found or is already at the top, do nothing
-    if (currentIndex <= 0) {
-      return;
-    }
-
-    // Create a copy of the array
-    const newArray = [...allLocations.current];
-
-    // Swap the location with the one above it
-    const temp = newArray[currentIndex];
-    newArray[currentIndex] = newArray[currentIndex - 1];
-    newArray[currentIndex - 1] = temp;
-
-    allLocations.current = newArray;
+  function moveLocationUpInt(locationUUID: string): void {
+    if (!canMoveUp(allLocations.current, locationUUID)) return;
     dispatch(LocationActions.moveLocationUp(locationUUID));
   }
 
-  function moveLocationDown(locationUUID) {
+  function moveLocationDown(locationUUID: string): void {
     moveLocationDownInt(locationUUID);
     sendMessage('moveLocationDown', locationUUID);
   }
 
-  function moveLocationDownInt(locationUUID) {
-    const currentIndex = allLocations.current.findIndex(
-      (l) => l.uuid === locationUUID,
-    );
-
-    // If location is not found or is already at the bottom, return the original array
-    if (
-      currentIndex === -1 ||
-      currentIndex >= allLocations.current.length - 1
-    ) {
-      return;
-    }
-
-    // Create a copy of the array
-    const newArray = [...allLocations.current];
-
-    // Swap the location with the one below it
-    const temp = newArray[currentIndex];
-    newArray[currentIndex] = newArray[currentIndex + 1];
-    newArray[currentIndex + 1] = temp;
-
-    allLocations.current = newArray;
+  function moveLocationDownInt(locationUUID: string): void {
+    if (!canMoveDown(allLocations.current, locationUUID)) return;
     dispatch(LocationActions.moveLocationDown(locationUUID));
   }
 
-  function moveLocation(locationUUID: string, newIndex: number) {
-    // Check if allLocations.current is an array and newIndex is within bounds
-    if (
-      !Array.isArray(allLocations.current) ||
-      newIndex < 0 ||
-      newIndex >= allLocations.current.length
-    ) {
-      throw new Error('Invalid input');
-    }
-
-    // Find the index of the location with the given UUID
-    const currentIndex = allLocations.current.findIndex(
-      (l) => l.uuid === locationUUID,
-    );
-
-    // If the location is not found, throw an error
-    if (currentIndex === -1) {
-      throw new Error('Location not found');
-    }
-
-    // Remove the location from its current position
-    const [location] = allLocations.current.splice(currentIndex, 1);
-
-    // Insert the location at the specified new index
-    allLocations.current.splice(newIndex, 0, location);
-    allLocations.current = [...allLocations.current];
+  function moveLocation(locationUUID: string, newIndex: number): void {
+    validateMoveLocation(allLocations.current, locationUUID, newIndex);
     dispatch(LocationActions.moveLocation(locationUUID, newIndex));
   }
 
   /**
-   * @param arrLocations
-   * @param override = true - if location exist override else skip
+   * Add multiple locations, optionally overriding duplicates
    */
-  function addLocations(arrLocations: Array<CommonLocation>, override = true) {
-    arrLocations.forEach((newLocation: CommonLocation, idx, array) => {
-      const locationExist: boolean = allLocations.current.some(
+  function addLocations(
+    arrLocations: Array<CommonLocation>,
+    override = true,
+  ): void {
+    arrLocations.forEach((newLocation) => {
+      const locationExists = allLocations.current.some(
         (location) => location.uuid === newLocation.uuid,
       );
-      //const isLast = idx === array.length - 1;
-      if (!locationExist) {
+      if (!locationExists) {
         addLocation(newLocation);
       } else if (override) {
         editLocation(newLocation);
@@ -480,7 +443,7 @@ export const CurrentLocationContextProvider = ({
     });
   }
 
-  function setCurrentLocation(location) {
+  function setCurrentLocation(location: CommonLocation | undefined): void {
     const newLocationId = location?.uuid;
     if (currentLocationId.current !== newLocationId) {
       currentLocationId.current = newLocationId;
@@ -488,27 +451,24 @@ export const CurrentLocationContextProvider = ({
     }
   }
 
-  function setSelectedLocation(location) {
+  function setSelectedLocation(location: CommonLocation | undefined): void {
     selectedLocation.current = location;
     forceUpdate();
   }
 
-  function editLocation(location: CommonLocation) {
-    editLocationInt(location);
+  function editLocation(location: CommonLocation, openAfterEdit = false): void {
+    editLocationInt(location, openAfterEdit);
     sendMessage('editLocation', toTsLocation(location));
   }
 
-  function editLocationInt(location: CommonLocation, openAfterEdit = false) {
-    allLocations.current = allLocations.current.map((l) =>
-      l.uuid === location.uuid ? location : l,
-    );
+  function editLocationInt(
+    location: CommonLocation,
+    openAfterEdit = false,
+  ): void {
     dispatch(LocationActions.changeLocation(location));
-    forceUpdate();
     if (openAfterEdit) {
       currentLocationId.current = location.uuid;
-      /*
-       * check if location uuid is changed
-       */
+      // check if location uuid is changed
       if (
         location.newuuid !== undefined &&
         location.newuuid !== location.uuid
@@ -521,52 +481,35 @@ export const CurrentLocationContextProvider = ({
   }
 
   function getFirstRWLocation(): CommonLocation | undefined {
-    let foundLocation = allLocations.current.find(
-      (location) => location.isDefault && !location.isReadOnly,
-    );
-    if (!foundLocation) {
-      foundLocation = allLocations.current.find(
-        (location) => !location.isReadOnly,
-      );
-    }
-    return foundLocation;
+    return getFirstReadWriteLocation(allLocations.current);
   }
 
-  /*const readOnlyMode: boolean = useMemo(() => {
-    if (currentLocationId.current) {
-      const location = findLocation();
-      return location?.isReadOnly;
-    }
-    return false;
-  }, [currentLocationId.current]);*/
-
-  const persistTagsInSidecarFile: boolean = useMemo(() => {
+  const persistTagsInSidecarFile = useMemo(() => {
     const location = findLocation();
-    const locationPersistTagsInSidecarFile =
-      location && location.persistTagsInSidecarFile;
-    if (locationPersistTagsInSidecarFile !== undefined) {
-      return locationPersistTagsInSidecarFile;
+    if (location?.persistTagsInSidecarFile !== undefined) {
+      return location.persistTagsInSidecarFile;
     }
     return settingsPersistTagsInSidecarFile;
   }, [currentLocationId.current, settingsPersistTagsInSidecarFile]);
 
   function changeLocation(
     location: CommonLocation,
-    skipInitDirList: boolean = false,
-  ) {
+    skipInitDirList = false,
+  ): void {
+    if (!location) return;
     skipInitialDirList.current = skipInitDirList;
     if (
       !currentLocationId.current ||
       location.uuid !== currentLocationId.current
     ) {
-      if (location && location.name) {
-        document.title = location.name + ' | ' + versionMeta.name;
+      if (location.name) {
+        document.title = `${location.name} | ${versionMeta.name}`;
       }
       setCurrentLocation(location);
     }
   }
 
-  function changeLocationByID(locationId: string) {
+  function changeLocationByID(locationId: string): void {
     if (
       !currentLocationId.current ||
       locationId !== currentLocationId.current
@@ -578,7 +521,10 @@ export const CurrentLocationContextProvider = ({
     }
   }
 
-  function openLocationById(locationId: string, skipInitDirList?: boolean) {
+  function openLocationById(
+    locationId: string,
+    skipInitDirList?: boolean,
+  ): void {
     const location = findLocation(locationId);
     if (location) {
       openLocation(location, skipInitDirList);
@@ -587,12 +533,11 @@ export const CurrentLocationContextProvider = ({
 
   function openLocation(
     location: CommonLocation,
-    skipInitDirList: boolean = false,
-  ) {
-    skipInitialDirList.current = skipInitDirList;
+    skipInitDirList = false,
+  ): void {
     if (location.type === locationType.TYPE_CLOUD) {
       showNotification(
-        t('core:connectedtoObjectStore' as any) as string,
+        t('core:connectedtoObjectStore') as string,
         'default',
         true,
       );
@@ -600,46 +545,34 @@ export const CurrentLocationContextProvider = ({
     changeLocation(location, skipInitDirList);
   }
 
-  function closeLocation(locationId: string) {
-    if (currentLocationId.current && currentLocationId.current === locationId) {
-      locations.map((location) => {
-        if (location.uuid === locationId) {
-          // location needed evtl. to unwatch many loc. root folders if available
-          setCurrentLocation(undefined);
-        }
-        clearAllURLParams();
-        document.title = versionMeta.name;
-        return true;
-      });
+  function closeLocation(locationId: string): void {
+    if (currentLocationId.current === locationId) {
+      setCurrentLocation(undefined);
+      clearAllURLParams();
+      document.title = versionMeta.name;
     }
   }
 
-  function closeAllLocations() {
-    // location needed evtl. to unwatch many loc. root folders if available
+  function closeAllLocations(): void {
     setCurrentLocation(undefined);
     clearAllURLParams();
     document.title = versionMeta.name;
-    return true;
   }
 
   function getLocationPosition(locationId: string): number {
-    return locations.findIndex((location) => location.uuid === locationId);
+    return getLocationPositionByUUID(allLocations.current, locationId);
   }
 
-  /*function isCurrentLocation(uuid: string) {
-    return currentLocation.current && currentLocation.current === uuid;
-  }*/
-
-  const context = useMemo(() => {
-    return {
+  const context = useMemo(
+    () => ({
       locations: allLocations.current,
       currentLocation,
       currentLocationId: currentLocationId.current,
-      //readOnlyMode,
       skipInitialDirList: skipInitialDirList.current,
       persistTagsInSidecarFile,
       getLocationPath,
       findLocation,
+      findLocationByPath,
       getDirSeparator,
       findLocalLocation,
       changeLocation,
@@ -661,15 +594,16 @@ export const CurrentLocationContextProvider = ({
       setLocationDirectoryContextMenuAnchorEl,
       getLocationPosition,
       getFirstRWLocation,
-    };
-  }, [
-    allLocations.current,
-    currentLocationId.current,
-    selectedLocation.current,
-    persistTagsInSidecarFile,
-    skipInitialDirList.current,
-    locationDirectoryContextMenuAnchorEl,
-  ]);
+    }),
+    [
+      allLocations.current,
+      currentLocationId.current,
+      selectedLocation.current,
+      persistTagsInSidecarFile,
+      skipInitialDirList.current,
+      locationDirectoryContextMenuAnchorEl,
+    ],
+  );
 
   return (
     <CurrentLocationContext.Provider value={context}>

@@ -28,7 +28,15 @@ import { useTargetPathContext } from '-/components/dialogs/hooks/useTargetPathCo
 import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
 import { useDirectoryContentContext } from '-/hooks/useDirectoryContentContext';
 import { useOpenedEntryContext } from '-/hooks/useOpenedEntryContext';
+import { Pro } from '-/pro';
+import {
+  getAuthor,
+  getFileNameTagPlace,
+  getPrefixTagContainer,
+  getTagDelimiter,
+} from '-/reducers/settings';
 import { TS } from '-/tagspaces.namespace';
+import useFirstRender from '-/utils/useFirstRender';
 import versionMeta from '-/version.json';
 import Dialog from '@mui/material/Dialog';
 import DialogContent from '@mui/material/DialogContent';
@@ -39,8 +47,15 @@ import {
   formatDateTime4Tag,
   locationType,
 } from '@tagspaces/tagspaces-common/misc';
-import { useReducer, useRef } from 'react';
+import {
+  extractFileName,
+  extractTags,
+  generateFileName,
+} from '@tagspaces/tagspaces-common/paths';
+import { getUuid } from '@tagspaces/tagspaces-common/utils-io';
+import { useContext, useEffect, useReducer, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useSelector } from 'react-redux';
 
 interface Props {
   open: boolean;
@@ -50,7 +65,7 @@ interface Props {
 }
 
 function NewFileDialog(props: Props) {
-  const { open, onClose, fileType } = props;
+  const { open, onClose, fileType, fileName } = props;
   const { t } = useTranslation();
   const { createFileAdvanced } = useOpenedEntryContext();
   const { findLocation, openLocation, getFirstRWLocation } =
@@ -59,22 +74,160 @@ function NewFileDialog(props: Props) {
   const { targetDirectoryPath } = useTargetPathContext();
   const haveError = useRef<boolean>(false);
   const urlInputError = useRef<string>(undefined);
+
+  const author = useSelector(getAuthor);
+  const tagDelimiter: string = useSelector(getTagDelimiter);
+  const prefixTagContainer: boolean = useSelector(getPrefixTagContainer);
+  const filenameTagPlacedAtEnd = useSelector(getFileNameTagPlace);
   const firstRWLocation = getFirstRWLocation();
+  const fileTemplatesContext = Pro?.contextProviders?.FileTemplatesContext
+    ? useContext<TS.FileTemplatesContextData>(
+        Pro.contextProviders.FileTemplatesContext,
+      )
+    : undefined;
 
   const [ignored, forceUpdate] = useReducer((x) => x + 1, 0, undefined);
   const theme = useTheme();
   const smallScreen = useMediaQuery(theme.breakpoints.down('md'));
-  const fileName = useRef<string>(
-    props.fileName ||
-      (fileType === 'url' ? 'link' : 'note') +
-        AppConfig.beginTagContainer +
-        formatDateTime4Tag(new Date(), true) +
-        AppConfig.endTagContainer,
-  );
+  const firstRender = useFirstRender();
+  // Template selected from the tile grid (when the dialog is opened without a
+  // fixed fileType). Selecting a tile loads its name + content into the
+  // editable form below instead of creating the file immediately.
+  const [selectedTemplate, setSelectedTemplate] = useState<TS.FileTemplate>();
 
-  const fileContent = useRef<string>('');
+  // The effective type drives the editable form: either the type the dialog
+  // was opened with, or the type of the template picked from the grid.
+  const effectiveFileType = fileType ?? selectedTemplate?.type;
+  // Active template for the effective type. This also reflects the in-form
+  // "change template" dropdown, which calls setTemplateActive. Deriving it from
+  // effectiveFileType (not the raw fileType prop) is what lets the dropdown
+  // reload the editable name + content during the grid-selected phase.
+  const fileTemplate = fileTemplatesContext?.getTemplate(
+    effectiveFileType as TS.FileType,
+  );
+  const fileNameRef = useRef<string>(getFileName());
+  const fileContentRef = useRef<string>(getFileContent());
+
+  useEffect(() => {
+    if (
+      !firstRender &&
+      fileTemplate &&
+      fileNameRef.current &&
+      fileContentRef.current
+    ) {
+      fileNameRef.current = getFileName();
+      fileContentRef.current = getFileContent();
+      // In grid-selected mode the dropdown switches the active template; keep
+      // the dialog title + selection in sync with it.
+      if (
+        !fileType &&
+        selectedTemplate &&
+        selectedTemplate.id !== fileTemplate.id
+      ) {
+        setSelectedTemplate(fileTemplate);
+      } else {
+        forceUpdate();
+      }
+    }
+  }, [fileTemplate]);
+
+  // Reset to the template grid (and refresh the editable defaults) whenever the
+  // dialog is (re)opened — the dialog stays mounted via keepMounted, so state
+  // would otherwise leak between openings.
+  useEffect(() => {
+    if (open) {
+      setSelectedTemplate(undefined);
+      fileNameRef.current = getFileName();
+      fileContentRef.current = getFileContent();
+      haveError.current = false;
+      urlInputError.current = undefined;
+    }
+  }, [open]);
+
+  function selectTemplate(template: TS.FileTemplate) {
+    // Make the clicked template the active one for its type so the in-form
+    // "change template" dropdown shows it as selected.
+    fileTemplatesContext?.setTemplateActive(template.id);
+    fileNameRef.current =
+      template.fileNameTmpl !== undefined
+        ? getFileNameFromTemplate(template)
+        : getFileName();
+    fileContentRef.current = getFileContentFromTemplate(template);
+    haveError.current = false;
+    setSelectedTemplate(template);
+  }
+
+  function backToTemplates() {
+    fileNameRef.current = getFileName();
+    fileContentRef.current = getFileContent();
+    haveError.current = false;
+    setSelectedTemplate(undefined);
+  }
+
+  function getFileName() {
+    if (fileName) {
+      const tags: string[] = extractTags(fileName, tagDelimiter);
+      const name = extractFileName(fileName);
+      return generateFileName(
+        name,
+        [...tags, formatDateTime4Tag(new Date(), true)],
+        tagDelimiter,
+        findLocation()?.getDirSeparator(),
+        prefixTagContainer,
+        filenameTagPlacedAtEnd,
+      );
+    }
+    const template = fileTemplate ?? AppConfig.ExtDefaultFileTemplate;
+    if (template && template.fileNameTmpl !== undefined) {
+      return getFileNameFromTemplate(template);
+    }
+    return (
+      (fileType === 'url' ? 'link' : 'note') +
+      AppConfig.beginTagContainer +
+      formatDateTime4Tag(new Date(), true) +
+      AppConfig.endTagContainer
+    );
+  }
+
+  function getFileNameFromTemplate(template: TS.FileTemplate) {
+    return template.fileNameTmpl
+      .replace('{timestamp}', formatDateTime4Tag(new Date(), true))
+      .replace('{author}', author)
+      .replace('{uuid}', getUuid());
+  }
+
+  function getFileContent() {
+    if (fileType === 'url') return '';
+    const template = fileTemplate ?? AppConfig.ExtDefaultFileTemplate;
+    if (template && template.content) {
+      return getFileContentFromTemplate(template);
+    }
+    return (
+      `${t('core:createdIn')} ${versionMeta.name}` +
+      ' (' +
+      new Date().toISOString().split('T')[0] +
+      ')'
+    );
+  }
+
+  function getFileContentFromTemplate(template: TS.FileTemplate) {
+    const creationDate = new Date().toISOString();
+    const dateTimeArray = creationDate.split('T');
+    const fileContent = template.content
+      .replaceAll(
+        '{createdInApp}',
+        `${t('core:createdIn')} ${versionMeta.name}`,
+      )
+      .replaceAll('{date}', dateTimeArray[0])
+      .replaceAll('{author}', author)
+      .replaceAll('{time}', dateTimeArray[1].split('.')[0]);
+    return fileType === 'html' ? `\n<p>${fileContent}</p>` : `${fileContent}`;
+  }
 
   function getFileType() {
+    if (selectedTemplate) {
+      return selectedTemplate.name || t('createNewFromTemplate');
+    }
     if (fileType === 'txt') {
       return t('createTXTFile');
     }
@@ -87,7 +240,7 @@ function NewFileDialog(props: Props) {
     if (fileType === 'url') {
       return t('createLinkFile');
     }
-    return t('newFileNote');
+    return t('createNewFromTemplate');
   }
 
   function loadLocation() {
@@ -100,9 +253,9 @@ function NewFileDialog(props: Props) {
     }
   }
 
-  function createFile(fileType, targetPath) {
+  function createFile(fileType, targetPath, template?: TS.FileTemplate) {
     if (targetPath) {
-      if (fileType === 'url' && !fileContent.current) {
+      if (fileType === 'url' && !fileContentRef.current) {
         haveError.current = true;
         urlInputError.current = t('core:emptyLink');
         forceUpdate();
@@ -110,8 +263,10 @@ function NewFileDialog(props: Props) {
         loadLocation();
         createFileAdvanced(
           targetPath,
-          fileName.current,
-          fileContent.current,
+          template ? getFileNameFromTemplate(template) : fileNameRef.current,
+          template
+            ? getFileContentFromTemplate(template)
+            : fileContentRef.current,
           fileType,
         );
         onClose();
@@ -124,13 +279,14 @@ function NewFileDialog(props: Props) {
       data-tid="createTID"
       variant="contained"
       onClick={() => {
-        createFile(fileType, targetDirectoryPath);
+        createFile(effectiveFileType, targetDirectoryPath);
       }}
-      disabled={haveError.current}
-      style={{
-        // @ts-ignore
-        WebkitAppRegion: 'no-drag',
-      }}
+      disabled={haveError.current || !effectiveFileType}
+      sx={
+        {
+          WebkitAppRegion: 'no-drag',
+        } as React.CSSProperties & { WebkitAppRegion?: string }
+      }
     >
       {t('core:ok')}
     </TsButton>
@@ -150,13 +306,12 @@ function NewFileDialog(props: Props) {
         dialogTitle={getFileType()}
         onClose={onClose}
         closeButtonTestId="closeNewFileDialogTID"
-        actionSlot={okButton}
+        actionSlot={effectiveFileType ? okButton : undefined}
       ></TsDialogTitle>
       <DialogContent
-        style={{
-          paddingTop: 10,
-          minWidth: 200,
-          // minHeight: 200,
+        sx={{
+          paddingTop: '10px',
+          minWidth: '200px',
           overflow: 'overlay',
         }}
         data-tid="newFileDialog"
@@ -164,9 +319,9 @@ function NewFileDialog(props: Props) {
         {fileType === 'url' ? (
           <CreateLink
             createFile={(type) => createFile(type, targetDirectoryPath)}
-            handleFileNameChange={(name) => (fileName.current = name)}
+            handleFileNameChange={(name) => (fileNameRef.current = name)}
             handleFileContentChange={(content) =>
-              (fileContent.current = content)
+              (fileContentRef.current = content)
             }
             haveError={(error) => {
               haveError.current = error;
@@ -174,35 +329,46 @@ function NewFileDialog(props: Props) {
               forceUpdate();
             }}
             urlInputError={urlInputError.current}
-            fileName={fileName.current}
+            fileName={fileNameRef.current}
           />
         ) : (
           <CreateFile
-            fileType={fileType}
-            createFile={(type) => createFile(type, targetDirectoryPath)}
-            handleFileNameChange={(name) => (fileName.current = name)}
+            fileType={effectiveFileType}
+            onSelectTemplate={selectTemplate}
+            createFile={(type, template) =>
+              createFile(type, targetDirectoryPath, template)
+            }
+            onClose={onClose}
+            handleFileNameChange={(name) => (fileNameRef.current = name)}
             handleFileContentChange={(content) =>
-              (fileContent.current = content)
+              (fileContentRef.current = content)
             }
             haveError={(error) => {
               haveError.current = error;
               forceUpdate();
             }}
-            fileName={fileName.current}
+            fileName={fileNameRef.current}
+            fileContent={fileContentRef.current}
           />
         )}
         <TargetPath />
       </DialogContent>
-      {!smallScreen && fileType && (
+      {!smallScreen && effectiveFileType && (
         <TsDialogActions>
-          <TsButton
-            data-tid="backTID"
-            onClick={() => {
-              onClose();
-            }}
-          >
-            {t('core:cancel')}
-          </TsButton>
+          {!fileType && selectedTemplate ? (
+            <TsButton data-tid="backToTemplatesTID" onClick={backToTemplates}>
+              {t('core:goback')}
+            </TsButton>
+          ) : (
+            <TsButton
+              data-tid="backTID"
+              onClick={() => {
+                onClose();
+              }}
+            >
+              {t('core:cancel')}
+            </TsButton>
+          )}
           {okButton}
         </TsDialogActions>
       )}

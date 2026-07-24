@@ -18,16 +18,21 @@
 
 import React, {
   createContext,
+  useContext,
   useEffect,
   useMemo,
-  useReducer,
-  useRef,
+  useState,
 } from 'react';
 import LoadingLazy from '-/components/LoadingLazy';
-import { actions as SettingsActions, isFirstRun } from '-/reducers/settings';
+import {
+  actions as SettingsActions,
+  isFirstRun,
+  isOnboardingCompleted,
+} from '-/reducers/settings';
 import { AppDispatch } from '-/reducers/app';
 import { useDispatch, useSelector } from 'react-redux';
 import AppConfig from '-/AppConfig';
+import { OnboardingDialogContext } from '-/components/dialogs/hooks/OnboardingDialogContextProvider';
 
 type LicenseDialogContextData = {
   openLicenseDialog: () => void;
@@ -51,15 +56,39 @@ export const LicenseDialogContextProvider = ({
   children,
 }: LicenseDialogContextProviderProps) => {
   const firstRun: boolean = useSelector(isFirstRun);
-  const open = useRef<boolean>(firstRun);
+  const onboardingCompleted: boolean = useSelector(isOnboardingCompleted);
+  const [open, setOpen] = useState<boolean>(false);
   const dispatch: AppDispatch = useDispatch();
+  const { openOnboardingDialog } = useContext(OnboardingDialogContext);
 
-  const [ignored, forceUpdate] = useReducer((x) => x + 1, 0, undefined);
+  // Auto-open whenever firstRun becomes true. This covers fresh installs
+  // (defaults to true) and manual resets (Settings → Restore Defaults clears
+  // localStorage, reload re-applies defaults). Reactive — works regardless
+  // of redux-persist rehydration timing.
+  //
+  // Native mobile (App Store / Play Store) is the exception: the store handles
+  // the EULA, the AGPL doesn't require end-user acceptance to run a copy
+  // (AGPLv3 §9), and a first-run accept/quit gate (with a self-terminating
+  // "Quit") is discouraged by — and risks rejection under — store review
+  // guidelines. So we skip the gate there: clear firstRun and hand off to
+  // onboarding directly. The license stays available via About → License.
+  useEffect(() => {
+    if (!firstRun) return;
+    if (AppConfig.isNativeMobile) {
+      dispatch(SettingsActions.setFirstRun(false));
+      if (!onboardingCompleted && openOnboardingDialog) {
+        openOnboardingDialog();
+      }
+    } else {
+      setOpen(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [firstRun]);
 
   useEffect(() => {
     if (AppConfig.isElectron) {
       window.electronIO.ipcRenderer.on('toggle-license-dialog', () => {
-        openDialog();
+        setOpen(true);
       });
 
       return () => {
@@ -73,13 +102,11 @@ export const LicenseDialogContextProvider = ({
   }, []);
 
   function openDialog() {
-    open.current = true;
-    forceUpdate();
+    setOpen(true);
   }
 
   function closeDialog() {
-    open.current = false;
-    forceUpdate();
+    setOpen(false);
   }
 
   function LicenseDialogAsync(props) {
@@ -100,13 +127,21 @@ export const LicenseDialogContextProvider = ({
   return (
     <LicenseDialogContext.Provider value={context}>
       <LicenseDialogAsync
-        open={open.current}
+        open={open}
         onClose={(event, reason) => {
           if (reason === 'backdropClick' || reason === 'escapeKeyDown') {
             return true;
           }
+          const wasFirstRun = firstRun;
           dispatch(SettingsActions.setFirstRun(false));
           closeDialog();
+          // Chain into the onboarding wizard only on the very first run,
+          // and only if the user has not already completed it (e.g. via the
+          // help-menu re-trigger). Existing users who re-open the license
+          // dialog from the menu should not get the wizard popped up.
+          if (wasFirstRun && !onboardingCompleted && openOnboardingDialog) {
+            openOnboardingDialog();
+          }
         }}
       />
       {children}

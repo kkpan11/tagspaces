@@ -2,70 +2,48 @@
  * Copyright (c) 2016-present - TagSpaces GmbH. All rights reserved.
  */
 import { test, expect } from './fixtures';
-import {
-  defaultLocationPath,
-  defaultLocationName,
-  createPwMinioLocation,
-  createPwLocation,
-  createS3Location,
-} from './location.helpers';
+import { defaultLocationName } from './location.helpers';
 import {
   clickOn,
-  createNewDirectory,
   expectElementExist,
   getGridFileSelector,
-  rightClickOn,
-  setInputKeys,
-  takeScreenshot,
 } from './general.helpers';
-import { startTestingApp, stopApp, testDataRefresh } from './hook';
+import { startTestingApp, stopApp } from './hook';
 import { openContextEntryMenu } from './test-utils';
 import { dataTidFormat } from '../../src/renderer/services/test';
-import { clearDataStorage, closeWelcomePlaywright } from './welcome.helpers';
-import { stopServices } from '../setup-functions';
+import { clearDataStorage } from './welcome.helpers';
 
-let s3ServerInstance;
-let webServerInstance;
-let minioServerInstance;
-
-test.beforeAll(async ({ s3Server, webServer, minioServer }) => {
-  s3ServerInstance = s3Server;
-  webServerInstance = webServer;
-  minioServerInstance = minioServer;
-  if (global.isS3) {
-    await startTestingApp();
+test.beforeAll(async ({ isWeb, isS3, webServerPort }, testInfo) => {
+  /*if (isS3) {
+    await startTestingApp({ isWeb, isS3, webServerPort, testInfo });
     await closeWelcomePlaywright();
-  } else {
-    await startTestingApp('extconfig-objectstore-location.js');
-  }
+  } else if(isMinio) {*/
+  await startTestingApp(
+    { isWeb, isS3, webServerPort, testInfo },
+    'extconfig-objectstore-location.js',
+  );
+  //}
   //await clearDataStorage();
 });
 
 test.afterAll(async () => {
-  await stopServices(s3ServerInstance, webServerInstance, minioServerInstance);
-  await testDataRefresh(s3ServerInstance);
   await stopApp();
 });
 
-test.afterEach(async ({ page }, testInfo) => {
-  /*if (testInfo.status !== testInfo.expectedStatus) {
-    await takeScreenshot(testInfo);
-  }*/
+test.afterEach(async () => {
   await clearDataStorage();
 });
 
-test.beforeEach(async () => {
-  if (global.isS3) {
-    await createS3Location('', defaultLocationName, true);
-  } else {
-    await closeWelcomePlaywright();
-    await clickOn('[data-tid=locationManager]');
+test.beforeEach(async ({ isS3 }) => {
+  if (isS3) {
+    //await createS3Location('', defaultLocationName, true);
     await clickOn('[data-tid=location_' + defaultLocationName + '-s3]');
   }
+  await expectElementExist(getGridFileSelector('empty_folder'), true, 15000);
 });
 
 test.describe('TST09 - ObjectStore location', () => {
-  test('TST0917 - Create, open and remove bookmark to S3 file in properties [web,minio,_pro]', async () => {
+  test('TST0917 - Create, open and remove bookmark to S3 file in properties [web,s3,_pro]', async () => {
     const bookmarkFileTitle = 'sample.txt';
     const bookmarkFileTid = dataTidFormat(bookmarkFileTitle);
     await openContextEntryMenu(
@@ -77,7 +55,7 @@ test.describe('TST09 - ObjectStore location', () => {
     await clickOn('[data-tid=toggleBookmarkTID]');
     await clickOn('[data-tid=fileContainerCloseOpenedFile]');
 
-    await clickOn('[data-tid=location_' + defaultLocationName + ']');
+    //await clickOn('[data-tid=location_' + defaultLocationName + ']');
 
     // Open
     await clickOn('[data-tid=quickAccessButton]');

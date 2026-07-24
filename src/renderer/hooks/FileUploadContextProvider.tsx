@@ -16,17 +16,25 @@
  *
  */
 
-import React, { createContext, useMemo, useRef } from 'react';
+import React, { createContext, useMemo, useRef, useState } from 'react';
 import FileUploadContainer, {
   FileUploadContainerRef,
 } from '-/components/FileUploadContainer';
 
 type FileUploadContextData = {
   openFileUpload: (dPath: string) => void;
+  openCameraCapture: (dPath: string) => void;
+  uploadMeta: () => void;
+  setMetaUpload: (mUpload: () => void) => void;
+  transferMeta: boolean;
 };
 
 export const FileUploadContext = createContext<FileUploadContextData>({
   openFileUpload: undefined,
+  openCameraCapture: undefined,
+  uploadMeta: undefined,
+  setMetaUpload: undefined,
+  transferMeta: false,
 });
 
 export type FileUploadContextProviderProps = {
@@ -37,16 +45,35 @@ export const FileUploadContextProvider = ({
   children,
 }: FileUploadContextProviderProps) => {
   const fileUploadContainerRef = useRef<FileUploadContainerRef>(null);
+  const [transferMeta, setTransferMeta] = useState<boolean>(false);
 
   function openFileUpload(dPath: string) {
-    fileUploadContainerRef.current.onFileUpload(dPath);
+    fileUploadContainerRef.current?.onFileUpload(dPath);
+  }
+
+  function openCameraCapture(dPath: string) {
+    fileUploadContainerRef.current?.onCameraCapture(dPath);
+  }
+
+  function uploadMeta() {
+    fileUploadContainerRef.current?.onMetaUpload();
+    setTransferMeta(false);
+  }
+
+  function setMetaUpload(mUpload: () => void) {
+    setTransferMeta(mUpload !== undefined);
+    fileUploadContainerRef.current?.setMetaUpload(mUpload);
   }
 
   const context = useMemo(() => {
     return {
       openFileUpload: openFileUpload,
+      openCameraCapture: openCameraCapture,
+      uploadMeta: uploadMeta,
+      setMetaUpload: setMetaUpload,
+      transferMeta,
     };
-  }, []);
+  }, [transferMeta]);
 
   return (
     <FileUploadContext.Provider value={context}>

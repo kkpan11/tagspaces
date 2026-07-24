@@ -15,26 +15,52 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  */
-
+import AppConfig from '-/AppConfig';
 import TsButton from '-/components/TsButton';
 import TsTextField from '-/components/TsTextField';
+import { SettingsTab } from '-/components/dialogs/SettingsDialog';
+import TemplatesDropDown from '-/components/dialogs/components/TemplatesDropDown';
+import { useSettingsDialogContext } from '-/components/dialogs/hooks/useSettingsDialogContext';
 import { useTargetPathContext } from '-/components/dialogs/hooks/useTargetPathContext';
+import { Pro } from '-/pro';
 import { fileNameValidation } from '-/services/utils-io';
 import { TS } from '-/tagspaces.namespace';
-import { ButtonGroup, FormControl } from '@mui/material';
+import useFirstRender from '-/utils/useFirstRender';
+import {
+  Box,
+  Card,
+  CardActionArea,
+  CardContent,
+  FormControl,
+  Typography,
+} from '@mui/material';
 import FormHelperText from '@mui/material/FormHelperText';
-import Grid from '@mui/material/Grid2';
-import React, { useEffect, useReducer, useState } from 'react';
+import Grid from '@mui/material/Grid';
+import React, {
+  useContext,
+  useEffect,
+  useReducer,
+  useRef,
+  useState,
+} from 'react';
 import { useTranslation } from 'react-i18next';
 
 interface Props {
   fileName: string;
+  fileContent: string;
   handleFileNameChange: (fileName: string) => void;
   handleFileContentChange: (fileContent: string) => void;
-  createFile: (fileType: TS.FileType) => void;
+  createFile: (fileType: TS.FileType, template?: TS.FileTemplate) => void;
   haveError: (error: boolean) => void;
   tidPrefix?: string;
   fileType?: TS.FileType;
+  onClose: (event?: Object, reason?: string) => void;
+  /**
+   * Called when a template tile is clicked. The parent loads the template's
+   * name + content into the editable form instead of creating the file
+   * immediately.
+   */
+  onSelectTemplate?: (template: TS.FileTemplate) => void;
 }
 
 function CreateFile(props: Props) {
@@ -43,18 +69,36 @@ function CreateFile(props: Props) {
     fileType,
     createFile,
     fileName,
+    fileContent,
     handleFileNameChange,
     handleFileContentChange,
     haveError,
+    onClose,
+    onSelectTemplate,
   } = props;
   const { t } = useTranslation();
   const { targetDirectoryPath } = useTargetPathContext();
-
+  const { openSettingsDialog } = useSettingsDialogContext();
   const [inputError, setInputError] = useState<boolean>(false);
-
+  const fileContentRef = useRef<HTMLInputElement | null>(null);
+  const fileNameRef = useRef<HTMLInputElement | null>(null);
+  const firstRender = useFirstRender();
   const [ignored, forceUpdate] = useReducer((x) => x + 1, 0, undefined);
-
   const noSuitableLocation = !targetDirectoryPath;
+
+  const fileTemplatesContext = Pro?.contextProviders?.FileTemplatesContext
+    ? useContext<TS.FileTemplatesContextData>(
+        Pro.contextProviders.FileTemplatesContext,
+      )
+    : undefined;
+  const templatesArray = fileTemplatesContext?.getTemplates();
+
+  useEffect(() => {
+    if (!firstRender && fileNameRef.current && fileContentRef.current) {
+      fileNameRef.current.value = fileName;
+      fileContentRef.current.value = fileContent;
+    }
+  }, [fileName, fileContent]);
 
   useEffect(() => {
     haveError(inputError);
@@ -68,19 +112,19 @@ function CreateFile(props: Props) {
   }
 
   const onInputFocus = (event) => {
-    if (fileName) {
-      event.preventDefault();
-      const { target } = event;
-      target.focus();
-      /*const indexOfBracket = fileName.current.indexOf(
-        AppConfig.beginTagContainer
-      );*/
-      let endRange = fileName.length;
-      // if (indexOfBracket > 0) {
-      //   endRange = indexOfBracket;
-      // }
-      target.setSelectionRange(0, endRange);
-    }
+    setTimeout(() => {
+      if (fileName) {
+        event.preventDefault();
+        const { target } = event;
+        const indexOfBracket = fileName.indexOf(AppConfig.beginTagContainer);
+        let endRange = fileName.length;
+        if (indexOfBracket > 0) {
+          endRange = indexOfBracket;
+        }
+        target.setSelectionRange(0, endRange);
+      }
+      // event?.target.setSelectionRange(0, 0);
+    }, 100);
   };
 
   const handleInputChange = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -107,79 +151,113 @@ function CreateFile(props: Props) {
 
   return (
     <Grid container spacing={1}>
-      <FormControl fullWidth={true} error={inputError}>
-        <TsTextField
-          error={inputError}
-          name="entryName"
-          label={t('core:fileName')}
-          onChange={handleInputChange}
-          onFocus={onInputFocus}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter' || event.code === 'Enter') {
-              event.preventDefault();
-              event.stopPropagation();
-              createFile(fileType);
-            }
-          }}
-          defaultValue={fileName}
-          disabled={noSuitableLocation}
-          autoFocus
-          data-tid={tid('newEntryDialogInputTID')}
-        />
-        {inputError && (
-          <FormHelperText>{t('core:fileNameHelp')}</FormHelperText>
-        )}
-      </FormControl>
       {fileType ? (
-        <FormControl fullWidth={true}>
-          <TsTextField
-            autoFocus
-            id="fileContentID"
-            label={t('core:fileContent')}
-            multiline
-            rows={5}
-            onChange={handleContentChange}
-          />
-        </FormControl>
+        <>
+          <FormControl fullWidth={true} error={inputError}>
+            <TsTextField
+              inputRef={fileNameRef}
+              error={inputError}
+              name="entryName"
+              label={t('core:fileName')}
+              onChange={handleInputChange}
+              onFocus={onInputFocus}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.code === 'Enter') {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  createFile(fileType);
+                }
+              }}
+              defaultValue={fileName}
+              disabled={noSuitableLocation}
+              autoFocus
+              data-tid={tid('newEntryDialogInputTID')}
+            />
+            {inputError && (
+              <FormHelperText>{t('core:fileNameHelp')}</FormHelperText>
+            )}
+          </FormControl>
+          <FormControl fullWidth={true}>
+            <TsTextField
+              // autoFocus
+              id="fileContentID"
+              label={t('core:fileContent')}
+              multiline
+              rows={5}
+              inputRef={fileContentRef}
+              defaultValue={fileContent}
+              onChange={handleContentChange}
+            />
+          </FormControl>
+          <TemplatesDropDown fileType={fileType} label={t('templatesTab')} />
+        </>
       ) : (
-        <ButtonGroup style={{ margin: '0 auto' }}>
+        <Box sx={{ flexGrow: 1 }}>
+          <Grid container spacing={2}>
+            {templatesArray?.map((template: TS.FileTemplate, index) => (
+              <Grid key={index} size={6}>
+                <Card
+                  variant="outlined"
+                  sx={{ borderRadius: AppConfig.defaultCSSRadius }}
+                >
+                  <CardActionArea
+                    disabled={noSuitableLocation}
+                    onClick={() => onSelectTemplate?.(template)}
+                    data-tid={`newFileTemplateTile_${template.id}`}
+                  >
+                    <CardContent>
+                      <Box
+                        sx={{
+                          display: 'flex',
+                          flexWrap: 'nowrap',
+                          alignItems: 'anchor-center',
+                        }}
+                      >
+                        <Typography variant="h6">{template.name}</Typography>
+                        <Box
+                          sx={{
+                            marginLeft: '5px',
+                            padding: '2px',
+                            fontSize: '12px',
+                            textTransform: 'uppercase',
+                            border: '1px solid gray',
+                            borderRadius: '3px',
+                            height: '13px',
+                          }}
+                        >
+                          {template.type}
+                        </Box>
+                      </Box>
+                      <Typography
+                        variant="body2"
+                        title={template.content}
+                        sx={{
+                          maxHeight: '75px',
+                          height: '75px',
+                          overflowY: 'auto',
+                        }}
+                      >
+                        {template.description || template.content}
+                      </Typography>
+                    </CardContent>
+                  </CardActionArea>
+                </Card>
+              </Grid>
+            ))}
+          </Grid>
           <TsButton
-            tooltip={t('createMarkdownTitle')}
-            onClick={() => createFile('md')}
-            data-tid={tid('createMarkdownButton')}
-            disabled={noSuitableLocation}
-            style={{
-              borderTopRightRadius: 0,
-              borderBottomRightRadius: 0,
-              fontWeight: 'bold',
+            size="small"
+            variant="text"
+            sx={{ marginTop: '10px' }}
+            onClick={() => {
+              onClose();
+              openSettingsDialog(SettingsTab.Templates);
             }}
+            disabled={!Pro}
           >
-            {t('createMarkdown')}
+            {t('manageTemplates')}
           </TsButton>
-          <TsButton
-            tooltip={t('createNoteTitle')}
-            onClick={() => createFile('html')}
-            data-tid={tid('createRichTextFileButton')}
-            disabled={noSuitableLocation}
-            style={{
-              borderRadius: 0,
-            }}
-          >
-            {t('createRichTextFile')}
-          </TsButton>
-          <TsButton
-            tooltip={t('createTextFileTitle')}
-            onClick={() => createFile('txt')}
-            data-tid={tid('createTextFileButton')}
-            disabled={noSuitableLocation}
-            style={{
-              borderTopLeftRadius: 0,
-              borderBottomLeftRadius: 0,
-            }}
-          >
-            {t('createTextFile')}
-          </TsButton>
-        </ButtonGroup>
+        </Box>
       )}
     </Grid>
   );

@@ -17,27 +17,26 @@
  */
 
 import AppConfig from '-/AppConfig';
+import { DeleteIcon, ExpandIcon } from '-/components/CommonIcons';
 import InfoIcon from '-/components/InfoIcon';
 import TsButton from '-/components/TsButton';
 import TsIconButton from '-/components/TsIconButton';
-import ConfirmDialog from '-/components/dialogs/ConfirmDialog';
 import { useFileUploadDialogContext } from '-/components/dialogs/hooks/useFileUploadDialogContext';
 import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
 import { useExtensionsContext } from '-/hooks/useExtensionsContext';
 import { useIOActionsContext } from '-/hooks/useIOActionsContext';
+import { useNotificationContext } from '-/hooks/useNotificationContext';
 import { actions as AppActions, AppDispatch } from '-/reducers/app';
 import { actions as SettingsActions, isDevMode } from '-/reducers/settings';
 import { getUserDataDir, loadExtensions, unZip } from '-/services/utils-io';
 import { TS } from '-/tagspaces.namespace';
-import DeleteIcon from '@mui/icons-material/Delete';
-import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import { Accordion, AccordionDetails, AccordionSummary } from '@mui/material';
 import Box from '@mui/material/Box';
 import List from '@mui/material/List';
 import ListItem from '@mui/material/ListItem';
-import Switch from '@mui/material/Switch';
+import TsSwitch from '-/components/TsSwitch';
 import Typography from '@mui/material/Typography';
-import { ChangeEvent, useRef, useState } from 'react';
+import { ChangeEvent, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useDispatch, useSelector } from 'react-redux';
 
@@ -45,14 +44,33 @@ function SettingsExtensions() {
   const { t } = useTranslation();
   const { extensions, removeExtension, enableExtension } =
     useExtensionsContext();
+  const { openConfirmDialog } = useNotificationContext();
   const { findLocalLocation } = useCurrentLocationContext();
   const { uploadFilesAPI } = useIOActionsContext();
   const { openFileUploadDialog } = useFileUploadDialogContext();
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [removeExtDialogOpened, setRemoveExtDialogOpened] =
-    useState<TS.Extension>(undefined);
   const devMode = useSelector(isDevMode);
   const dispatch: AppDispatch = useDispatch();
+
+  function setRemoveExtDialogOpened(ext: TS.Extension) {
+    if (ext) {
+      openConfirmDialog(
+        t('core:removeExtension'),
+        t('core:removeExtensionTooltip', {
+          extensionName: ext.extensionName,
+        }),
+        (result) => {
+          if (result) {
+            dispatch(SettingsActions.removeSupportedFileTypes(ext.extensionId));
+            removeExtension(ext.extensionId);
+          }
+        },
+        'cancelRemoveExtDialogTID',
+        'confirmRemoveExtDialogTID',
+        'confirmRemoveExtDialogContentTID',
+      );
+    }
+  }
 
   const onUploadProgress = (progress, abort, fileName) => {
     dispatch(AppActions.onUploadProgress(progress, abort, fileName));
@@ -109,24 +127,24 @@ function SettingsExtensions() {
   };
 
   return (
-    <div
-      style={{
+    <Box
+      sx={{
         overflowX: 'hidden',
         overflowY: 'auto',
         height: '100%',
-        padding: 10,
+        padding: '10px',
       }}
     >
       <Accordion defaultExpanded>
         <AccordionSummary
-          expandIcon={<ExpandMoreIcon />}
+          expandIcon={<ExpandIcon />}
           aria-controls="internal-content"
           id="internal-header"
         >
-          <Typography style={{ fontWeight: 'bold' }}>
+          <Typography sx={{ fontWeight: 'bold' }}>
             {t('core:coreExtensions')}
           </Typography>
-          <InfoIcon tooltip="These are extensions which are packaged with the current version of the app" />
+          <InfoIcon tooltip={t('core:coreExtensionsTooltip')} />
         </AccordionSummary>
         <AccordionDetails>
           <List>
@@ -144,11 +162,11 @@ function SettingsExtensions() {
       </Accordion>
       <Accordion defaultExpanded>
         <AccordionSummary
-          expandIcon={<ExpandMoreIcon />}
+          expandIcon={<ExpandIcon />}
           aria-controls="installed-content"
           id="installed-header"
         >
-          <Typography style={{ fontWeight: 'bold' }}>
+          <Typography sx={{ fontWeight: 'bold' }}>
             {t('core:thirdPartyExtensions')}
           </Typography>
           <InfoIcon tooltip="Extensions manually installed on top of the current app installation" />
@@ -162,7 +180,7 @@ function SettingsExtensions() {
                   <ListItem key={ext.extensionId} disablePadding>
                     {ext.extensionName}{' '}
                     <small style={{ marginLeft: 5 }}>v{ext.version}</small>
-                    <Switch
+                    <TsSwitch
                       data-tid="enableExtensionTID"
                       name="enableExtension"
                       checked={ext.extensionEnabled}
@@ -192,39 +210,17 @@ function SettingsExtensions() {
                   </ListItem>
                 ))}
           </List>
-          <ConfirmDialog
-            open={removeExtDialogOpened !== undefined}
-            onClose={() => setRemoveExtDialogOpened(undefined)}
-            title={t('core:removeExtension')}
-            content={t('core:removeExtensionTooltip', {
-              extensionName: removeExtDialogOpened
-                ? removeExtDialogOpened.extensionName
-                : '',
-            })}
-            confirmCallback={(result) => {
-              if (result) {
-                dispatch(
-                  SettingsActions.removeSupportedFileTypes(
-                    removeExtDialogOpened.extensionId,
-                  ),
-                );
-                removeExtension(removeExtDialogOpened.extensionId);
-              }
-            }}
-            cancelDialogTID="cancelRemoveExtDialogTID"
-            confirmDialogTID="confirmRemoveExtDialogTID"
-            confirmDialogContentTID="confirmRemoveExtDialogContentTID"
-          />
           {extensions &&
             extensions.filter((ext) => ext.extensionExternal).length < 1 && (
-              <Typography variant="subtitle1">No extensions found</Typography>
+              <Typography variant="subtitle1">
+                {t('core:noExtensionsFound')}
+              </Typography>
             )}
           {devMode && AppConfig.isElectron && (
-            <Box style={{ textAlign: 'center' }}>
+            <Box>
               <TsButton
                 data-tid="installExtensionTID"
                 onClick={() => fileInputRef.current.click()}
-                color="secondary"
               >
                 {t('core:installExtension')}
               </TsButton>
@@ -239,7 +235,7 @@ function SettingsExtensions() {
           )}
         </AccordionDetails>
       </Accordion>
-    </div>
+    </Box>
   );
 }
 

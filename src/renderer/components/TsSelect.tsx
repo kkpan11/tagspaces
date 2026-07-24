@@ -17,39 +17,36 @@
  */
 
 import TsTextField from '-/components/TsTextField';
-import { isDesktopMode } from '-/reducers/settings';
+import { Box } from '@mui/material';
 import FormHelperText from '@mui/material/FormHelperText';
 import { TextFieldProps } from '@mui/material/TextField';
-import { useTheme } from '@mui/material/styles';
-import { useSelector } from 'react-redux';
 
 type TSSelectProps = TextFieldProps & {};
 
 function TsSelect(props: TSSelectProps) {
-  const { children, label } = props;
-  const theme = useTheme();
-  const desktopMode = useSelector(isDesktopMode);
+  const { children, label, fullWidth = true, ...restProps } = props;
 
   return (
-    <div>
-      <FormHelperText style={{ marginLeft: 5, marginTop: 0 }}>
+    <Box sx={{ width: fullWidth ? '100%' : 'auto' }}>
+      <FormHelperText sx={{ marginLeft: '5px', marginTop: 0 }}>
         {label}
       </FormHelperText>
       <TsTextField
         slotProps={{
           select: { displayEmpty: true },
         }}
-        style={{
+        sx={{
           cursor: 'context-menu',
           marginTop: 0,
         }}
+        fullWidth={fullWidth}
         select
-        {...props}
+        {...restProps}
         label={undefined}
       >
         {children}
       </TsTextField>
-    </div>
+    </Box>
   );
 }
 

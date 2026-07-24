@@ -16,25 +16,37 @@
  *
  */
 
-import React from 'react';
-import { useSelector } from 'react-redux';
-import MenuList, { MenuListProps } from '@mui/material/MenuList';
-import { isDesktopMode } from '-/reducers/settings';
 import AppConfig from '-/AppConfig';
+import { isDesktopMode } from '-/reducers/settings';
+import MenuList, { MenuListProps } from '@mui/material/MenuList';
+import { useEffect, useState } from 'react';
+import { useSelector } from 'react-redux';
 
 export type TSButtonProps = MenuListProps & {};
 
 function TsMenuList(props: TSButtonProps) {
-  const { children, style } = props;
+  const { children, sx, ...rest } = props;
   const desktopMode = useSelector(isDesktopMode);
+
+  // On touch devices the tap / long-press that opens the menu is immediately
+  // followed by a synthesized click that lands on the first item rendered under
+  // the finger, auto-selecting it. The list mounts when the menu opens, so we
+  // ignore pointer events on it for a short window to swallow that ghost click;
+  // the menu becomes interactive right after. Desktop is unaffected.
+  const [interactive, setInteractive] = useState(!AppConfig.isNativeMobile);
+  useEffect(() => {
+    if (!AppConfig.isNativeMobile) {
+      return undefined;
+    }
+    const timer = setTimeout(() => setInteractive(true), 350);
+    return () => clearTimeout(timer);
+  }, []);
 
   return (
     <MenuList
       dense={desktopMode ? true : false}
-      {...props}
-      style={{
-        ...style,
-      }}
+      sx={{ ...sx, pointerEvents: interactive ? undefined : 'none' }}
+      {...rest}
     >
       {children}
     </MenuList>

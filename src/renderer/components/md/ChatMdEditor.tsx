@@ -15,37 +15,52 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  */
-import React, { useEffect, useRef } from 'react';
-import { Milkdown, useEditor } from '@milkdown/react';
-import { useOpenedEntryContext } from '-/hooks/useOpenedEntryContext';
-import { createCrepeEditor } from '-/components/md/utils';
-import { EditorStatus } from '@milkdown/core';
-import { CrepeRef, useCrepeHandler } from '-/components/md/useCrepeHandler';
-import { Crepe } from '@milkdown/crepe';
-import { replaceAll } from '@milkdown/utils';
-import { useChatContext } from '-/hooks/useChatContext';
-import { ChatItem } from '-/components/chat/ChatTypes';
-import { format } from 'date-fns';
 import AppConfig from '-/AppConfig';
+import { ChatItem } from '-/components/chat/ChatTypes';
+import { CrepeRef, useCrepeHandler } from '-/components/md/useCrepeHandler';
+import { createCrepeEditor } from '-/components/md/utils';
+import { useChatContext } from '-/hooks/useChatContext';
+import { useOpenedEntryContext } from '-/hooks/useOpenedEntryContext';
+import { getAuthor } from '-/reducers/settings';
+import { EditorStatus } from '@milkdown/core';
+import { Crepe } from '@milkdown/crepe';
+import { Milkdown, useEditor } from '@milkdown/react';
+import { format } from 'date-fns';
+import React, { useEffect, useRef } from 'react';
+import { useSelector } from 'react-redux';
 
 interface ChatMdEditorProps {
-  //defaultContent: string;
-  currentFolder?: string;
   placeholder?: string;
+  showCurrent?: boolean;
 }
 
 const ChatMdEditor = React.forwardRef<CrepeRef, ChatMdEditorProps>(
   (props, ref) => {
-    const { currentFolder, placeholder } = props;
-    const { openLink } = useOpenedEntryContext();
+    const { placeholder, showCurrent } = props;
+    const { openedEntry, openLink } = useOpenedEntryContext();
     const { chatHistoryItems } = useChatContext();
-    const crepeInstanceRef = useRef<Crepe>(undefined);
+    const crepeInstanceRef = useRef<Crepe | null>(null);
+    const author = useSelector(getAuthor);
 
+    // Memoize formatted chat content for performance
+    const formattedChatContent = React.useMemo(
+      () =>
+        formatChatItems(showCurrent ? [chatHistoryItems[0]] : chatHistoryItems),
+      [chatHistoryItems, showCurrent],
+    );
+
+    // Use Milkdown's useEditor, but only recreate the editor when currentFolder changes
     const { get, loading } = useEditor(
       (root) => {
+        // Destroy previous instance if exists
+        if (crepeInstanceRef.current) {
+          crepeInstanceRef.current.destroy();
+          crepeInstanceRef.current = null;
+        }
+        // Create new crepe editor
         const crepe = createCrepeEditor(
           root,
-          formatChatItems(chatHistoryItems),
+          formattedChatContent,
           false,
           {
             [Crepe.Feature.BlockEdit]: false,
@@ -54,80 +69,60 @@ const ChatMdEditor = React.forwardRef<CrepeRef, ChatMdEditorProps>(
             [Crepe.Feature.Cursor]: false,
           },
           placeholder,
-          currentFolder,
+          openedEntry?.path,
           openLink,
         );
-
         crepe.editor.onStatusChange((status: EditorStatus) => {
           if (status === EditorStatus.Created) {
-            console.log(status);
             crepeInstanceRef.current = crepe;
           }
         });
         return crepe;
       },
-      [currentFolder, chatHistoryItems],
+      [openedEntry?.path, chatHistoryItems],
     );
-
-    /* useEffect(() => {
-      const editor = get();
-      if (loading || !editor || editor.status !== EditorStatus.Created) return;
-      editor.action(replaceAll(formatChatItems(chatHistoryItems)));
-    }, [chatHistoryItems]);*/
-
-    useEffect(() => {
-      return () => {
-        if (crepeInstanceRef.current) {
-          crepeInstanceRef.current.destroy();
-        }
-      };
-    }, []);
 
     useCrepeHandler(ref, () => crepeInstanceRef.current, get, loading);
 
-    function formatChatItems(chatItems: ChatItem[]): string {
-      if (chatItems) {
-        const formattedItems = chatItems.map((item) => {
-          const date = item.timestamp
-            ? '**User on ' +
-              format(item.timestamp, 'yyyy-MM-dd HH:mm:ss') +
-              '**'
-            : '**User**';
-          const request = item.request ? item.request : '';
-          const model = item.modelName ? item.modelName : 'AI model';
-          const response = item.response
-            ? '**' + model + '**:\\\n' + item.response
-            : '';
-          const images = item.imagePaths
-            ? item.imagePaths.map((i) => {
-                return (
-                  '![chat image](' +
-                  //(AppConfig.isWeb ? '' : 'file://') +
-                  // getHistoryFilePath(i) +
-                  AppConfig.metaFolder +
-                  '/' +
-                  AppConfig.aiFolder +
-                  '/' +
-                  i +
-                  ')'
-                );
-              })
-            : '';
-          return (
-            '' +
-            date +
-            ': \\\n' +
-            request +
-            '\n' +
-            images +
-            '\n' +
-            response +
-            '\n *** \n'
-          );
-        });
-        return formattedItems.join(' ');
+    // Scroll to bottom when markdown content changes
+    useEffect(() => {
+      const container = document.querySelector('#chatMD');
+      if (container) {
+        setTimeout(() => {
+          container.scrollTo({
+            top: container.scrollHeight,
+            behavior: 'auto', // 'smooth',
+          });
+        }, 500);
       }
-      return '';
+    }, [formattedChatContent]);
+
+    function formatChatItems(chatItems: ChatItem[] = []): string {
+      if (!Array.isArray(chatItems) || !chatItems.length || !chatItems[0])
+        return '';
+      const user = author || 'You';
+      return [...chatItems]
+        .reverse()
+        .map((item) => {
+          const dateStr = item.timestamp
+            ? `**${user} on ${format(item.timestamp, 'yyyy-MM-dd HH:mm:ss')}**`
+            : `**${user}**`;
+          const requestStr = item.request ?? '';
+          const modelName = item.modelName ?? 'AI model';
+          const responseStr = item.response
+            ? `**AI/LLM (${modelName})**:\\\n${item.response}`
+            : '';
+          const imagesStr = (
+            Array.isArray(item.imagePaths) ? item.imagePaths : []
+          )
+            .map(
+              (img) =>
+                `![chat image](${AppConfig.metaFolder}/${AppConfig.aiFolder}/${img})`,
+            )
+            .join('\n');
+          return `${dateStr}: \\\n${requestStr}\n${imagesStr}\n${responseStr}\n***\n`;
+        })
+        .join('\n');
     }
 
     return <Milkdown />;

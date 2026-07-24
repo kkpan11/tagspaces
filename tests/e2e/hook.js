@@ -1,7 +1,16 @@
 /* Copyright (c) 2016-present - TagSpaces GmbH. All rights reserved. */
-import pathLib from 'path';
+import fs from 'fs';
 import fse from 'fs-extra';
-import { uploadFile } from '../s3rver/S3DataRefresh';
+import os from 'os';
+import pathLib from 'path';
+import {
+  createDir,
+  refreshS3testData,
+  uploadFile,
+} from '../s3rver/S3DataRefresh';
+
+const windowWidth = 1400;
+const windowHeight = 800;
 
 // Spectron API https://github.com/electron/spectron
 // Webdriver.io http://webdriver.io/api.html
@@ -48,13 +57,13 @@ export function checkFileExist(filePath) {
   return hasPlaywright;
 };*/
 
-export async function clearLocalStorage() {
+export async function clearLocalStorage(isWeb) {
   /*if (!(await clearStorage())) {
     // TODO session is not implemented https://github.com/electron-userland/spectron/issues/117
     // await global.app.webContents.session.clearStorageData();
     global.app.webContents.reload();
   }*/
-  if (global.isWeb) {
+  if (isWeb) {
     const windowHandle = await global.client.evaluateHandle(() => window);
     const title = await global.client.evaluateHandle(() => document.title);
     windowHandle.history.pushState('', title, windowHandle.location.pathname);
@@ -69,15 +78,18 @@ export async function clearLocalStorage() {
   // global.app.client.reload(false);
 }
 
-export async function copyExtConfig(extconfig = 'extconfig-with-welcome.js') {
+export async function copyExtConfig(
+  { isWeb, isS3, testDataDir },
+  extconfig = 'extconfig-with-welcome.js',
+) {
   let srcDir;
-  if (global.isWeb) {
+  if (isWeb) {
     srcDir = pathLib.join(
       __dirname,
       '..',
       '..',
       'scripts',
-      'web' + (global.isS3 ? 's3' : '') + extconfig,
+      'web' + (isS3 ? 's3' : '') + extconfig,
     );
 
     if (!fse.existsSync(srcDir)) {
@@ -86,7 +98,7 @@ export async function copyExtConfig(extconfig = 'extconfig-with-welcome.js') {
         '..',
         '..',
         'scripts',
-        (global.isS3 ? 's3' : '') + extconfig,
+        (isS3 ? 's3' : '') + extconfig,
       );
     }
     if (!fse.existsSync(srcDir)) {
@@ -98,7 +110,7 @@ export async function copyExtConfig(extconfig = 'extconfig-with-welcome.js') {
       '..',
       '..',
       'scripts',
-      (global.isS3 ? 's3' : '') + extconfig,
+      (isS3 ? 's3' : '') + extconfig,
     );
     if (!fse.existsSync(srcDir)) {
       srcDir = pathLib.join(__dirname, '..', '..', 'scripts', extconfig);
@@ -108,24 +120,50 @@ export async function copyExtConfig(extconfig = 'extconfig-with-welcome.js') {
     __dirname,
     '..',
     '..',
-    global.isWeb ? 'web' : 'release/app/dist/renderer',
+    isWeb ? 'web' : 'release/app/dist/renderer',
     'extconfig.js',
   );
   await fse.copy(srcDir, destDir);
+  if (testDataDir) {
+    await searchAndReplaceInFile(destDir, 'testdata-tmp', testDataDir);
+  }
 }
 
-export async function removeExtConfig() {
-  if (!global.isWeb) {
-    await fse.remove(
-      pathLib.join(
-        __dirname,
-        '..',
-        '..',
-        global.isWeb ? 'web' : 'release/app/dist/renderer',
-        'extconfig.js',
-      ),
+async function searchAndReplaceInFile(filePath, searchValue, replaceValue) {
+  try {
+    // 1. Read file as UTF‑8 text
+    let content = await fse.readFile(filePath, 'utf8');
+
+    // 2. Replace: if searchValue is a string, only first occurrence;
+    //    use RegExp with global flag to replace all occurrences
+    const updated = content.replace(
+      typeof searchValue === 'string'
+        ? new RegExp(searchValue, 'g')
+        : searchValue, // assume user passed a RegExp
+      replaceValue,
     );
+
+    // 3. Write it back
+    await fse.writeFile(filePath, updated, 'utf8');
+
+    // console.log(`✓ Updated ${filePath}`);
+  } catch (err) {
+    console.error(`✗ Error processing file:`, err);
   }
+}
+
+export async function removeExtConfig(isWeb) {
+  //if (!isWeb) {
+  await fse.remove(
+    pathLib.join(
+      __dirname,
+      '..',
+      '..',
+      isWeb ? 'web' : 'release/app/dist/renderer',
+      'extconfig.js',
+    ),
+  );
+  //  }
 }
 
 const waitForMainMessage = (electronApp, messageId) => {
@@ -140,11 +178,17 @@ const waitForAppLoaded = async (electronApp) => {
   await waitForMainMessage(electronApp, 'startup-finished');
 };
 
-export async function startTestingApp(extconfig) {
+export async function startTestingApp(
+  { isWeb, isS3, webServerPort, testInfo },
+  extconfig,
+) {
   if (extconfig) {
-    await copyExtConfig(extconfig);
+    await copyExtConfig(
+      { isWeb, isS3, testDataDir: `testdata-${testInfo.workerIndex}` },
+      extconfig,
+    );
   } else {
-    await removeExtConfig();
+    await removeExtConfig(isWeb);
   }
   const chromeDriverArgs = [
     // '--disable-gpu',
@@ -152,30 +196,35 @@ export async function startTestingApp(extconfig) {
     '--no-sandbox',
     '--disable-dev-shm-usage',
     '--disable-extensions',
-    '--window-size=1920,1080',
+    '--window-size=' + windowWidth + ',' + windowHeight,
   ];
-  if (global.isHeadlessMode) {
+  if (process.env.HEADLESS_MODE === 'true') {
     chromeDriverArgs.push('--headless');
   }
 
-  if (global.isWeb) {
-    const { webkit, chromium } = require('playwright');
+  if (isWeb) {
+    const { webkit, chromium } = require('playwright-core');
     global.app = await chromium.launch({
-      headless: global.isHeadlessMode,
+      headless: process.env.HEADLESS_MODE === 'true',
       slowMo: 50,
     }); //browser
 
     global.context = await global.app.newContext({
-      viewport: { width: 1920, height: 1080 },
+      viewport: { width: windowWidth, height: windowHeight },
     });
 
     global.client = await global.context.newPage(); //page
-    await global.client.goto('http://localhost:8000');
+    await global.client.goto('http://localhost:' + webServerPort);
     // await global.client.screenshot({ path: `example.png` });
     // await global.client.close();
   } else {
     //if (global.isPlaywright) {
-    const { _electron: electron } = require('playwright');
+    const { _electron: electron } = require('@playwright/test');
+    // 1. Create a unique temporary directory for user data
+    const userDataDir = fse.mkdtempSync(
+      pathLib.join(os.tmpdir(), `electron-user-data-${testInfo.workerIndex}`),
+    ); // :contentReference[oaicite:1]{index=1}
+
     // Launch Electron app.
     global.app = await electron.launch({
       args: [
@@ -189,7 +238,7 @@ export async function startTestingApp(extconfig) {
           'main',
           'main.js',
         ),
-        // `--user-data-dir=${tempDir.path}`,
+        `--user-data-dir=${userDataDir}`,
         '--integration-testing',
         '--no-sandbox',
         '--whitelisted-ips',
@@ -216,6 +265,20 @@ export async function startTestingApp(extconfig) {
     global.app.on('console', (msg) => {
       console.log(`[Electron Main] ${msg.type()}: ${msg.text()}`);
     });
+    /* const mainProcess =  global.app.process();
+
+    // 3. Pipe its stdout / stderr to your Playwright test’s console
+    mainProcess.stdout.on("data", (chunk) => {
+      // chunk is a Buffer; convert to string
+      const text = chunk.toString("utf-8").trim();
+      if (text)
+        console.log(`[main stdout] ${text}`);
+    });*/
+    /* mainProcess.stderr.on("data", (chunk) => {
+      const text = chunk.toString("utf-8").trim();
+      if (text)
+        console.error(`[main stderr] ${text}`);
+    });*/
 
     // Get the Electron context.
     global.context = await global.app.context();
@@ -223,8 +286,29 @@ export async function startTestingApp(extconfig) {
     // Get the first window that the app opens, wait if necessary.
     global.client = await global.app.firstWindow();
     // global.session = await global.client.context().newCDPSession(global.client);
+    // Move to second display if available, then resize
+    await global.app.evaluate(
+      async ({ BrowserWindow, screen }, { w, h }) => {
+        const win = BrowserWindow.getAllWindows()[0];
+        if (!win) return;
+        const displays = screen.getAllDisplays();
+        const primaryId = screen.getPrimaryDisplay().id;
+        const secondary = displays.find((d) => d.id !== primaryId);
+        if (secondary) {
+          const { x, y, width, height } = secondary.workArea;
+          // Center the window on the secondary display
+          const posX = x + Math.round((width - w) / 2);
+          const posY = y + Math.round((height - h) / 2);
+          win.setBounds({ x: posX, y: posY, width: w, height: h });
+        } else {
+          win.setSize(w, h);
+          win.center();
+        }
+      },
+      { w: windowWidth, h: windowHeight },
+    );
     // Setting the viewport size helps keep test environments consistent.
-    await global.client.setViewportSize({ width: 1920, height: 1080 }); //{width: 1200,height: 800} ({ width: 800, height: 600 });
+    await global.client.setViewportSize({ width: windowWidth, height: windowHeight });
     await global.client.waitForLoadState('load'); //'domcontentloaded'); //'networkidle');
 
     if (process.env.SHOW_CONSOLE) {
@@ -235,8 +319,8 @@ export async function startTestingApp(extconfig) {
   }
 }
 
-export async function stopApp() {
-  if (global.isWeb) {
+export async function stopApp(isWeb) {
+  if (isWeb) {
     await global.context.close();
     // await global.client.closeWindow();
   } else if (global.app) {
@@ -245,14 +329,11 @@ export async function stopApp() {
   }
 }
 
-export async function testDataRefresh(s3ServerInstance) {
-  if (global.isS3) {
-    /*if(s3ServerInstance) {
-      s3ServerInstance.reset();
-     await uploadTestDirectory();
-    }*/
+export async function testDataRefresh(isS3, testDataDir) {
+  if (isS3) {
+    //console.log('testDataDir:'+testDataDir);
+    await refreshS3testData(testDataDir);
   } else {
-    await deleteTestData();
     const src = pathLib.join(
       __dirname,
       '..',
@@ -260,50 +341,119 @@ export async function testDataRefresh(s3ServerInstance) {
       'file-structure',
       'supported-filestypes',
     );
-    const dst = pathLib.join(__dirname, '..', 'testdata-tmp', 'file-structure');
-    let newPath = pathLib.join(dst, pathLib.basename(src));
-    await fse.copy(src, newPath); //, { overwrite: true });
+    // The running Electron app's indexer/watcher keeps recreating directories
+    // (testDataDir or its .ts metafolder) between our rm and copy. Node's
+    // fs.cp is NOT actually race-safe here: its internal recursive mkdir
+    // throws EEXIST/ENOTEMPTY when a destination dir reappears mid-copy
+    // (despite { force: true }, which only governs file overwrite). When the
+    // app is actively indexing, this fails every Playwright retry too — so we
+    // retry the whole rm+cp sequence (a fresh rm re-closes the race window)
+    // and only rethrow once attempts are exhausted.
+    const transientCodes = ['EEXIST', 'ENOTEMPTY', 'EBUSY', 'EPERM'];
+    const maxAttempts = 6;
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await fse.rm(testDataDir, {
+          recursive: true,
+          force: true,
+          maxRetries: 5, // retry on EBUSY/EMFILE/ENFILE
+          retryDelay: 100, // optional back‑off in ms
+        });
+        await fs.promises.cp(src, testDataDir, {
+          recursive: true,
+          force: true,
+        });
+        break;
+      } catch (err) {
+        if (
+          attempt >= maxAttempts ||
+          !transientCodes.includes(err && err.code)
+        ) {
+          throw err;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 150 * attempt));
+      }
+    }
   }
 }
 
-export async function deleteTestData() {
-  await fse.emptyDir(
-    pathLib.join(
-      __dirname,
-      '..',
-      'testdata-tmp',
-      'file-structure',
-      'supported-filestypes',
-    ),
-  );
-}
-
-export async function createFile(
-  fileName = 'empty_file.html',
-  fileContent = undefined,
-  rootFolder = 'empty_folder',
-) {
-  const filePath = pathLib.join(
+/*export async function deleteTestData() {
+  const testDataDir = pathLib.join(
     __dirname,
     '..',
     'testdata-tmp',
     'file-structure',
     'supported-filestypes',
+  );
+  await fse.rm(testDataDir, {
+    recursive: true,
+    force: true,
+    maxRetries: 5, // retry on EBUSY/EMFILE/ENFILE
+    retryDelay: 100, // optional back‑off in ms
+  });
+  // await fse.emptyDir(testDataDir);
+}*/
+
+export async function createFileS3(
+  fileName = 'empty_file.html',
+  fileContent = '',
+  rootFolder = 'empty_folder',
+) {
+  const filePath = pathLib.join(
+    __dirname,
+    '..',
+    'testdata',
+    'file-structure',
+    'supported-filestypes',
     rootFolder,
     fileName,
   );
-  if (global.isS3) {
-    await uploadFile(filePath, fileContent || 'test content');
-  } else {
-    try {
-      if (fileContent) {
-        await fse.outputFile(filePath, fileContent);
-      } else {
-        await fse.createFile(filePath);
-        console.log('Empty file created!');
-      }
-    } catch (err) {
-      console.error(err);
+  await uploadFile(filePath, fileContent); //test content');
+}
+export async function createLocalFile(
+  testDataDir,
+  fileName = 'empty_file.html',
+  fileContent = undefined,
+  rootFolder = 'empty_folder',
+) {
+  const filePath = pathLib.join(testDataDir, rootFolder, fileName);
+  try {
+    if (fileContent) {
+      await fse.outputFile(filePath, fileContent);
+      console.log('file override:' + filePath);
+    } else {
+      await fse.createFile(filePath);
+      console.log('Empty file created!');
     }
+  } catch (err) {
+    console.error(err);
+  }
+}
+
+export async function createLocalFolder(
+  testDataDir,
+  folderName = 'empty_local_folder',
+  rootFolder = 'empty_folder',
+) {
+  const folderPath = pathLib.join(testDataDir, rootFolder, folderName);
+  try {
+    await fse.mkdir(folderPath);
+    console.log('Folder created! ' + folderPath);
+  } catch (err) {
+    console.error(err);
+  }
+}
+
+export async function createFolderS3(
+  folderName = 'empty_local_folder',
+  rootFolder = 'empty_folder',
+) {
+  const folderPath = (rootFolder ? rootFolder + '/' : '') + folderName; //pathLib.join(rootFolder, folderName);
+
+  try {
+    await createDir(folderPath);
+    console.log('Folder created! ' + folderPath);
+  } catch (err) {
+    console.error(err);
   }
 }

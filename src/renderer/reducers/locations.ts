@@ -16,10 +16,10 @@
  *
  */
 
-import { immutablySwapItems } from '@tagspaces/tagspaces-common/misc';
-import { CommonLocation } from '-/utils/CommonLocation';
-import { TS } from '-/tagspaces.namespace';
 import { toTsLocation } from '-/services/utils-io';
+import { TS } from '-/tagspaces.namespace';
+import { CommonLocation } from '-/utils/CommonLocation';
+import { immutablySwapItems } from '@tagspaces/tagspaces-common/misc';
 
 export const types = {
   ADD_LOCATION: 'APP/ADD_LOCATION',
@@ -28,6 +28,11 @@ export const types = {
   MOVE_DOWN_LOCATION: 'APP/MOVE_DOWN_LOCATION',
   EDIT_LOCATION: 'APP/EDIT_LOCATION',
   REMOVE_LOCATION: 'APP/REMOVE_LOCATION',
+  // No-op that returns a fresh array reference. Used to force redux-persist
+  // to re-serialize the (unchanged) locations slice through the
+  // credentials transform when toggling at-rest encryption — its persistoid
+  // skips slices whose reference did not change.
+  TOUCH_LOCATIONS: 'APP/TOUCH_LOCATIONS',
 };
 
 export const initialState = [];
@@ -136,6 +141,10 @@ export default (state: Array<TS.S3Location> = initialState, action: any) => {
       }
       return state;
     }
+    case types.TOUCH_LOCATIONS: {
+      // Fresh reference, identical contents — see TOUCH_LOCATIONS comment.
+      return [...state];
+    }
     default: {
       return state;
     }
@@ -169,6 +178,7 @@ export const actions = {
     type: types.REMOVE_LOCATION,
     locationId,
   }),
+  touchLocations: () => ({ type: types.TOUCH_LOCATIONS }),
 };
 
 // Selectors
@@ -177,23 +187,3 @@ export const getDefaultLocationId = (state: any): string | undefined => {
   let foundLocation = state.locations.find((location) => location.isDefault);
   return foundLocation ? foundLocation.uuid : undefined;
 };
-// state.locations.map((l) => new CommonLocation(l));
-/*export const getLocation = (
-  state: any,
-  locationId: string,
-): CommonLocation | null =>
-  state.locations.find((location) => location.uuid === locationId);
-export const getLocationByPath = (
-  state: any,
-  path: string,
-): CommonLocation | null =>
-  state.locations.find((location) => location.path === path);
-export const getFirstRWLocation = (state: any): CommonLocation | undefined => {
-  let foundLocation = state.locations.find(
-    (location) => location.isDefault && !location.isReadOnly,
-  );
-  if (!foundLocation) {
-    foundLocation = state.locations.find((location) => !location.isReadOnly);
-  }
-  return foundLocation;
-};    */

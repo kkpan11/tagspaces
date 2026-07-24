@@ -17,13 +17,13 @@
  */
 
 import AppConfig from '-/AppConfig';
-import LogoIcon from '-/assets/images/icon100x100.svg';
-import TextLogoIcon from '-/assets/images/text-logo.svg';
-import Tooltip from '-/components/Tooltip';
+import LogoIcon from '-/assets/icons/icon.png';
+// import TextLogoIcon from '-/assets/images/text-logo.svg';
+import TsTooltip from '-/components/TsTooltip';
 import TsIconButton from '-/components/TsIconButton';
 import { useAboutDialogContext } from '-/components/dialogs/hooks/useAboutDialogContext';
 import { isUpdateAvailable } from '-/reducers/app';
-import { Badge, Typography } from '@mui/material';
+import { Badge, Box, Typography } from '@mui/material';
 import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSelector } from 'react-redux';
@@ -35,100 +35,115 @@ function CustomLogo() {
   const { openAboutDialog } = useAboutDialogContext();
   const updateAvailable = useSelector(isUpdateAvailable);
   const tsType = Pro ? 'PRO' : 'LITE';
+  const tsAboutTitle =
+    versionMeta.name + ' ' + tsType + ' ' + versionMeta.version;
 
   const logo = useMemo(() => {
-    let customLogo = TextLogoIcon;
-    // if (AppConfig.isWeb) {
-    //   customLogo = WebLogoIcon;
-    // }
-    if (AppConfig.customLogo) {
-      customLogo = AppConfig.customLogo;
+    let customLogo =
+      'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>';
+    // let customLogo = TextLogoIcon;
+    if (AppConfig.ExtLogoURL) {
+      customLogo = AppConfig.ExtLogoURL;
     }
     return customLogo;
   }, []);
 
   return (
-    <div
+    <Box
       onClick={() => openAboutDialog()}
-      style={{
-        width: '100%',
-        textAlign: 'center',
-        // @ts-ignore
-        WebkitAppRegion: 'drag',
-      }}
+      sx={
+        {
+          width: '100%',
+          textAlign: 'center',
+          WebkitAppRegion: 'drag',
+        } as React.CSSProperties
+      }
     >
-      <TsIconButton tooltip={t('core:aboutTitle')} style={{ padding: 0 }}>
-        <img
-          style={{
-            width: 30,
-            height: 30,
-            padding: 4,
-            // @ts-ignore
-            WebkitAppRegion: 'no-drag',
-          }}
-          src={LogoIcon}
-          alt="TagSpaces Logo"
-        />
-      </TsIconButton>
-      <TsIconButton
-        tooltip={t('core:aboutTitle')}
-        style={{ height: 40, padding: 4 }}
-        data-tid="aboutTagSpaces"
+      <TsTooltip
+        title={updateAvailable ? t('core:newVersionAvailable') : tsAboutTitle}
+        placeCloser
       >
-        <img
-          style={{
-            maxHeight: 26,
-            maxWidth: 200,
-            // @ts-ignore
-            WebkitAppRegion: 'no-drag',
+        <Badge
+          color="primary"
+          variant="dot"
+          anchorOrigin={{
+            vertical: 'top',
+            horizontal: 'right',
           }}
-          src={logo}
-          alt="Application Logo"
-        />
-      </TsIconButton>
-      <sup>
-        <Tooltip title={updateAvailable ? t('core:newVersionAvailable') : ''}>
-          <Badge
-            color="secondary"
-            variant="dot"
-            anchorOrigin={{
-              vertical: 'top',
-              horizontal: 'right',
-            }}
-            invisible={!updateAvailable}
-            style={{
-              // @ts-ignore
+          invisible={!updateAvailable}
+          sx={
+            {
+              marginTop: '7px',
               WebkitAppRegion: 'no-drag',
-            }}
-          >
-            <Typography
-              style={{
-                display: 'inline',
-                fontSize: '10px',
-                marginLeft: 3,
-                lineHeight: '16px',
-              }}
-            >
-              {'v' + versionMeta.version}
-            </Typography>
-          </Badge>
-        </Tooltip>
-      </sup>
-      <sub>
-        <Typography
-          style={{
-            display: 'inline',
-            fontSize: '10px',
-            marginLeft: -25,
-            lineHeight: '40px',
-            // @ts-ignore
-            WebkitAppRegion: 'no-drag',
-          }}
+            } as React.CSSProperties & { WebkitAppRegion?: string }
+          }
         >
-          {tsType}
-        </Typography>
-      </sub>
-    </div>
+          {AppConfig.showTSLogo && (
+            <TsIconButton sx={{ padding: 0, marginTop: '-5px', height: 40 }}>
+              <img
+                style={
+                  {
+                    width: 30,
+                    height: 30,
+                    WebkitAppRegion: 'no-drag',
+                  } as React.CSSProperties & { WebkitAppRegion?: string }
+                }
+                src={LogoIcon}
+                alt="TagSpaces Logo"
+              />
+            </TsIconButton>
+          )}
+          <TsIconButton
+            // tooltip={tsAboutTitle}
+            sx={{ height: 40, padding: 0, marginTop: '-5px' }}
+            data-tid="aboutTagSpaces"
+          >
+            <img
+              style={
+                {
+                  maxHeight: 26,
+                  maxWidth: 200,
+                  WebkitAppRegion: 'no-drag',
+                } as React.CSSProperties & { WebkitAppRegion?: string }
+              }
+              src={logo}
+              alt="Application Logo"
+            />
+          </TsIconButton>
+          {AppConfig.showTSVersion && (
+            <>
+              <sup>
+                <Typography
+                  sx={{
+                    display: 'inline',
+                    fontSize: '10px',
+                    marginLeft: '3px',
+                    lineHeight: '16px',
+                  }}
+                >
+                  {'v' + versionMeta.version}
+                </Typography>
+              </sup>
+              <sub>
+                <Typography
+                  sx={
+                    {
+                      display: 'inline',
+                      fontSize: '10px',
+                      marginLeft: '-25px',
+                      lineHeight: '40px',
+                      WebkitAppRegion: 'no-drag',
+                    } as React.CSSProperties & { WebkitAppRegion?: string }
+                  }
+                >
+                  {tsType}
+                </Typography>
+              </sub>
+            </>
+          )}
+        </Badge>
+      </TsTooltip>
+    </Box>
   );
 }
 

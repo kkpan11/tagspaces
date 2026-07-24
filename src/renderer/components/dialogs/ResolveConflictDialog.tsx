@@ -68,14 +68,14 @@ function ResolveConflictDialog(props: Props) {
       scroll="paper"
       aria-labelledby="draggable-dialog-title"
     >
-      <DialogTitle style={{ cursor: 'move' }} id="draggable-dialog-title">
+      <DialogTitle sx={{ cursor: 'move' }} id="draggable-dialog-title">
         {t('core:resolveConflictTitle')}
         <DialogCloseButton testId="closeResolveConflictTID" onClose={onClose} />
       </DialogTitle>
       <DialogContent
-        style={{
+        sx={{
           overflow: 'auto',
-          minWidth: 400,
+          minWidth: '400px',
         }}
       >
         {isSaveAs ? (

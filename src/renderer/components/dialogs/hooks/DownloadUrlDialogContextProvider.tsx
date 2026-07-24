@@ -17,7 +17,7 @@
  */
 
 import React, { createContext, useMemo, useReducer, useRef } from 'react';
-import LoadingLazy from '-/components/LoadingLazy';
+import { Pro } from '-/pro';
 
 type DownloadUrlContextData = {
   openDownloadUrl: () => void;
@@ -33,14 +33,15 @@ export type DownloadUrlContextProviderProps = {
   children: React.ReactNode;
 };
 
-const DownloadUrlDialog = React.lazy(
-  () =>
-    import(/* webpackChunkName: "DownloadUrlDialog" */ '../DownloadUrlDialog'),
-);
-
 export const DownloadUrlContextProvider = ({
   children,
 }: DownloadUrlContextProviderProps) => {
+  // Download from URL is a Pro feature; the dialog implementation lives in the
+  // Pro module and is reached via Pro.UI. Read it at render time (not module
+  // scope) so a circular import with the Pro bundle can't capture `undefined`.
+  // On Lite it is unavailable — the menu entry is disabled (or hidden) — so
+  // this provider simply renders nothing.
+  const DownloadUrlDialog = Pro && Pro.UI ? Pro.UI.DownloadUrlDialog : false;
   const open = useRef<boolean>(false);
 
   const [ignored, forceUpdate] = useReducer((x) => x + 1, 0, undefined);
@@ -55,14 +56,6 @@ export const DownloadUrlContextProvider = ({
     forceUpdate();
   }
 
-  function DownloadUrlAsync(props) {
-    return (
-      <React.Suspense fallback={<LoadingLazy />}>
-        <DownloadUrlDialog {...props} />
-      </React.Suspense>
-    );
-  }
-
   const context = useMemo(() => {
     return {
       openDownloadUrl: openDialog,
@@ -72,7 +65,9 @@ export const DownloadUrlContextProvider = ({
 
   return (
     <DownloadUrlDialogContext.Provider value={context}>
-      <DownloadUrlAsync open={open.current} onClose={closeDialog} />
+      {DownloadUrlDialog && (
+        <DownloadUrlDialog open={open.current} onClose={closeDialog} />
+      )}
       {children}
     </DownloadUrlDialogContext.Provider>
   );

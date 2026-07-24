@@ -2,31 +2,26 @@
  * Build config for electron renderer process
  */
 
-import path from 'path';
-import webpack from 'webpack';
+import CssMinimizerPlugin from 'css-minimizer-webpack-plugin';
 import HtmlWebpackPlugin from 'html-webpack-plugin';
 import MiniCssExtractPlugin from 'mini-css-extract-plugin';
-import { BundleAnalyzerPlugin } from 'webpack-bundle-analyzer';
-import CssMinimizerPlugin from 'css-minimizer-webpack-plugin';
-import { merge } from 'webpack-merge';
+import path from 'path';
 import TerserPlugin from 'terser-webpack-plugin';
-import baseConfig from './webpack.config.base';
-import webpackPaths from './webpack.paths';
+import webpack from 'webpack';
+import { BundleAnalyzerPlugin } from 'webpack-bundle-analyzer';
+import { merge } from 'webpack-merge';
 import checkNodeEnv from '../scripts/check-node-env';
 import deleteSourceMaps from '../scripts/delete-source-maps';
-import { generateJWT } from '../../src/main/util';
+import baseConfig from './webpack.config.base';
+import webpackPaths from './webpack.paths';
 
 checkNodeEnv('production');
 deleteSourceMaps();
-generateJWT();
 
 const configuration: webpack.Configuration = {
   devtool: 'source-map',
-
   mode: 'production',
-
   target: ['web', 'electron-renderer'],
-
   entry: [path.join(webpackPaths.srcRendererPath, 'index.tsx')],
 
   output: {
@@ -41,24 +36,8 @@ const configuration: webpack.Configuration = {
   module: {
     rules: [
       {
-        test: /\.s?(a|c)ss$/,
-        use: [
-          MiniCssExtractPlugin.loader,
-          {
-            loader: 'css-loader',
-            options: {
-              modules: true,
-              sourceMap: true,
-              importLoaders: 1,
-            },
-          },
-          'sass-loader',
-        ],
-        include: /\.module\.s?(c|a)ss$/,
-      },
-      {
-        test: /\.s?(a|c)ss$/,
-        use: [MiniCssExtractPlugin.loader, 'css-loader', 'sass-loader'],
+        test: /\.css$/,
+        use: [MiniCssExtractPlugin.loader, 'css-loader'],
         exclude: /\.module\.s?(c|a)ss$/,
       },
       // Fonts
@@ -68,7 +47,7 @@ const configuration: webpack.Configuration = {
       },
       // Images
       {
-        test: /\.(png|jpg|jpeg|gif)$/i,
+        test: /\.(png|jpg|jpeg|gif|avif|mp4|webm)$/i,
         type: 'asset/resource',
       },
       // Text files
@@ -132,7 +111,7 @@ const configuration: webpack.Configuration = {
       filename: 'index.html',
       template: path.join(webpackPaths.srcRendererPath, 'index.ejs'),
       templateParameters: {
-        csp: "connect-src files: *; frame-src 'self' tsfile: *; default-src 'self' ; object-src 'none' ; font-src 'self'; script-src 'self' ; style-src 'self' 'unsafe-inline' data:  blob: ; media-src * blob: ; img-src tsfile: * blob: data: content:;",
+        csp: "connect-src files: *; frame-src 'self' tsfile: *; default-src 'self' ; object-src 'none' ; font-src 'self'; script-src 'self' ; style-src 'self' 'unsafe-inline' data:  blob: ; media-src * blob: tsfile:; img-src tsfile: * blob: data: content:;",
       },
       minify: {
         collapseWhitespace: true,

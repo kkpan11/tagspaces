@@ -24,7 +24,14 @@ function DraggablePaper(props: PaperProps) {
   return (
     <Draggable
       handle="#draggable-dialog-title"
-      cancel={'[class*="MuiDialogContent-root"]'}
+      // Exclude the dialog body and any buttons living in the draggable title
+      // (close, back, action slots) from initiating a drag. On touch devices
+      // react-draggable calls preventDefault() on `touchstart` once a drag
+      // starts, which cancels the synthesized click — so without this the
+      // title-bar close button never fires `onClose`. Matching `cancel` makes
+      // react-draggable bail out before that preventDefault, letting the tap
+      // through.
+      cancel={'[class*="MuiDialogContent-root"], button'}
     >
       <Paper {...props} />
     </Draggable>

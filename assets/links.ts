@@ -37,9 +37,12 @@ const Links = {
       urlParams,
     productProGeoTagging: 'https://www.tagspaces.org/usecases/geotagging/',
     productPro: 'https://www.tagspaces.org/products/pro/' + urlParams,
+    googlePlayListing:
+      'https://play.google.com/store/apps/details?id=org.tagspaces.mobileapp',
     productEnterprise:
       'https://www.tagspaces.org/products/enterprise/' + urlParams,
     downloadURL: 'https://www.tagspaces.org/downloads/' + urlParams,
+    downloadProURL: 'https://tagspacesstore.onfastspring.com/account',
     howToStart: 'https://www.tagspaces.org/products/howtostart/' + urlParams,
     changelogURL: 'https://www.tagspaces.org/whatsnew/' + urlParams,
     imprintURL: 'https://www.tagspaces.org/about/imprint/' + urlParams,
@@ -47,13 +50,19 @@ const Links = {
     suggestFeature: 'https://tagspaces.discourse.group/c/feature-requests/6',
     forumsUrl: 'https://tagspaces.discourse.group',
     reportIssue: 'https://github.com/tagspaces/tagspaces/issues/',
-    helpTranslating: 'https://www.transifex.com/tagspaces/tagspaces/',
+    sourceCodeURL: 'https://github.com/tagspaces/tagspaces',
+    helpTranslating: 'https://explore.transifex.com/tagspaces/tagspaces/',
     webClipperChrome:
       'https://chrome.google.com/webstore/detail/tagspaces-web-clipper/ldalmgifdlgpiiadeccbcjojljeanhjk',
     webClipperFirefox:
       'https://addons.mozilla.org/en-US/firefox/addon/tagspaces/',
     webClipper: 'https://www.tagspaces.org/products/webclipper/' + urlParams,
-    twitter: 'https://twitter.com/tagspaces',
+    twitter: 'https://x.com/tagspaces',
+    mastodon: 'https://fosstodon.org/@tagspaces',
+    playStoreRedeem: 'https://play.google.com/redeem',
+    appStoreApp: 'https://apps.apple.com/app/id6779178134',
+    playStoreApp:
+      'https://play.google.com/store/apps/details?id=org.tagspaces.mobileapp',
     emailContact: 'mailto:contactus@tagspaces.org?subject=App',
     cancelSubscription:
       'mailto:contactus@tagspaces.org?subject=Cancel%20subscription&body=Please%20enter%20here%20you%20order%20ID%20or%20the%20email%20with%20which%20the%20purchase%20was%20made.', // 'https://fastspring.com/consumer-support-form/?ulCase.Primary_Category__c=Cancel%20/%20Refund&Case.Category__c=Cancel%20Subscription'
@@ -71,12 +80,15 @@ const Links = {
       'https://docs.tagspaces.org/perspectives/gallery' + urlParams,
     kanbanPerspective:
       'https://docs.tagspaces.org/perspectives/kanban' + urlParams,
+    calendarPerspective:
+      'https://docs.tagspaces.org/perspectives/calendar' + urlParams,
     locations: 'https://docs.tagspaces.org/ui/locations' + urlParams,
     revisions:
       'https://docs.tagspaces.org/editing-files#file-revisions' + urlParams,
     taglibrary: 'https://docs.tagspaces.org/ui/taglibrary' + urlParams,
     search: 'https://docs.tagspaces.org/search' + urlParams,
     settings: 'https://docs.tagspaces.org/ui/settings' + urlParams,
+    mapTiles: 'https://docs.tagspaces.org/maptiles' + urlParams,
     sharing: 'https://docs.tagspaces.org/sharing' + urlParams,
     creatingFiles: 'https://docs.tagspaces.org/creating-files' + urlParams,
   },

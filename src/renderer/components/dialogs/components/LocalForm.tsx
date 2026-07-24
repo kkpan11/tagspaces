@@ -17,14 +17,14 @@
  */
 
 import AppConfig from '-/AppConfig';
-import { FolderIcon } from '-/components/CommonIcons';
-import TsIconButton from '-/components/TsIconButton';
+import TsButton from '-/components/TsButton';
 import TsTextField from '-/components/TsTextField';
 import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
-import { selectDirectoryDialog } from '-/services/utils-io';
+import { useNotificationContext } from '-/hooks/useNotificationContext';
+import { getICloudContainer, selectDirectoryDialog } from '-/services/utils-io';
 import FormControl from '@mui/material/FormControl';
 import FormHelperText from '@mui/material/FormHelperText';
-import Grid from '@mui/material/Grid2';
+import Grid from '@mui/material/Grid';
 import InputAdornment from '@mui/material/InputAdornment';
 import { extractDirectoryName } from '@tagspaces/tagspaces-common/paths';
 import { useTranslation } from 'react-i18next';
@@ -42,19 +42,52 @@ function LocalForm(props: Props) {
   const { errorTextPath, errorTextName, setName, setPath, path, name } = props;
   const { t } = useTranslation();
   const { findLocation } = useCurrentLocationContext();
+  const { showNotification } = useNotificationContext();
+
+  const useICloudDrive = () => {
+    getICloudContainer()
+      .then((result: any) => {
+        console.log('getICloudContainer result: ' + JSON.stringify(result));
+        if (result && result.available && result.documentsPath) {
+          setPath(result.documentsPath);
+          if (name.length < 1) {
+            setName('iCloud Drive');
+          }
+        } else {
+          const reason =
+            result && result.reason ? ' (' + result.reason + ')' : '';
+          showNotification(
+            t('core:iCloudNotAvailable') + reason,
+            'warning',
+            true,
+          );
+        }
+        return true;
+      })
+      .catch((err) => {
+        console.log('getICloudContainer failed with: ' + err);
+        showNotification(
+          t('core:iCloudNotAvailable') + ' (' + err + ')',
+          'warning',
+          true,
+        );
+      });
+  };
 
   const openDirectory = () => {
     selectDirectoryDialog()
       .then((selectedPaths) => {
-        const selectedPath = decodeURI(selectedPaths[0]);
-        setPath(selectedPath);
-        if (name.length < 1 && selectedPath.length > 0) {
-          const currentLocation = findLocation();
-          const dirName = extractDirectoryName(
-            selectedPath,
-            currentLocation?.getDirSeparator(),
-          );
-          setName(dirName.charAt(0).toUpperCase() + dirName.slice(1));
+        if (selectedPaths && selectedPaths.length > 0) {
+          const selectedPath = decodeURI(selectedPaths[0]);
+          setPath(selectedPath);
+          if (name.length < 1 && selectedPath.length > 0) {
+            const currentLocation = findLocation();
+            const dirName = extractDirectoryName(
+              selectedPath,
+              currentLocation?.getDirSeparator(),
+            );
+            setName(dirName.charAt(0).toUpperCase() + dirName.slice(1));
+          }
         }
         return true;
       })
@@ -65,6 +98,57 @@ function LocalForm(props: Props) {
 
   return (
     <Grid container>
+      <Grid size={12}>
+        <FormControl fullWidth={true}>
+          <TsTextField
+            required
+            name="path"
+            data-tid="locationPath"
+            onChange={(event) => setPath(event.target.value)}
+            value={path}
+            // placeholder="Enter a folder path or select it with the button on the right"
+            slotProps={{
+              input: {
+                autoCorrect: 'off',
+                autoCapitalize: 'none',
+                endAdornment: (
+                  <InputAdornment position="end" sx={{ height: '32px' }}>
+                    {AppConfig.isCapacitoriOS ? (
+                      <TsButton
+                        size="small"
+                        data-tid="useICloudDriveTID"
+                        onClick={useICloudDrive}
+                        variant="contained"
+                      >
+                        {t('core:useICloudDrive')}
+                      </TsButton>
+                    ) : (
+                      <TsButton
+                        size="small"
+                        data-tid="openDirectoryTID"
+                        onClick={openDirectory}
+                        variant="contained"
+                      >
+                        {t('core:chooseFolder')}
+                      </TsButton>
+                    )}
+                  </InputAdornment>
+                ),
+              },
+            }}
+            label={t('core:createLocationPath') + ' *'}
+          />
+          {AppConfig.isCapacitorAndroid && (
+            <FormHelperText>
+              Examples: sdcard/DCIM, sdcard/Downloads or /storage/899D-1617 for
+              ext. sd-card
+            </FormHelperText>
+          )}
+          {AppConfig.isCapacitoriOS && (
+            <FormHelperText>{t('core:iosLocalPathHint')}</FormHelperText>
+          )}
+        </FormControl>
+      </Grid>
       <Grid size={12}>
         <FormControl fullWidth={true}>
           <TsTextField
@@ -80,38 +164,6 @@ function LocalForm(props: Props) {
             // helperText="Please enter location name"
             label={t('core:createLocationName') + ' *'}
           />
-        </FormControl>
-      </Grid>
-      <Grid size={12}>
-        <FormControl fullWidth={true}>
-          <TsTextField
-            required
-            name="path"
-            data-tid="locationPath"
-            onChange={(event) => setPath(event.target.value)}
-            value={path}
-            // placeholder="Enter a folder path or select it with the button on the right"
-            slotProps={{
-              input: {
-                autoCorrect: 'off',
-                autoCapitalize: 'none',
-                endAdornment: (
-                  <InputAdornment position="end" style={{ height: 32 }}>
-                    <TsIconButton onClick={openDirectory}>
-                      <FolderIcon />
-                    </TsIconButton>
-                  </InputAdornment>
-                ),
-              },
-            }}
-            label={t('core:createLocationPath') + ' *'}
-          />
-          {AppConfig.isCordovaAndroid && (
-            <FormHelperText>
-              Examples: sdcard/DCIM, sdcard/Downloads or /storage/899D-1617 for
-              ext. sd-card
-            </FormHelperText>
-          )}
         </FormControl>
       </Grid>
     </Grid>

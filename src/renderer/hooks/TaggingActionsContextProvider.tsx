@@ -16,19 +16,17 @@
  *
  */
 
-import React, { createContext, useMemo, useReducer, useRef } from 'react';
-import { useSelector } from 'react-redux';
-import mgrs from 'mgrs';
+import AppConfig from '-/AppConfig';
+import LoadingLazy from '-/components/LoadingLazy';
+import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
+import { useDirectoryContentContext } from '-/hooks/useDirectoryContentContext';
+import { useEditedEntryContext } from '-/hooks/useEditedEntryContext';
+import { useEditedTagLibraryContext } from '-/hooks/useEditedTagLibraryContext';
+import { useIOActionsContext } from '-/hooks/useIOActionsContext';
+import { useLocationIndexContext } from '-/hooks/useLocationIndexContext';
+import { useNotificationContext } from '-/hooks/useNotificationContext';
+import { useTagGroupsLocationContext } from '-/hooks/useTagGroupsLocationContext';
 import { Pro } from '-/pro';
-import { useTranslation } from 'react-i18next';
-import { TS } from '-/tagspaces.namespace';
-import OpenLocationCode from 'open-location-code-typescript';
-import {
-  immutablySwapItems,
-  formatDateTime4Tag,
-} from '@tagspaces/tagspaces-common/misc';
-import { getTagLibrary, setTagLibrary } from '-/services/taglibrary-utils';
-import { isGeoTag } from '-/utils/geo';
 import {
   getAddTagsToLibrary,
   getFileNameTagPlace,
@@ -40,6 +38,16 @@ import {
   getTagDelimiter,
   getTagTextColor,
 } from '-/reducers/settings';
+import { setTagLibrary } from '-/services/taglibrary-utils';
+import { getAllTags } from '-/services/utils-io';
+import { TS } from '-/tagspaces.namespace';
+import { CommonLocation } from '-/utils/CommonLocation';
+import { isGeoTag } from '-/utils/geo';
+import { isDateTimeTag } from '-/utils/dates';
+import {
+  formatDateTime4Tag,
+  immutablySwapItems,
+} from '@tagspaces/tagspaces-common/misc';
 import {
   extractContainingDirectoryPath,
   extractFileName,
@@ -48,17 +56,11 @@ import {
   generateFileName,
 } from '@tagspaces/tagspaces-common/paths';
 import { getUuid } from '@tagspaces/tagspaces-common/utils-io';
-import { useNotificationContext } from '-/hooks/useNotificationContext';
-import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
-import { useLocationIndexContext } from '-/hooks/useLocationIndexContext';
-import { useEditedEntryContext } from '-/hooks/useEditedEntryContext';
-import { useIOActionsContext } from '-/hooks/useIOActionsContext';
-import { useDirectoryContentContext } from '-/hooks/useDirectoryContentContext';
-import { useTagGroupsLocationContext } from '-/hooks/useTagGroupsLocationContext';
-import AppConfig from '-/AppConfig';
-import { useEditedTagLibraryContext } from '-/hooks/useEditedTagLibraryContext';
-import { CommonLocation } from '-/utils/CommonLocation';
-import LoadingLazy from '-/components/LoadingLazy';
+import mgrs from 'mgrs';
+import OpenLocationCode from 'open-location-code-typescript';
+import React, { createContext, useCallback, useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import { useSelector } from 'react-redux';
 
 type TaggingActionsContextData = {
   addTagsToFsEntries: (
@@ -165,13 +167,33 @@ const EditEntryTagDialog = React.lazy(
     ),
 );
 
+const areEqual = (prevProp, nextProp) =>
+  nextProp.open === prevProp.open &&
+  JSON.stringify(nextProp.tag) === JSON.stringify(prevProp.tag) &&
+  JSON.stringify(nextProp.entries) === JSON.stringify(prevProp.entries);
+
+const EditEntryTagDialogAsync = React.memo(
+  (props: {
+    open: boolean;
+    onClose: () => void;
+    tag: TS.Tag;
+    entries: TS.FileSystemEntry[];
+  }) => (
+    <React.Suspense fallback={<LoadingLazy />}>
+      <EditEntryTagDialog {...props} />
+    </React.Suspense>
+  ),
+  areEqual,
+);
+
 export const TaggingActionsContextProvider = ({
   children,
 }: TaggingActionsContextProviderProps) => {
   const { t } = useTranslation();
   const { findLocation, persistTagsInSidecarFile } =
     useCurrentLocationContext();
-  const { tagGroups, reflectTagLibraryChanged } = useEditedTagLibraryContext();
+  const { tagGroups, setTagGroups, reflectTagLibraryChanged } =
+    useEditedTagLibraryContext();
   const {
     createLocationTagGroup,
     editLocationTagGroup,
@@ -180,15 +202,17 @@ export const TaggingActionsContextProvider = ({
   } = useTagGroupsLocationContext();
   const { currentDirectoryEntries, getAllPropertiesPromise, getMetaForEntry } =
     useDirectoryContentContext();
-  const { getIndex } = useLocationIndexContext();
+  const { getIndex, createLocationIndex } = useLocationIndexContext();
   const { renameFile, saveMetaDataPromise, saveCurrentLocationMetaData } =
     useIOActionsContext();
   const { reflectUpdateMeta, setReflectActions } = useEditedEntryContext();
-  const { showNotification } = useNotificationContext();
+  const { showNotification, openConfirmDialog } = useNotificationContext();
 
-  const open = useRef<boolean>(false);
-  const selectedTag = useRef<TS.Tag>(undefined);
-  const selectedEntries = useRef<TS.FileSystemEntry[]>(undefined);
+  const [dialogState, setDialogState] = useState<{
+    open: boolean;
+    tag?: TS.Tag;
+    entries?: TS.FileSystemEntry[];
+  }>({ open: false });
 
   const geoTaggingFormat = useSelector(getGeoTaggingFormat);
   const maxCollectedTag = useSelector(getMaxCollectedTag);
@@ -200,8 +224,27 @@ export const TaggingActionsContextProvider = ({
   //const locations: CommonLocation[] = useSelector(getLocations);
   const saveTagInLocation: boolean = useSelector(getSaveTagInLocation);
   const filenameTagPlacedAtEnd = useSelector(getFileNameTagPlace);
-  const [ignored, forceUpdate] = useReducer((x) => x + 1, 0, undefined);
+  //const [ignored, forceUpdate] = useReducer((x) => x + 1, 0, undefined);
   const currentLocation = findLocation();
+
+  function setConfirmReindexDialogOpened(tg: TS.TagGroup) {
+    if (tg) {
+      openConfirmDialog(
+        t('core:confirmReindex'),
+        t('core:confirmReindexContent'),
+        (result) => {
+          if (result) {
+            createLocationIndex(currentLocation).then(() =>
+              collectTagsFromLocation(tg),
+            );
+          }
+        },
+        'cancelConfirmReindexDialog',
+        'confirmConfirmReindexDialog',
+        'confirmReindexDialogContentTID',
+      );
+    }
+  }
 
   function addTagsToFilePath(path: string, tags: string[]) {
     if (tags && tags.length > 0) {
@@ -246,7 +289,7 @@ export const TaggingActionsContextProvider = ({
     const processedTags = [];
     tags.map((pTag) => {
       const tag = { ...pTag };
-      tag.type = persistTagsInSidecarFile ? 'sidecar' : 'plain';
+      // tag.type = persistTagsInSidecarFile ? 'sidecar' : 'plain';
       if (tag.id) {
         delete tag.id;
       }
@@ -486,11 +529,13 @@ export const TaggingActionsContextProvider = ({
         if (entry.meta) {
           const uniqueTags = getNonExistingTags(
             tags,
-            extractTags(
-              entry.path,
-              tagDelimiter,
-              currentLocation?.getDirSeparator(),
-            ),
+            entry.isFile
+              ? extractTags(
+                  entry.path,
+                  tagDelimiter,
+                  currentLocation?.getDirSeparator(),
+                )
+              : [],
             entry.meta.tags,
           );
           if (uniqueTags.length > 0) {
@@ -725,10 +770,22 @@ export const TaggingActionsContextProvider = ({
   function collectTagsToLibrary(tags: TS.Tag[]) {
     if (addTagsToLibrary) {
       // collecting tags
+      // strip date suffixes from compound tags like "viewer-20260312"
+      const processedTags = tags.map((tag) => {
+        if (!tag.title) return tag;
+        const dashIndex = tag.title.lastIndexOf('-');
+        if (dashIndex > 0) {
+          const suffix = tag.title.substring(dashIndex + 1);
+          if (isDateTimeTag(suffix)) {
+            return { ...tag, title: tag.title.substring(0, dashIndex) };
+          }
+        }
+        return tag;
+      });
       // filter existed in tagLibrary
-      const uniqueTags = tags.filter(
+      const uniqueTags = processedTags.filter(
         (tag) =>
-          getTagLibrary().findIndex(
+          tagGroups.findIndex(
             (tagGroup) =>
               tagGroup.children.findIndex((obj) => obj.title === tag.title) !==
               -1,
@@ -950,12 +1007,15 @@ export const TaggingActionsContextProvider = ({
   }
 
   function collectTagsFromLocation(tagGroup: TS.TagGroup) {
-    if (getIndex().length < 1) {
-      showNotification('Please index location first', 'error', true);
+    const index = getIndex();
+    if (!index || index.length < 1) {
+      //open confirm
+      setConfirmReindexDialogOpened(tagGroup);
+      //showNotification('Please index location first', 'error', true);
       return true;
     }
 
-    const uniqueTags = collectTagsFromIndex(getIndex(), tagGroup);
+    const uniqueTags = collectTagsFromIndex(index, tagGroup);
     if (uniqueTags.length > 0) {
       const changedTagGroup = {
         ...tagGroup,
@@ -972,8 +1032,9 @@ export const TaggingActionsContextProvider = ({
     const defaultTagColor = tagBackgroundColor;
     const defaultTagTextColor = tagTextColor;
     locationIndex.map((entry) => {
-      if (entry.tags && entry.tags.length > 0) {
-        entry.tags.map((tag) => {
+      const tags = getAllTags(entry, tagDelimiter);
+      if (tags && tags.length > 0) {
+        tags.map((tag) => {
           if (
             uniqueTags.findIndex((obj) => obj.title === tag.title) < 0 && // element not already added
             tagGroup.children.findIndex((obj) => obj.title === tag.title) < 0 && // element not already added
@@ -995,8 +1056,9 @@ export const TaggingActionsContextProvider = ({
   }
 
   function saveTagLibrary(tg: TS.TagGroup[]) {
-    const tagGroups = setTagLibrary(tg);
-    reflectTagLibraryChanged(tagGroups);
+    setTagLibrary(tg); // save in localStorage
+    setTagGroups(tg); // set in EditedTagLibraryContext
+    reflectTagLibraryChanged(); // reflect changes in other instances
   }
 
   function saveTags(tags: TS.Tag[], indexForEditing: number) {
@@ -1027,18 +1089,17 @@ export const TaggingActionsContextProvider = ({
         ...(!entry.created_date && { created_date: new Date().getTime() }),
         ...(!entry.modified_date && { modified_date: new Date().getTime() }),
       };
-      if (Pro && entry.locationId) {
-        const location: CommonLocation = findLocation(entry.locationId);
-        if (location) {
-          editLocationTagGroup(location, modifiedEntry, replaceTags);
-        }
-      }
+      const location: CommonLocation = entry.locationId
+        ? findLocation(entry.locationId)
+        : undefined;
 
-      return saveTagLibrary([
-        ...tagGroups.slice(0, indexForEditing),
-        modifiedEntry,
-        ...tagGroups.slice(indexForEditing + 1),
-      ]);
+      editLocationTagGroup(location, modifiedEntry, replaceTags).then(() => {
+        return saveTagLibrary([
+          ...tagGroups.slice(0, indexForEditing),
+          modifiedEntry,
+          ...tagGroups.slice(indexForEditing + 1),
+        ]);
+      });
     }
   }
 
@@ -1075,51 +1136,52 @@ export const TaggingActionsContextProvider = ({
       created_date: new Date().getTime(),
       modified_date: new Date().getTime(),
     };
-    saveTagLibrary([...tagGroups, newEntry]);
-    if (Pro && location) {
-      return createLocationTagGroup(location, newEntry).then(() => true);
-    }
-    return Promise.resolve(true);
+    return createLocationTagGroup(location, newEntry).then(() => {
+      saveTagLibrary([...tagGroups, newEntry]);
+      return true;
+    });
   }
 
   function mergeTagGroup(entry: TS.TagGroup) {
-    if (Pro && entry.locationId) {
-      const location: CommonLocation = findLocation(entry.locationId);
-      if (location) {
-        mergeLocationTagGroup(location, entry);
+    const location: CommonLocation = entry.locationId
+      ? findLocation(entry.locationId)
+      : undefined;
+    mergeLocationTagGroup(location, entry).then(() => {
+      const indexForEditing = tagGroups.findIndex(
+        (obj) => obj.uuid === entry.uuid,
+      );
+      if (indexForEditing > -1) {
+        const tags = [
+          ...tagGroups[indexForEditing].children,
+          ...entry.children,
+        ];
+        tags.splice(0, tags.length - maxCollectedTag);
+        saveTagLibrary([
+          ...tagGroups.slice(0, indexForEditing),
+          {
+            uuid: entry.uuid,
+            title: entry.title,
+            children: tags,
+            created_date: entry.created_date,
+            modified_date: new Date().getTime(),
+          },
+          ...tagGroups.slice(indexForEditing + 1),
+        ]);
+      } else {
+        saveTagLibrary([
+          ...tagGroups,
+          {
+            uuid: entry.uuid || getUuid(),
+            title: entry.title,
+            color: entry.color,
+            textcolor: entry.textcolor,
+            children: entry.children,
+            created_date: new Date().getTime(),
+            modified_date: new Date().getTime(),
+          },
+        ]);
       }
-    }
-    const indexForEditing = tagGroups.findIndex(
-      (obj) => obj.uuid === entry.uuid,
-    );
-    if (indexForEditing > -1) {
-      const tags = [...tagGroups[indexForEditing].children, ...entry.children];
-      tags.splice(0, tags.length - maxCollectedTag);
-      saveTagLibrary([
-        ...tagGroups.slice(0, indexForEditing),
-        {
-          uuid: entry.uuid,
-          title: entry.title,
-          children: tags,
-          created_date: entry.created_date,
-          modified_date: new Date().getTime(),
-        },
-        ...tagGroups.slice(indexForEditing + 1),
-      ]);
-    } else {
-      saveTagLibrary([
-        ...tagGroups,
-        {
-          uuid: entry.uuid || getUuid(),
-          title: entry.title,
-          color: entry.color,
-          textcolor: entry.textcolor,
-          children: entry.children,
-          created_date: new Date().getTime(),
-          modified_date: new Date().getTime(),
-        },
-      ]);
-    }
+    });
   }
 
   function removeTagGroup(parentTagGroupUuid: TS.Uuid) {
@@ -1128,23 +1190,22 @@ export const TaggingActionsContextProvider = ({
     );
     if (indexForRemoving >= 0) {
       const tagGroup: TS.TagGroup = tagGroups[indexForRemoving];
-      if (Pro && tagGroup && tagGroup.locationId) {
-        const location: CommonLocation = findLocation(tagGroup.locationId);
-        if (location) {
-          removeLocationTagGroup(location, parentTagGroupUuid);
-        }
-      }
-
-      saveTagLibrary([
-        ...tagGroups.slice(0, indexForRemoving),
-        ...tagGroups.slice(indexForRemoving + 1),
-      ]);
+      const location: CommonLocation =
+        tagGroup && tagGroup.locationId
+          ? findLocation(tagGroup.locationId)
+          : undefined;
+      removeLocationTagGroup(location, parentTagGroupUuid).then(() => {
+        saveTagLibrary([
+          ...tagGroups.slice(0, indexForRemoving),
+          ...tagGroups.slice(indexForRemoving + 1),
+        ]);
+      });
     }
   }
 
   /**
    * Add tag to tagGroup
-   * @param tag
+   * @param tags
    * @param parentTagGroupUuid - tagGroup ID to add in
    */
   function addTag(tags: TS.Tag[], parentTagGroupUuid: TS.Uuid) {
@@ -1162,15 +1223,17 @@ export const TaggingActionsContextProvider = ({
           ...(!tag.textcolor && { textcolor: tagGroup.textcolor }),
         })),
       ];
-      saveTags(newTags, tgIndex);
 
-      if (Pro && tagGroup && tagGroup.locationId) {
-        const location: CommonLocation = findLocation(tagGroup.locationId);
-        if (location) {
-          tagGroup.children = newTags;
-          editLocationTagGroup(location, tagGroup);
-        }
-      }
+      const location: CommonLocation =
+        tagGroup && tagGroup.locationId
+          ? findLocation(tagGroup.locationId)
+          : undefined;
+
+      editLocationTagGroup(location, { ...tagGroup, children: newTags }).then(
+        () => {
+          saveTags(newTags, tgIndex);
+        },
+      );
     }
   }
 
@@ -1271,7 +1334,29 @@ export const TaggingActionsContextProvider = ({
             ),
           ];
         }
-        saveTagLibrary(newTagLibrary);
+        const locationFrom: CommonLocation = newTagLibrary[indexFromGroup]
+          .locationId
+          ? findLocation(newTagLibrary[indexFromGroup].locationId)
+          : undefined;
+
+        const locationTo: CommonLocation = newTagLibrary[indexToGroup]
+          .locationId
+          ? findLocation(newTagLibrary[indexToGroup].locationId)
+          : undefined;
+
+        editLocationTagGroup(
+          locationFrom,
+          newTagLibrary[indexFromGroup],
+          true,
+        ).then(() => {
+          editLocationTagGroup(
+            locationTo,
+            newTagLibrary[indexToGroup],
+            true,
+          ).then(() => {
+            return saveTagLibrary(newTagLibrary);
+          });
+        });
       }
       console.log('Tag with this title already exists in the target tag group');
     }
@@ -1390,7 +1475,12 @@ export const TaggingActionsContextProvider = ({
         if (exist) {
           arr = arr.map((tGroup) => {
             if (tGroup.uuid === tagGroup.uuid) {
-              return tagGroup;
+              return {
+                ...tagGroup,
+                ...(location && {
+                  locationId: location.uuid,
+                }),
+              };
             }
             return tGroup;
           });
@@ -1429,25 +1519,16 @@ export const TaggingActionsContextProvider = ({
     saveTagLibrary(arr);
   }
 
-  function openEditEntryTagDialog(entries: TS.FileSystemEntry[], tag: TS.Tag) {
-    open.current = true;
-    selectedEntries.current = entries;
-    selectedTag.current = tag;
-    forceUpdate();
-  }
+  const openEditEntryTagDialog = useCallback(
+    (entries: TS.FileSystemEntry[], tag: TS.Tag) => {
+      setDialogState({ open: true, entries, tag });
+    },
+    [],
+  );
 
-  function closeEditEntryTagDialog() {
-    open.current = false;
-    forceUpdate();
-  }
-
-  function EditEntryTagDialogAsync(props) {
-    return (
-      <React.Suspense fallback={<LoadingLazy />}>
-        <EditEntryTagDialog {...props} />
-      </React.Suspense>
-    );
-  }
+  const closeEditEntryTagDialog = useCallback(() => {
+    setDialogState({ open: false });
+  }, []);
 
   const context = useMemo(() => {
     return {
@@ -1487,12 +1568,14 @@ export const TaggingActionsContextProvider = ({
 
   return (
     <TaggingActionsContext.Provider value={context}>
-      <EditEntryTagDialogAsync
-        open={open.current}
-        onClose={closeEditEntryTagDialog}
-        tag={selectedTag.current}
-        entries={selectedEntries.current}
-      />
+      {dialogState.open && (
+        <EditEntryTagDialogAsync
+          open={true}
+          onClose={closeEditEntryTagDialog}
+          tag={dialogState.tag}
+          entries={dialogState.entries}
+        />
+      )}
       {children}
     </TaggingActionsContext.Provider>
   );

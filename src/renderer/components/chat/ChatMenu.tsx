@@ -16,38 +16,72 @@
  *
  */
 
-import React from 'react';
-import { ListItemIcon, Menu, MenuItem } from '@mui/material';
-import SelectAllIcon from '@mui/icons-material/SelectAll';
+import AppConfig from '-/AppConfig';
+import {
+  AIIcon,
+  CopyToClipboardIcon,
+  DeleteIcon,
+  HTMLFileIcon,
+  MarkdownFileIcon,
+  SelectAllIcon,
+} from '-/components/CommonIcons';
+import { useSettingsDialogContext } from '-/components/dialogs/hooks/useSettingsDialogContext';
+import { SettingsTab } from '-/components/dialogs/SettingsDialog';
+import TsMenuList from '-/components/TsMenuList';
+import { useChatContext } from '-/hooks/useChatContext';
+import { useNotificationContext } from '-/hooks/useNotificationContext';
+import {
+  Divider,
+  ListItemIcon,
+  ListItemText,
+  Menu,
+  MenuItem,
+} from '@mui/material';
 import { useTranslation } from 'react-i18next';
-import { Divider } from '@mui/material/';
-import CopyIcon from '@mui/icons-material/FileCopy';
-import HtmlIcon from '@mui/icons-material/Html';
-import RttIcon from '@mui/icons-material/Rtt';
-import { DeleteIcon } from '-/components/CommonIcons';
 
 interface ChatMenuProps {
   anchorEl: null | HTMLElement;
   handleClose: () => void;
   handleSelectAll: () => void;
   handleCopy: () => void;
-  clearHistory: () => void;
   saveAsHtml: () => void;
   saveAsMarkdown: () => void;
 }
 
 function ChatMenu(props: ChatMenuProps) {
   const { t } = useTranslation();
+  const { openSettingsDialog } = useSettingsDialogContext();
   const {
     anchorEl,
     handleClose,
     handleSelectAll,
     handleCopy,
-    clearHistory,
     saveAsHtml,
     saveAsMarkdown,
   } = props;
 
+  const { deleteHistory } = useChatContext();
+  const { openConfirmDialog } = useNotificationContext();
+
+  const openAiSettings = () => {
+    openSettingsDialog(SettingsTab.AI);
+  };
+
+  const clearHistory = () => {
+    handleClose();
+    openConfirmDialog(
+      t('core:titleConfirm'),
+      t('core:confirmHistoryDeletion'),
+      (result) => {
+        if (result) {
+          deleteHistory();
+        }
+      },
+      'cancelDeleteHistoryDialog',
+      'confirmDeleteHistoryDialog',
+      'confirmDeleteHistoryDialogContent',
+    );
+  };
   return (
     <Menu
       anchorEl={anchorEl}
@@ -55,68 +89,51 @@ function ChatMenu(props: ChatMenuProps) {
       open={Boolean(anchorEl)}
       onClose={handleClose}
       onClick={handleClose}
-      /*slotProps={{
-        paper: {
-          elevation: 0,
-          sx: {
-            overflow: 'visible',
-            filter: 'drop-shadow(0px 2px 8px rgba(0,0,0,0.32))',
-            mt: 1.5,
-            '& .MuiAvatar-root': {
-              width: 32,
-              height: 32,
-              ml: -0.5,
-              mr: 1,
-            },
-            '&::before': {
-              content: '""',
-              display: 'block',
-              position: 'absolute',
-              top: 0,
-              right: 14,
-              width: 10,
-              height: 10,
-              bgcolor: 'background.paper',
-              transform: 'translateY(-50%) rotate(45deg)',
-              zIndex: 0,
-            },
-          },
-        },
-      }}*/
       transformOrigin={{ horizontal: 'right', vertical: 'top' }}
       anchorOrigin={{ horizontal: 'right', vertical: 'bottom' }}
     >
-      <MenuItem onClick={handleSelectAll}>
-        <ListItemIcon>
-          <SelectAllIcon fontSize="small" />
-        </ListItemIcon>
-        {t('core:selectAll')}
-      </MenuItem>
-      <MenuItem onClick={handleCopy}>
-        <ListItemIcon>
-          <CopyIcon fontSize="small" />
-        </ListItemIcon>
-        {t('core:copy')}
-      </MenuItem>
-      <MenuItem onClick={clearHistory}>
-        <ListItemIcon>
-          <DeleteIcon fontSize="small" />
-        </ListItemIcon>
-        {t('core:clearHistory')}
-      </MenuItem>
-      <Divider />
-      <MenuItem onClick={saveAsHtml}>
-        <ListItemIcon>
-          <HtmlIcon fontSize="small" />
-        </ListItemIcon>
-        {t('core:saveAsHtml')}
-      </MenuItem>
-      <MenuItem onClick={saveAsMarkdown}>
-        <ListItemIcon>
-          <RttIcon fontSize="small" />
-        </ListItemIcon>
-        {t('core:saveAsMd')}
-      </MenuItem>
+      <TsMenuList>
+        <MenuItem onClick={handleSelectAll}>
+          <ListItemIcon>
+            <SelectAllIcon />
+          </ListItemIcon>
+          <ListItemText primary={t('core:selectAll')} />
+        </MenuItem>
+        {!AppConfig.isElectron && (
+          <MenuItem onClick={handleCopy}>
+            <ListItemIcon>
+              <CopyToClipboardIcon />
+            </ListItemIcon>
+            <ListItemText primary={t('core:copy')} />
+          </MenuItem>
+        )}
+        <MenuItem onClick={clearHistory}>
+          <ListItemIcon>
+            <DeleteIcon />
+          </ListItemIcon>
+          <ListItemText primary={t('core:clearHistory')} />
+        </MenuItem>
+        <Divider />
+        <MenuItem onClick={saveAsHtml}>
+          <ListItemIcon>
+            <HTMLFileIcon />
+          </ListItemIcon>
+          <ListItemText primary={t('core:saveAsHtml')} />
+        </MenuItem>
+        <MenuItem onClick={saveAsMarkdown}>
+          <ListItemIcon>
+            <MarkdownFileIcon />
+          </ListItemIcon>
+          <ListItemText primary={t('core:saveAsMd')} />
+        </MenuItem>
+        <Divider />
+        <MenuItem onClick={openAiSettings}>
+          <ListItemIcon>
+            <AIIcon />
+          </ListItemIcon>
+          <ListItemText primary={t('core:aiSettings')} />
+        </MenuItem>
+      </TsMenuList>
     </Menu>
   );
 }

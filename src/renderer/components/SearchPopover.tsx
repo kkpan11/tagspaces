@@ -19,7 +19,7 @@
 import AppConfig from '-/AppConfig';
 import { CloseIcon, CreateFileIcon, EditIcon } from '-/components/CommonIcons';
 import EditSearchQuery from '-/components/EditSearchQuery';
-import TooltipTS from '-/components/Tooltip';
+import TsTooltip from '-/components/TsTooltip';
 import TsButton from '-/components/TsButton';
 import TsIconButton from '-/components/TsIconButton';
 import TsSelect from '-/components/TsSelect';
@@ -30,10 +30,11 @@ import { useSearchQueryContext } from '-/hooks/useSearchQueryContext';
 import { isDesktopMode } from '-/reducers/settings';
 import { openURLExternally } from '-/services/utils-io';
 import { TS } from '-/tagspaces.namespace';
+import { Box } from '@mui/material';
 import ButtonGroup from '@mui/material/ButtonGroup';
 import FormControl from '@mui/material/FormControl';
 import FormHelperText from '@mui/material/FormHelperText';
-import Grid from '@mui/material/Grid2';
+import Grid from '@mui/material/Grid';
 import MenuItem from '@mui/material/MenuItem';
 import Typography from '@mui/material/Typography';
 import Links from 'assets/links';
@@ -89,39 +90,40 @@ function SearchPopover(props: Props) {
     : t('core:indexEmpty');
   return (
     <div
-      style={{
-        maxWidth: 400,
-        height: '100%',
-        paddingLeft: 5,
-        paddingRight: 0,
-        // @ts-ignore
-        WebkitAppRegion: 'no-drag',
-      }}
+      style={
+        {
+          maxWidth: 400,
+          height: '100%',
+          paddingLeft: 5,
+          paddingRight: 0,
+          WebkitAppRegion: 'no-drag',
+        } as React.CSSProperties & { WebkitAppRegion?: string }
+      }
     >
-      <div style={{ display: 'flex' }}>
-        <Typography variant="button" style={{ margin: '12px 0 10px 10px' }}>
+      <Box sx={{ display: 'flex' }}>
+        <Typography variant="button" sx={{ margin: '12px 0 10px 10px' }}>
           {t('core:advancedSearch')}
         </Typography>
         <Typography
           variant="caption"
-          style={{ flex: 1, margin: 'auto', paddingLeft: 10 }}
+          sx={{ flex: 1, margin: 'auto', paddingLeft: '10px' }}
         >
           {indexStatus}
         </Typography>
         <TsIconButton
-          style={{ marginLeft: 'auto', height: 40 }}
+          sx={{ marginLeft: 'auto', height: '40px' }}
           data-tid="closeSearchTID"
           onClick={onClose}
         >
           <CloseIcon />
         </TsIconButton>
-      </div>
-      <div
-        style={{
-          paddingTop: 0,
-          paddingLeft: 10,
-          paddingRight: 10,
-          marginTop: 0,
+      </Box>
+      <Box
+        sx={{
+          paddingTop: '0px',
+          paddingLeft: '10px',
+          paddingRight: '10px',
+          marginTop: '0px',
           height: 'calc(100% - 90px)',
           maxHeight: 'calc(100% - 90px)',
           overflowX: 'hidden',
@@ -133,18 +135,20 @@ function SearchPopover(props: Props) {
         <Grid
           container
           spacing={2}
-          style={{ marginBottom: 15 }}
           direction="row"
-          justifyContent="center"
-          alignItems="flex-end"
+          sx={{
+            justifyContent: 'center',
+            alignItems: 'flex-end',
+            marginBottom: '15px',
+          }}
         >
           <Grid size={9}>
-            <TooltipTS title={t('storedSearchQueriesTooltip')}>
+            <TsTooltip title={t('storedSearchQueriesTooltip')}>
               <FormControl
                 variant="outlined"
-                style={{ width: '100%', marginTop: 6 }}
+                sx={{ width: '100%', marginTop: '6px' }}
               >
-                <FormHelperText style={{ marginLeft: 0 }}>
+                <FormHelperText sx={{ marginLeft: 0 }}>
                   {t('core:savedSearchesTitle')}
                 </FormHelperText>
                 <TsSelect
@@ -153,25 +157,29 @@ function SearchPopover(props: Props) {
                   onChange={handleSavedSearchChange}
                   value={tempSearchQuery.uuid ? tempSearchQuery.uuid : -1}
                 >
-                  <MenuItem value={-1} style={{ display: 'none' }} />
+                  <MenuItem value={-1} sx={{ display: 'none' }} />
                   {searches.length < 1 && (
                     <MenuItem>{t('noSavedSearches')}</MenuItem>
                   )}
                   {searches.map((search) => (
-                    <MenuItem key={search.uuid} value={search.uuid}>
-                      <span style={{ width: '100%' }}>{search.title}</span>
+                    <MenuItem
+                      sx={{ width: '100%' }}
+                      key={search.uuid}
+                      value={search.uuid}
+                    >
+                      {search.title}
                     </MenuItem>
                   ))}
                 </TsSelect>
               </FormControl>
-            </TooltipTS>
+            </TsTooltip>
           </Grid>
           <Grid
             size={3}
-            style={{ display: 'flex', alignSelf: 'center', paddingTop: 25 }}
+            sx={{ display: 'flex', alignSelf: 'center', paddingTop: '25px' }}
           >
             <ButtonGroup
-              style={{
+              sx={{
                 textAlign: 'center',
                 width: '100%',
               }}
@@ -198,9 +206,9 @@ function SearchPopover(props: Props) {
             <EditSearchQuery />
           </Grid>
         </Grid>
-      </div>
-      <div
-        style={{
+      </Box>
+      <Box
+        sx={{
           display: 'flex',
           justifyContent: 'space-between',
           padding: AppConfig.defaultSpaceBetweenButtons,
@@ -220,7 +228,7 @@ function SearchPopover(props: Props) {
             {t('resetBtn')}
           </TsButton>
           <TsButton
-            style={{ marginLeft: AppConfig.defaultSpaceBetweenButtons }}
+            sx={{ marginLeft: AppConfig.defaultSpaceBetweenButtons }}
             variant="contained"
             disabled={isIndexing !== undefined}
             id="searchButtonAdvTID"
@@ -234,7 +242,7 @@ function SearchPopover(props: Props) {
               : t('searchTitle')}
           </TsButton>
         </div>
-      </div>
+      </Box>
     </div>
   );
 }

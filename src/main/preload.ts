@@ -10,6 +10,8 @@ import {
 export type Channels =
   | 'isWorkerAvailable'
   | 'fetchUrl'
+  | 'fetchUrlBuffer'
+  | 'probeContentType'
   | 'isDirectory'
   | 'resolveRelativePaths'
   | 'set-language'
@@ -55,6 +57,7 @@ export type Channels =
   | 'load-extensions'
   | 'removeExtension'
   | 'getUserDataDir'
+  | 'get-user-ext-config'
   | 'unZip'
   | 'getDirProperties'
   | 'folderChanged'
@@ -67,6 +70,7 @@ export type Channels =
   | 'toggle-license-dialog'
   | 'toggle-open-link-dialog'
   | 'new-text-file'
+  | 'new-md-file'
   | 'toggle-onboarding-dialog'
   | 'toggle-settings-dialog'
   | 'toggle-third-party-libs-dialog'
@@ -79,7 +83,15 @@ export type Channels =
   | 'newOllamaMessage'
   | 'pullOllamaModel'
   | 'deleteOllamaModel'
-  | 'startup-finished';
+  | 'startup-finished'
+  | 'getAuthor'
+  | 'cancelRequest'
+  | 'encryptCredentials'
+  | 'decryptCredentials'
+  | 'getCredentialKeyStatus'
+  | 'getWindowCount'
+  | 'flushStorageData'
+  | 'fetchTile';
 
 const electronHandler = {
   ipcRenderer: {
@@ -101,6 +113,9 @@ const electronHandler = {
     invoke(command: Channels, ...args: unknown[]) {
       return ipcRenderer.invoke(command, ...args);
     },
+    getSync(command: Channels, ...args: unknown[]) {
+      return ipcRenderer.sendSync(command, ...args);
+    },
     removeAllListeners(channel: string) {
       ipcRenderer.removeAllListeners(channel);
     },
@@ -109,6 +124,10 @@ const electronHandler = {
       return webUtils.getPathForFile(file);
     },
   },
+  // CPU architecture of the running Electron binary ('arm64' | 'x64' | …).
+  // process isn't available in the sandboxed renderer, so surface it here
+  // for arch-specific logic like picking the update descriptor file.
+  arch: process.arch,
 };
 
 contextBridge.exposeInMainWorld('electronIO', electronHandler);

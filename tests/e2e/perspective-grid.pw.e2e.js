@@ -1,62 +1,46 @@
 /*
  * Copyright (c) 2016-present - TagSpaces GmbH. All rights reserved.
  */
-import { test, expect } from './fixtures';
-import {
-  defaultLocationPath,
-  defaultLocationName,
-  createPwMinioLocation,
-  createPwLocation,
-  createS3Location,
-} from './location.helpers';
-import {
-  clickOn,
-  expectAllFileSelected,
-  expectElementExist,
-  expectElementSelected,
-  expectMetaFilesExist,
-  getGridCellClass,
-  getGridFileName,
-  getGridFileSelector,
-  openFile,
-  selectAllFiles,
-  selectFilesByID,
-  selectorFile,
-  selectorFolder,
-  selectRowFiles,
-  setInputKeys,
-  setSettings,
-  takeScreenshot,
-} from './general.helpers';
-import { AddRemoveTagsToSelectedFiles } from './perspective-grid.helpers';
 import {
   AddRemovePropertiesTags,
   getPropertiesFileName,
 } from './file.properties.helpers';
-import { createFile, startTestingApp, stopApp, testDataRefresh } from './hook';
+import { expect, test } from './fixtures';
+import {
+  clickOn,
+  clickOnIfVisible,
+  expectAllFileSelected,
+  expectElementExist,
+  expectElementSelected,
+  expectMetaFilesExist,
+  getGridFileSelector,
+  openFile,
+  selectAllFiles,
+  selectRowFiles,
+  setSettings
+} from './general.helpers';
+import { startTestingApp, stopApp, testDataRefresh } from './hook';
+import {
+  createPwLocation,
+  createS3Location,
+  defaultLocationName,
+} from './location.helpers';
+import { AddRemoveTagsToSelectedFiles } from './perspective-grid.helpers';
 import { clearDataStorage, closeWelcomePlaywright } from './welcome.helpers';
-import { openContextEntryMenu } from './test-utils';
-import { stopServices } from '../setup-functions';
-import { dataTidFormat } from '../../src/renderer/services/test';
 
-let s3ServerInstance;
-let webServerInstance;
-let minioServerInstance;
-
-test.beforeAll(async ({ s3Server, webServer, minioServer }) => {
-  s3ServerInstance = s3Server;
-  webServerInstance = webServer;
-  minioServerInstance = minioServer;
-  if (global.isS3) {
-    await startTestingApp();
+test.beforeAll(async ({ isWeb, isS3, webServerPort }, testInfo) => {
+  if (isS3) {
+    await startTestingApp({ isWeb, isS3, webServerPort, testInfo });
     await closeWelcomePlaywright();
   } else {
-    await startTestingApp('extconfig.js');
+    await startTestingApp(
+      { isWeb, isS3, webServerPort, testInfo },
+      'extconfig.js',
+    );
   }
 });
 
 test.afterAll(async () => {
-  await stopServices(s3ServerInstance, webServerInstance, minioServerInstance);
   await stopApp();
 });
 
@@ -64,27 +48,24 @@ test.afterEach(async ({ page }, testInfo) => {
   /*if (testInfo.status !== testInfo.expectedStatus) {
     await takeScreenshot(testInfo);
   }*/
-  await testDataRefresh(s3ServerInstance);
   await clearDataStorage();
 });
 
-test.beforeEach(async () => {
-  if (global.isMinio) {
-    await createPwMinioLocation('', defaultLocationName, true);
-  } else if (global.isS3) {
+test.beforeEach(async ({ isS3, testDataDir }) => {
+  if (isS3) {
     await createS3Location('', defaultLocationName, true);
   } else {
-    await createPwLocation(defaultLocationPath, defaultLocationName, true);
+    await createPwLocation(testDataDir, defaultLocationName, true);
   }
   await clickOn('[data-tid=location_' + defaultLocationName + ']');
 
-  await expectElementExist(getGridFileSelector('empty_folder'), true, 8000);
+  await expectElementExist(getGridFileSelector('empty_folder'), true, 15000);
   // If its have opened file
   // await closeFileProperties();
 });
 
 test.describe('TST50 - Perspective Grid', () => {
-  test('TST5002 - Open file with click [web,electron]', async () => {
+  test('TST5002 - Open file with click [web,s3,electron]', async () => {
     // await searchEngine('txt'); //testTestFilename);
     const fileName = 'sample.txt';
     await openFile(fileName, 'showPropertiesTID');
@@ -96,7 +77,7 @@ test.describe('TST50 - Perspective Grid', () => {
     // await checkFilenameForExist(testTestFilename);
   });
 
-  test('TST5004 - Select-deselect all files [web,electron]', async () => {
+  test('TST5004 - Select-deselect all files [web,s3,electron]', async () => {
     await selectAllFiles();
     await expectAllFileSelected(true);
     await selectAllFiles();
@@ -104,7 +85,7 @@ test.describe('TST50 - Perspective Grid', () => {
   });
 
   // This scenario includes "Add tags" && "Remove tags" to be fulfilled
-  test('TST5005 - Add/Remove tags from selected files [web,electron]', async () => {
+  test('TST5005 - Add/Remove tags from selected files [web,s3,electron]', async () => {
     let selectedIds = await selectRowFiles([0, 1, 2]);
 
     const tags = ['test-tag1', 'test-tag2'];
@@ -146,7 +127,7 @@ test.describe('TST50 - Perspective Grid', () => {
   /**
    * todo in [web] its need more time to wait for removed files
    */
-  test('TST5007 - Remove all tags from selected files [web,electron]', async () => {
+  test('TST5007 - Remove all tags from selected files [web,s3,electron]', async () => {
     const selectedIds = await selectRowFiles([0, 1, 2]);
     const tags = ['test-tag1', 'test-tag2', 'test-tag3'];
     await AddRemoveTagsToSelectedFiles('grid', tags, true);
@@ -172,7 +153,10 @@ test.describe('TST50 - Perspective Grid', () => {
     }
   });
 
-  test('TST5008 - Copy file [web,electron]', async () => {
+  test('TST5008 - Copy file [web,s3,electron]', async ({
+    isS3,
+    testDataDir,
+  }) => {
     const fileName = 'sample.svg';
     await openFile(fileName, 'showPropertiesTID');
     // add meta json to file
@@ -184,8 +168,9 @@ test.describe('TST50 - Perspective Grid', () => {
     // open Copy/Move File Dialog
     await clickOn('[data-tid=gridPerspectiveCopySelectedFiles]');
     await clickOn('[data-tid=MoveTargetempty_folder]');
+    await clickOn('[data-tid=mcfModeCopy]');
     await clickOn('[data-tid=confirmCopyFiles]');
-    await clickOn('[data-tid=uploadCloseAndClearTID]');
+    await clickOnIfVisible('[data-tid=uploadCloseAndClearTID]');
 
     await global.client.dblclick(getGridFileSelector('empty_folder'));
     await expectElementExist(getGridFileSelector(fileName));
@@ -201,17 +186,18 @@ test.describe('TST50 - Perspective Grid', () => {
 
     await expectElementExist(getGridFileSelector(fileName), true);
     await expectMetaFilesExist(arrayMeta, true);
+    // Reset the source sidecar (and the toggled persist-tags setting via the
+    // mode toggle persisting through Redux) before the next test reuses
+    // sample.svg with a clean state.
+    await testDataRefresh(isS3, testDataDir);
   });
 
   test.skip('TST5009 - Copy file on different partition [manual]', async () => {});
 
-  test('TST5010 - Move file [web,electron]', async () => {
+  test('TST5010 - Move file [web,s3,electron]', async () => {
     const fileName = 'sample.svg';
     //Toggle Properties
-    await openContextEntryMenu(
-      getGridFileSelector(fileName),
-      'showPropertiesTID',
-    );
+    await openFile(fileName, 'showPropertiesTID');
     // add meta json to file
     await setSettings('[data-tid=settingsSetPersistTagsInSidecarFile]', true);
     await AddRemovePropertiesTags(['test-tag1', 'test-tag2'], {
@@ -221,10 +207,15 @@ test.describe('TST50 - Perspective Grid', () => {
     // open Copy/Move File Dialog
     await clickOn('[data-tid=gridPerspectiveCopySelectedFiles]');
     await clickOn('[data-tid=MoveTargetempty_folder]');
+    // The dialog persists the last-used mode in Redux, so explicitly switch
+    // back to Move here — a prior test (TST5008) may have left it on Copy.
+    await clickOn('[data-tid=mcfModeMove]');
     await clickOn('[data-tid=confirmMoveFiles]');
+    // Wait for S3 move operation to complete
+    await global.client.waitForTimeout(1500);
 
     await global.client.dblclick(getGridFileSelector('empty_folder'));
-    await expectElementExist(getGridFileSelector(fileName));
+    await expectElementExist(getGridFileSelector(fileName), true, 8000);
 
     const arrayMeta = [fileName + '.json'];
     /*global.isWeb || global.isMinio
@@ -243,7 +234,10 @@ test.describe('TST50 - Perspective Grid', () => {
 
   test.skip('TST5012 - Move file different partition [manual]', async () => {});
 
-  test('TST5013 - Delete files from selection (many files) [web,electron]', async () => {
+  test('TST5013 - Delete files from selection (many files) [web,s3,electron]', async ({
+    isS3,
+    testDataDir,
+  }) => {
     const selectedIds = await selectRowFiles([0, 1, 2]);
 
     await clickOn('[data-tid=gridPerspectiveDeleteMultipleFiles]');
@@ -257,13 +251,16 @@ test.describe('TST50 - Perspective Grid', () => {
         5000,
       );
     }
+    // Restore the deleted files (sample.avif/bmp/c by default sort) so later
+    // tests in this file (e.g. TST5048) can still find them.
+    await testDataRefresh(isS3, testDataDir);
   });
 
   test.skip('TST5015 - Tag file drag&drop in perspective [manual]', async () => {});
 
-  test('TST5048 - prev/next button [web,electron]', async () => {
-    const fileName = 'sample.svg';
-    const nextFileName = 'sample.tga';
+  test('TST5048 - prev/next button [web,s3,electron]', async () => {
+    const fileName = 'sample.avif';
+    const nextFileName = 'sample.bmp';
     await clickOn(getGridFileSelector(fileName));
     //await expectElementExist('[data-tid=fileContainerNextFile]', true, 5000);
     await clickOn('[data-tid=fileContainerNextFile]');
@@ -271,6 +268,7 @@ test.describe('TST50 - Perspective Grid', () => {
     await clickOn('[data-tid=fileContainerPrevFile]');
     await expectElementSelected(fileName, true);
   });
+  
   /* test('TST51** - Show/Hide directories in perspective view', async () => { //TODO
     await global.client.waitForVisible(
       '[data-tid=gridPerspectiveToggleShowDirectories]'

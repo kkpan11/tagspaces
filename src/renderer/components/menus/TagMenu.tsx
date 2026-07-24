@@ -16,17 +16,21 @@
  *
  */
 
+import {
+  DeleteIcon,
+  EditIcon,
+  SearchIcon,
+  TagIcon,
+} from '-/components/CommonIcons';
 import TsMenuList from '-/components/TsMenuList';
 import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
 import { useDirectoryContentContext } from '-/hooks/useDirectoryContentContext';
+import { useNotificationContext } from '-/hooks/useNotificationContext';
 import { useSelectedEntriesContext } from '-/hooks/useSelectedEntriesContext';
 import { useTaggingActionsContext } from '-/hooks/useTaggingActionsContext';
 import { getMaxSearchResults } from '-/reducers/settings';
 import { TS } from '-/tagspaces.namespace';
-import DeleteIcon from '@mui/icons-material/DeleteForever';
-import Edit from '@mui/icons-material/Edit';
-import ApplyTagIcon from '@mui/icons-material/LocalOfferOutlined';
-import ShowEntriesWithTagIcon from '@mui/icons-material/SearchOutlined';
+import { Box } from '@mui/material';
 import ListItemIcon from '@mui/material/ListItemIcon';
 import ListItemText from '@mui/material/ListItemText';
 import Menu from '@mui/material/Menu';
@@ -41,7 +45,6 @@ interface Props {
   selectedTag?: TS.Tag;
   selectedTagGroupEntry?: TS.TagGroup;
   showEditTagDialog: () => void;
-  showDeleteTagDialog: () => void;
 }
 
 function TagMenu(props: Props) {
@@ -50,16 +53,16 @@ function TagMenu(props: Props) {
     selectedTagGroupEntry,
     onClose,
     showEditTagDialog,
-    showDeleteTagDialog,
     anchorEl,
     open,
   } = props;
 
   const { t } = useTranslation();
   const { selectedEntries } = useSelectedEntriesContext();
-  const { addTags } = useTaggingActionsContext();
+  const { addTags, deleteTag } = useTaggingActionsContext();
   const { currentLocation } = useCurrentLocationContext();
   const { setSearchQuery } = useDirectoryContentContext();
+  const { openConfirmDialog } = useNotificationContext();
   const maxSearchResults: number = useSelector(getMaxSearchResults);
   const tagGroupReadOnly = selectedTagGroupEntry?.readOnly;
 
@@ -82,7 +85,21 @@ function TagMenu(props: Props) {
 
   function openDeleteTagDialog() {
     onClose();
-    showDeleteTagDialog();
+    openConfirmDialog(
+      t('core:deleteTagFromTagGroup'),
+      t('core:deleteTagFromTagGroupContentConfirm', {
+        tagName: selectedTag ? selectedTag.title : '',
+      }),
+      (result) => {
+        if (result) {
+          if (selectedTag && selectedTagGroupEntry) {
+            deleteTag(selectedTag.title, selectedTagGroupEntry.uuid);
+          }
+        }
+      },
+      'cancelDeleteTagDialogTagMenu',
+      'confirmDeleteTagDialogTagMenu',
+    );
   }
 
   function applyTag() {
@@ -95,7 +112,7 @@ function TagMenu(props: Props) {
     selectedTag.functionality && selectedTag.functionality.length > 0;
 
   return (
-    <div style={{ overflowY: 'hidden' }}>
+    <Box sx={{ overflowY: 'hidden' }}>
       <Menu anchorEl={anchorEl} open={open} onClose={onClose}>
         <TsMenuList>
           {!isSmartTag && (
@@ -104,7 +121,7 @@ function TagMenu(props: Props) {
               onClick={showFilesWithThisTag}
             >
               <ListItemIcon>
-                <ShowEntriesWithTagIcon />
+                <SearchIcon />
               </ListItemIcon>
               <ListItemText primary={t('core:showFilesWithThisTag')} />
             </MenuItem>
@@ -115,7 +132,7 @@ function TagMenu(props: Props) {
             !currentLocation?.isReadOnly && (
               <MenuItem data-tid="applyTagTID" onClick={applyTag}>
                 <ListItemIcon>
-                  <ApplyTagIcon />
+                  <TagIcon />
                 </ListItemIcon>
                 <ListItemText primary={t('core:applyTag')} />
               </MenuItem>
@@ -123,7 +140,7 @@ function TagMenu(props: Props) {
           {!tagGroupReadOnly && !isSmartTag && (
             <MenuItem data-tid="editTagDialog" onClick={showEditTagMenuDialog}>
               <ListItemIcon>
-                <Edit />
+                <EditIcon />
               </ListItemIcon>
               <ListItemText primary={t('core:editTag')} />
             </MenuItem>
@@ -138,7 +155,7 @@ function TagMenu(props: Props) {
           )}
         </TsMenuList>
       </Menu>
-    </div>
+    </Box>
   );
 }
 

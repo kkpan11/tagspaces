@@ -50,15 +50,13 @@ function RenameEntryDialog(props: Props) {
   const { open, onClose } = props;
   const { t } = useTranslation();
   const { renameDirectory, renameFile } = useIOActionsContext();
-  const { findLocation } = useCurrentLocationContext();
+  const { currentLocation } = useCurrentLocationContext();
   const { currentDirectoryPath } = useDirectoryContentContext();
-  const { selectedEntries } = useSelectedEntriesContext();
-  const lastSelectedEntry = selectedEntries[selectedEntries.length - 1];
+  const { lastSelectedEntry } = useSelectedEntriesContext();
   const [inputError, setInputError] = useState<boolean>(false);
   const disableConfirmButton = useRef<boolean>(true);
   const theme = useTheme();
   const smallScreen = useMediaQuery(theme.breakpoints.down('md'));
-  const currentLocation = findLocation();
 
   let defaultName = '';
   let originPath;
@@ -88,7 +86,7 @@ function RenameEntryDialog(props: Props) {
   const name = useRef<string>(defaultName);
 
   // eslint-disable-next-line no-unused-vars
-  const [ignored, forceUpdate] = useReducer((x) => x + 1, 0);
+  const [ignored, forceUpdate] = useReducer((x) => x + 1, 0, undefined);
 
   const onInputFocus = (event) => {
     if (name.current) {
@@ -146,7 +144,13 @@ function RenameEntryDialog(props: Props) {
             : '') + name.current;
         return renameFile(originPath, newFilePath, currentLocation.uuid);
       } else {
-        return renameDirectory(originPath, name.current, currentLocation.uuid);
+        return renameDirectory(
+          originPath,
+          name.current,
+          currentLocation.uuid,
+        ).catch(() => {
+          // notification already shown by renameDirectory; swallow to avoid uncaught rejection
+        });
       }
     }
   };
@@ -157,10 +161,11 @@ function RenameEntryDialog(props: Props) {
       onClick={onConfirm}
       data-tid="confirmRenameEntry"
       variant="contained"
-      style={{
-        // @ts-ignore
-        WebkitAppRegion: 'no-drag',
-      }}
+      sx={
+        {
+          WebkitAppRegion: 'no-drag',
+        } as React.CSSProperties & { WebkitAppRegion?: string }
+      }
     >
       {t('core:ok')}
     </TsButton>
@@ -203,7 +208,7 @@ function RenameEntryDialog(props: Props) {
                 (isFile ? 'renameNewFileName' : 'createNewDirectoryTitleName'),
             )}
             onChange={handleInputChange}
-            onFocus={onInputFocus}
+            // onFocus={onInputFocus}
             defaultValue={name.current}
             data-tid="renameEntryDialogInput"
           />

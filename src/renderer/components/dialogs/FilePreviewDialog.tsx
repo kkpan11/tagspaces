@@ -23,16 +23,15 @@ import TsDialogTitle from '-/components/dialogs/components/TsDialogTitle';
 import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
 import { useFilePropertiesContext } from '-/hooks/useFilePropertiesContext';
 import { useOpenedEntryContext } from '-/hooks/useOpenedEntryContext';
-import { getCurrentTheme } from '-/reducers/settings';
+import { getCurrentTheme, getSupportedFileTypes } from '-/reducers/settings';
+import { findExtensionPathForId } from '-/services/utils-io';
 import { TS } from '-/tagspaces.namespace';
-import useEventListener from '-/utils/useEventListener';
 import { Typography } from '@mui/material';
 import Dialog from '@mui/material/Dialog';
 import DialogContent from '@mui/material/DialogContent';
 import { useTheme } from '@mui/material/styles';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import { extractContainingDirectoryPath } from '@tagspaces/tagspaces-common/paths';
-import { getUuid } from '@tagspaces/tagspaces-common/utils-io';
 import { MutableRefObject, useRef } from 'react';
 import { useSelector } from 'react-redux';
 
@@ -44,12 +43,12 @@ interface Props {
 
 function FilePreviewDialog(props: Props) {
   const { open = false, onClose, fsEntry } = props;
+  const supportedFileTypes = useSelector(getSupportedFileTypes);
   const { findLocation } = useCurrentLocationContext();
   const { openedEntry } = useOpenedEntryContext();
   const { isEditMode } = useFilePropertiesContext();
   const theme = useTheme();
   const smallScreen = useMediaQuery(theme.breakpoints.down('md'));
-  // const supportedFileTypes = useSelector(getSupportedFileTypes);
   const currentTheme = useSelector(getCurrentTheme);
   const fileViewer: MutableRefObject<HTMLIFrameElement> =
     useRef<HTMLIFrameElement>(null);
@@ -63,79 +62,85 @@ function FilePreviewDialog(props: Props) {
           ...(fsEntry.uuid && { uuid: fsEntry.uuid }),
           path: fsEntry.path,
           isFile: fsEntry.isFile,
-          // editMode: false,
         }
       : undefined;
 
+  // Choosing the current json viewer as viewer of the meta revision file
+  if (fsEntry?.name?.endsWith(AppConfig.sidecarRevisionExtension)) {
+    const fileType: TS.FileTypes = supportedFileTypes.find(
+      (fileType) => fileType.viewer && fileType.type.toLowerCase() === 'json',
+    );
+    if (fileType) {
+      openedEntry.viewingExtensionId = fileType.viewer;
+      openedEntry.viewingExtensionPath = findExtensionPathForId(
+        fileType.viewer,
+        fileType.extensionExternalPath,
+      );
+    }
+  }
+
   const handleMessage = (data: any) => {
-    let message;
-    let textFilePath;
-    switch (
-      data.command // todo use diff command
-    ) {
+    if (!openedFile || !openedFile.path) {
+      return;
+    }
+    switch (data.command) {
       case 'loadDefaultTextContent':
-        if (!openedFile || !openedFile.path) {
-          break;
-        }
-        textFilePath = openedFile.path;
-
-        /*if (
-          fileViewer &&
-          fileViewer.current &&
-          fileViewer.current.contentWindow &&
-          // @ts-ignore
-          fileViewer.current.contentWindow.setTheme
-        ) {
-          // @ts-ignore call setContent from iframe
-          fileViewer.current.contentWindow.setTheme(currentTheme);
-        }*/
-        const openLocation = findLocation(openedFile.locationID);
-
-        openLocation
-          ?.loadTextFilePromise(
-            textFilePath,
-            data.preview ? data.preview : false,
-          )
-          .then((content) => {
-            const UTF8_BOM = '\ufeff';
-            if (content.indexOf(UTF8_BOM) === 0) {
-              content = content.substr(1);
-            }
-            let fileDirectory = extractContainingDirectoryPath(
-              textFilePath,
-              openLocation?.getDirSeparator(),
-            );
+        getFileContent(data.preview ? data.preview : false).then((content) => {
+          if (
+            fileViewer &&
+            fileViewer.current &&
+            fileViewer.current.contentWindow &&
+            // @ts-ignore
+            fileViewer?.current?.contentWindow?.setContent
+          ) {
+            let fileDirectory = extractContainingDirectoryPath(openedFile.path);
             if (AppConfig.isWeb) {
               const webDir = extractContainingDirectoryPath(
                 // eslint-disable-next-line no-restricted-globals
                 location.href,
-                openLocation?.getDirSeparator(),
               );
               fileDirectory =
                 (webDir && webDir !== '/' ? webDir + '/' : '') + fileDirectory;
             }
-            if (
-              fileViewer &&
-              fileViewer.current &&
-              fileViewer.current.contentWindow &&
-              // @ts-ignore
-              fileViewer.current.contentWindow.setContent
-            ) {
-              // @ts-ignore call setContent from iframe
-              fileViewer.current.contentWindow.setContent(
-                content,
-                fileDirectory,
-                !isEditMode,
-                currentTheme,
-              );
-            }
-          })
-          .catch((err) => {
-            console.log('Error loading text content ' + err);
-          });
+            // @ts-ignore call setContent from iframe
+            fileViewer.current.contentWindow.setContent(
+              content,
+              fileDirectory,
+              !isEditMode,
+              theme.palette.mode,
+            );
+          }
+        });
+        break;
+      case 'parentLoadTextContent':
+        getFileContent(data.preview ? data.preview : false).then((content) => {
+          fileViewer?.current?.contentWindow?.postMessage(
+            {
+              action: 'fileContent',
+              content: content,
+              isEditMode: isEditMode,
+            },
+            '*',
+          );
+        });
         break;
     }
   };
+
+  function getFileContent(preview): Promise<string> {
+    const openLocation = findLocation(openedFile.locationID);
+
+    return openLocation
+      ?.loadTextFilePromise(openedFile.path, preview)
+      .then((content) => {
+        // Check and remove UTF-8 BOM
+        return content.startsWith('\uFEFF') ? content.slice(1) : content;
+      })
+      .catch((err) => {
+        console.log('Error loading text content ' + err);
+        return undefined;
+      });
+  }
 
   if (!fsEntry) {
     return null;
@@ -152,8 +157,10 @@ function FilePreviewDialog(props: Props) {
       fullScreen={smallScreen}
       aria-labelledby="draggable-dialog-title"
       PaperComponent={DraggablePaper}
-      PaperProps={{ sx: { width: '100%', height: '100%' } }}
-      slotProps={{ backdrop: { style: { backgroundColor: 'transparent' } } }}
+      slotProps={{
+        backdrop: { sx: { backgroundColor: 'transparent' } },
+        paper: { sx: { width: '100%', height: '100%' } },
+      }}
     >
       <TsDialogTitle
         dialogTitle="Preview"
@@ -161,18 +168,17 @@ function FilePreviewDialog(props: Props) {
         onClose={onClose}
       />
       <DialogContent
-        style={{
-          marginLeft: 'auto',
-          marginRight: 'auto',
+        sx={{
           overflowY: 'hidden',
-          padding: smallScreen ? '0' : 'inherited',
+          padding: '10px',
           flexGrow: 1,
         }}
+        data-tid="filePreviewTID"
       >
         <Typography
           variant="body2"
           gutterBottom
-          style={{ wordBreak: 'break-all', margin: 10 }}
+          sx={{ wordBreak: 'break-all', marginLeft: '15px' }}
         >
           {fsEntry.path}
         </Typography>
@@ -180,8 +186,8 @@ function FilePreviewDialog(props: Props) {
           key="FileViewPreviewID"
           fileViewer={fileViewer}
           fileViewerContainer={fileViewerContainer}
-          height={'90%'}
           handleMessage={handleMessage}
+          height="calc(100% - 20px)"
         />
       </DialogContent>
     </Dialog>

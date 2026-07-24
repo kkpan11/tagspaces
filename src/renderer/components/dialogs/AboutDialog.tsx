@@ -17,26 +17,27 @@
  */
 
 import AppConfig from '-/AppConfig';
-import LogoIcon from '-/assets/images/icon100x100.svg';
+import LogoIcon from '-/assets/icons/icon.png';
+import TextLogoIcon from '-/assets/images/text-logo.svg';
 import DraggablePaper from '-/components/DraggablePaper';
-import Tooltip from '-/components/Tooltip';
 import TsButton from '-/components/TsButton';
 import TranslucentDialog from '-/components/dialogs/components/TranslucentDialog';
 import TsDialogActions from '-/components/dialogs/components/TsDialogActions';
 import TsDialogTitle from '-/components/dialogs/components/TsDialogTitle';
+import { BuyProDialogContext } from '-/components/dialogs/hooks/BuyProDialogContextProvider';
 import { useLicenseDialogContext } from '-/components/dialogs/hooks/useLicenseDialogContext';
 import { useThirdPartyLibsDialogContext } from '-/components/dialogs/hooks/useThirdPartyLibsDialogContext';
 import { Pro } from '-/pro';
-import { getLastVersionPromise } from '-/reducers/settings';
-import { openURLExternally } from '-/services/utils-io';
+import { getLastVersionPromise, openURLExternally } from '-/services/utils-io';
 import versionMeta from '-/version.json';
+import { Box } from '@mui/material';
 import DialogContent from '@mui/material/DialogContent';
 import Paper from '@mui/material/Paper';
 import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import Links from 'assets/links';
-import { useState } from 'react';
+import { useContext, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import semver from 'semver';
 
@@ -57,13 +58,30 @@ function AboutDialog(props: Props) {
   const { t } = useTranslation();
   const { openLicenseDialog } = useLicenseDialogContext();
   const { openThirdPartyLibsDialog } = useThirdPartyLibsDialogContext();
+  const { openBuyProDialog } = useContext(BuyProDialogContext);
+
+  // On Capacitor mobile the upgrade CTA opens the in-app StoreKit / Play
+  // Billing sheet (both stores forbid linking out from the purchase flow).
+  // Desktop and web keep the external products page. Mirrors ProTeaserDialog.
+  const onUpgradeClick = AppConfig.isCapacitor
+    ? () => openBuyProDialog?.()
+    : () => openURLExternally(Links.links.productsOverview, true);
   const [updateAvailable, setUpdateAvailable] = useState(false);
   const [newVersion, setNewVersion] = useState('');
   const { open, onClose } = props;
+  const tsType = Pro ? 'PRO' : 'LITE';
 
   function checkForUpdates() {
     if (updateAvailable) {
-      openURLExternally(Links.links.downloadURL, true);
+      // On mobile the app is updated through the store, so route there
+      // instead of the desktop downloads page.
+      if (AppConfig.isCapacitoriOS) {
+        openURLExternally(Links.links.appStoreApp, true);
+      } else if (AppConfig.isCapacitorAndroid) {
+        openURLExternally(Links.links.playStoreApp, true);
+      } else {
+        openURLExternally(Links.links.downloadURL, true);
+      }
     } else {
       getLastVersionPromise()
         .then((lastVersion) => {
@@ -88,7 +106,7 @@ function AboutDialog(props: Props) {
     }
   }
 
-  let versionInfo = 'Check for updates';
+  let versionInfo = t('core:checkForUpdates');
   if (newVersion && newVersion.length > 1) {
     if (updateAvailable) {
       versionInfo = t('getNewVersion', { newVersion });
@@ -101,16 +119,16 @@ function AboutDialog(props: Props) {
   if (AppConfig.isWeb) {
     privacyURL = '';
   }
-  if (window.ExtPrivacyURL) {
-    privacyURL = window.ExtPrivacyURL;
+  if (AppConfig.ExtPrivacyURL) {
+    privacyURL = AppConfig.ExtPrivacyURL;
   }
 
   let imprintURL = Links.links.imprintURL;
   if (AppConfig.isWeb) {
     imprintURL = '';
   }
-  if (window.ExtImprintURL) {
-    imprintURL = window.ExtImprintURL;
+  if (AppConfig.ExtImprintURL) {
+    imprintURL = AppConfig.ExtImprintURL;
   }
 
   const theme = useTheme();
@@ -126,45 +144,59 @@ function AboutDialog(props: Props) {
       aria-labelledby="draggable-dialog-title"
     >
       <TsDialogTitle
-        dialogTitle={productName}
+        dialogTitle={
+          <Box sx={{ display: 'flex' }}>
+            <img
+              style={{
+                maxHeight: 26,
+                maxWidth: 200,
+                marginRight: 10,
+              }}
+              src={TextLogoIcon}
+              alt="Application Text Logo"
+            />
+          </Box>
+        }
         onClose={onClose}
         closeButtonTestId="closeAboutDialogTID"
       />
-      <DialogContent style={{ overflowY: 'auto' }}>
+      <DialogContent sx={{ overflowY: 'auto' }}>
         <img
           alt="TagSpaces logo"
           src={LogoIcon}
           style={{ float: 'left', marginRight: 10, width: 120, height: 120 }}
         />
-        <Tooltip
-          placement="top"
-          title={
-            'Build on: ' +
-            versionMeta.buildTime +
-            '\nPlatform: ' +
-            navigator.userAgent
-          }
+        <Typography
+          title={t('core:buildOnPlatformTooltip', {
+            buildTime: versionMeta.buildTime,
+            userAgent: navigator.userAgent,
+            // userAgent contains '/' which i18next would HTML-escape to
+            // &#x2F;; this string is rendered as plain text by the tooltip
+            // (React escapes it anyway), so disabling escaping is safe here.
+            interpolation: { escapeValue: false },
+          })}
+          component="span"
+          variant="subtitle1"
         >
-          <Typography variant="subtitle1">
-            Version:&nbsp;
-            {versionMeta.version}
-            &nbsp;BuildID:&nbsp;
-            {buildID}
-          </Typography>
-        </Tooltip>
+          {t('core:versionLabel')}&nbsp;
+          {tsType}&nbsp;{versionMeta.version}
+          &nbsp;{t('core:buildIdLabel')}&nbsp;
+          {buildID}
+        </Typography>
+        <br />
         <br />
         <Typography id="aboutContent" variant="body1">
           <strong>
             {productName}
             &nbsp;
           </strong>
-          is made possible by the TagSpaces project and other open source
-          software listed in the:
+          {t('core:madePossibleByTagSpaces')}
+          <br />
           <TsButton
-            style={{ marginTop: 5 }}
+            sx={{ marginTop: '5px' }}
             onClick={() => openThirdPartyLibsDialog()}
           >
-            Software Acknowledgements
+            {t('core:softwareAcknowledgements')}
           </TsButton>
           <br />
           {!Pro && (
@@ -183,70 +215,106 @@ function AboutDialog(props: Props) {
           <br />
           {imprintURL && (
             <TsButton
-              style={{ marginRight: AppConfig.defaultSpaceBetweenButtons }}
+              sx={{ marginRight: AppConfig.defaultSpaceBetweenButtons }}
               variant="text"
               onClick={() => {
                 openURLExternally(imprintURL, true);
               }}
             >
-              Imprint
+              {t('core:imprint')}
             </TsButton>
           )}
           {privacyURL && (
             <TsButton
-              style={{ marginRight: AppConfig.defaultSpaceBetweenButtons }}
+              sx={{ marginRight: AppConfig.defaultSpaceBetweenButtons }}
               variant="text"
               onClick={() => {
                 openURLExternally(privacyURL, true);
               }}
             >
-              Privacy Policy
+              {t('core:privacyPolicy')}
             </TsButton>
           )}
           <TsButton
-            style={{ marginRight: AppConfig.defaultSpaceBetweenButtons }}
+            sx={{ marginRight: AppConfig.defaultSpaceBetweenButtons }}
             variant="text"
             onClick={() => {
               openURLExternally(Links.links.changelogURL, true);
             }}
           >
-            Changelog
+            {t('core:changelog')}
           </TsButton>
           <TsButton
-            style={{ marginRight: AppConfig.defaultSpaceBetweenButtons }}
+            sx={{ marginRight: AppConfig.defaultSpaceBetweenButtons }}
             variant="text"
             data-tid="openLicenseDialog"
             onClick={() => openLicenseDialog()}
           >
             {t('core:license')}
           </TsButton>
+          <TsButton
+            sx={{ marginRight: AppConfig.defaultSpaceBetweenButtons }}
+            variant="text"
+            data-tid="openSourceCode"
+            onClick={() => {
+              openURLExternally(Links.links.sourceCodeURL, true);
+            }}
+          >
+            {t('core:sourceCode')}
+          </TsButton>
         </Typography>
       </DialogContent>
-      <TsDialogActions style={{ justifyContent: 'space-between' }}>
-        <span>
+      <TsDialogActions
+        // Stacked column uses `gap` for spacing; disable MUI's default
+        // sibling margin-left, which would otherwise nudge the OK button right.
+        disableSpacing={smallScreen}
+        sx={{
+          justifyContent: 'space-between',
+          // On phones the dialog is fullScreen — stack the actions vertically
+          // (full-width) so the long version label can't crowd/truncate, with
+          // the primary OK at the bottom. Desktop keeps the single row.
+          flexDirection: smallScreen ? 'column' : 'row',
+          alignItems: smallScreen ? 'stretch' : 'center',
+          gap: smallScreen ? 1 : 0,
+        }}
+      >
+        <Box
+          sx={{
+            display: 'flex',
+            flexDirection: smallScreen ? 'column' : 'row',
+            alignItems: smallScreen ? 'stretch' : 'center',
+            gap: smallScreen ? 1 : 0,
+            width: smallScreen ? '100%' : 'auto',
+          }}
+        >
           {!Pro && (
             <TsButton
-              data-tid="checkForUpdates"
-              title={t('core:checkForNewVersion')}
-              onClick={() => {
-                openURLExternally(Links.links.productsOverview, true);
+              data-tid="upgradeToProButton"
+              title={t('core:upgradeToProButton')}
+              fullWidth={smallScreen}
+              onClick={onUpgradeClick}
+              sx={{
+                marginRight: smallScreen
+                  ? 0
+                  : AppConfig.defaultSpaceBetweenButtons,
               }}
-              style={{ marginRight: AppConfig.defaultSpaceBetweenButtons }}
             >
-              Upgrade to PRO
+              {t('core:upgradeToProButton')}
             </TsButton>
           )}
           <TsButton
             data-tid="checkForUpdates"
             title={t('core:checkForNewVersion')}
+            fullWidth={smallScreen}
             onClick={checkForUpdates}
           >
             {versionInfo}
           </TsButton>
-        </span>
+        </Box>
         <TsButton
           data-tid="closeAboutDialog"
           variant="contained"
+          fullWidth={smallScreen}
           onClick={onClose}
         >
           {t('core:ok')}

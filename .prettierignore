@@ -2,7 +2,6 @@ node_modules
 public/modules
 builds
 dll
-cordova
 web
 web/files
 release/app/node_modules
@@ -25,3 +24,6 @@ src/renderer/aws-exports.js
 src/main/config/config.json
 src/renderer/extension-config.ts
 extensions
+.github/workflows/codeql.yml
+tests/
+capacitor/

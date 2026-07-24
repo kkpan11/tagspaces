@@ -16,42 +16,48 @@
  *
  */
 
-import React from 'react';
-import DialogContent from '@mui/material/DialogContent';
-import DialogTitle from '@mui/material/DialogTitle';
-import Dialog from '@mui/material/Dialog';
-import { CircularProgress } from '@mui/material';
 import DraggablePaper from '-/components/DraggablePaper';
 import DialogCloseButton from '-/components/dialogs/DialogCloseButton';
+import { CircularProgress } from '@mui/material';
+import Dialog from '@mui/material/Dialog';
+import DialogContent from '@mui/material/DialogContent';
+import DialogTitle from '@mui/material/DialogTitle';
+import { useTranslation } from 'react-i18next';
 
 interface Props {
   open: boolean;
+  title?: string;
   onClose: () => void;
 }
 
 function ProgressDialog(props: Props) {
+  const { t } = useTranslation();
+  const { open, onClose, title } = props;
   return (
     <Dialog
       aria-labelledby="draggable-dialog-title"
       PaperComponent={DraggablePaper}
-      open={props.open}
-      onClose={props.onClose}
+      open={open}
+      onClose={onClose}
+      sx={{ minHeight: '200px' }}
     >
       <DialogTitle
-        style={{ cursor: 'move' }}
+        sx={{ cursor: 'move', minHeight: '20px' }}
         data-tid="progressDialogTitle"
         id="draggable-dialog-title"
       >
-        <DialogCloseButton testId="closeProgressTID" onClose={props.onClose} />
+        {title && t(title)}
+        <DialogCloseButton testId="closeProgressTID" onClose={onClose} />
       </DialogTitle>
       <DialogContent
-        style={{
-          marginLeft: 'auto',
-          marginRight: 'auto',
-          flexGrow: 1,
+        sx={{
+          minWidth: '300px',
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
         }}
       >
-        <CircularProgress size={24} />
+        <CircularProgress size={40} />
       </DialogContent>
     </Dialog>
   );

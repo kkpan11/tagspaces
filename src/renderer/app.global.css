@@ -2,24 +2,17 @@
 @import 'assets/scrollbars.css';
 @import 'assets/minireset.css';
 @import 'assets/fonts/roboto/index.css';
-@import '~rc-table/assets/index.css';
-@import 'assets/rc-table.css';
 @import '~leaflet/dist/leaflet.css';
-@import '~react-image-gallery/styles/css/image-gallery.css';
-@import "~slick-carousel/slick/slick.css"; /* used from react-slick */
-@import "~slick-carousel/slick/slick-theme.css";
-@import '~react-leaflet-markercluster/styles';
-@import "~@milkdown/crepe/theme/common/style.css";
-@import "~@milkdown/crepe/theme/frame.css";
 @import 'assets/milkdown.css';
+@import 'react-leaflet-markercluster/styles';
+@import 'swiper/css';
+@import 'swiper/css/navigation';
+@import 'rc-table/assets/index.css';
+@import 'react-leaflet-fullscreen/styles.css';
 
 /* Needed to disable border on focused HotKey element */
 div[tabindex='-1']:focus {
   outline: 0;
-}
-
-.tagspaces-main-color {
-  color: #1dd19f;
 }
 
 html,
@@ -36,26 +29,23 @@ body {
   margin: 0;
 }
 
-.react-split > .split-container.vertical > .splitter {
-  z-index: 1;
+#root {
+  height: 100%;
 }
 
-.rc-table-row-expand-icon {
-  width: 13px !important;
-  height: 13px !important;
-  line-height: 13px !important;
-  margin: 5px;
-  cursor: pointer;
-}
-
-.rc-table-cell, .rc-table-row {
-  display: block !important;
-}
-
+/* needed for crepe */ 
 .full-height {
   height: 100%;
 }
+
+/* needed for crepe */
 .mx-auto{
   margin-left: auto;
   margin-right: auto;
+}
+
+@media print {
+  html, body {
+    height: auto;
+  }
 }

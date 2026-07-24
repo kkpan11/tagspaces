@@ -16,39 +16,40 @@
  *
  */
 
-import React, { useEffect, useRef, useState } from 'react';
-import { useSelector } from 'react-redux';
-import { GlobalHotKeys } from 'react-hotkeys';
-import { getDesktopMode, getKeyBindingObject } from '-/reducers/settings';
-import EntryTagMenu from '-/components/menus/EntryTagMenu';
+import FileSourceDnd from '-/components/FileSourceDnd';
 import TagDropContainer from '-/components/TagDropContainer';
-import RowCell from '-/perspectives/list/components/RowCell';
-import MainToolbar from '-/perspectives/grid/components/MainToolbar';
-import SortingMenu from '-/perspectives/grid/components/SortingMenu';
-import GridOptionsMenu from '-/perspectives/grid/components/GridOptionsMenu';
+import AddTagToTagGroupDialog from '-/components/dialogs/AddTagToTagGroupDialog';
+import { useDeleteMultipleEntriesDialogContext } from '-/components/dialogs/hooks/useDeleteMultipleEntriesDialogContext';
+import { useMenuContext } from '-/components/dialogs/hooks/useMenuContext';
+import EntryTagMenu from '-/components/menus/EntryTagMenu';
+import { TabNames } from '-/hooks/EntryPropsTabsContextProvider';
+import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
+import { useDirectoryContentContext } from '-/hooks/useDirectoryContentContext';
+import { useIOActionsContext } from '-/hooks/useIOActionsContext';
+import { useNotificationContext } from '-/hooks/useNotificationContext';
+import { useOpenedEntryContext } from '-/hooks/useOpenedEntryContext';
+import { usePerspectiveActionsContext } from '-/hooks/usePerspectiveActionsContext';
+import { usePerspectiveSettingsContext } from '-/hooks/usePerspectiveSettingsContext';
+import { useSelectedEntriesContext } from '-/hooks/useSelectedEntriesContext';
+import { fileOperationsEnabled } from '-/perspectives/common/main-container';
+import { useReloadOnFocus } from '-/perspectives/common/useReloadOnFocus';
 import GridPagination from '-/perspectives/grid/components/GridPagination';
 import GridSettingsDialog from '-/perspectives/grid/components/GridSettingsDialog';
-import AddTagToTagGroupDialog from '-/components/dialogs/AddTagToTagGroupDialog';
-import { TS } from '-/tagspaces.namespace';
-import { Pro } from '-/pro';
-import Links from 'assets/links';
-import { defaultSettings } from '../index';
-import { fileOperationsEnabled } from '-/perspectives/common/main-container';
-import { openURLExternally } from '-/services/utils-io';
+import MainToolbar from '-/perspectives/grid/components/MainToolbar';
+import SortingMenu from '-/perspectives/grid/components/SortingMenu';
 import { useSortedDirContext } from '-/perspectives/grid/hooks/useSortedDirContext';
-import { useOpenedEntryContext } from '-/hooks/useOpenedEntryContext';
-import { useDirectoryContentContext } from '-/hooks/useDirectoryContentContext';
-import { useSelectedEntriesContext } from '-/hooks/useSelectedEntriesContext';
-import { usePerspectiveSettingsContext } from '-/hooks/usePerspectiveSettingsContext';
-import { ListCellsStyleContextProvider } from '../hooks/ListCellsStyleProvider';
-import { useIOActionsContext } from '-/hooks/useIOActionsContext';
-import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
-import { usePerspectiveActionsContext } from '-/hooks/usePerspectiveActionsContext';
+import RowCell from '-/perspectives/list/components/RowCell';
+import { Pro } from '-/pro';
+import { getDesktopMode, getKeyBindingObject } from '-/reducers/settings';
+import { openURLExternally } from '-/services/utils-io';
+import { TS } from '-/tagspaces.namespace';
 import useFirstRender from '-/utils/useFirstRender';
-import { useDeleteMultipleEntriesDialogContext } from '-/components/dialogs/hooks/useDeleteMultipleEntriesDialogContext';
-import { TabNames } from '-/hooks/EntryPropsTabsContextProvider';
-import FileSourceDnd from '-/components/FileSourceDnd';
-import { useMenuContext } from '-/components/dialogs/hooks/useMenuContext';
+import { Box } from '@mui/material';
+import Links from 'assets/links';
+import React, { useEffect, useRef, useState } from 'react';
+import { GlobalHotKeys } from 'react-hotkeys';
+import { useSelector } from 'react-redux';
+import { ListCellsStyleContextProvider } from '../hooks/ListCellsStyleProvider';
 
 interface Props {}
 
@@ -58,10 +59,12 @@ function ListPerspective(props: Props) {
     openAddRemoveTagsDialog,
     openMoveCopyFilesDialog,
   } = useMenuContext();
-  const { openEntry, openPrevFile, openNextFile } = useOpenedEntryContext();
+  const { openEntry, openPrevFile, openNextFile, openedEntry, fileChanged } =
+    useOpenedEntryContext();
+  const { showNotification } = useNotificationContext();
   const { actions } = usePerspectiveActionsContext();
   const { showDirectories } = usePerspectiveSettingsContext();
-  const { findLocation } = useCurrentLocationContext();
+  const { currentLocation } = useCurrentLocationContext();
   const { openDirectory, currentDirectoryPath } = useDirectoryContentContext();
   const { openFileNatively, duplicateFile } = useIOActionsContext();
   const { openDeleteMultipleEntriesDialog } =
@@ -81,8 +84,6 @@ function ListPerspective(props: Props) {
     setSelectedEntries(selected);
   };
 
-  const ShareFilesDialog = Pro && Pro.UI ? Pro.UI.ShareFilesDialog : false;
-
   const [mouseX, setMouseX] = useState<number>(undefined);
   const [mouseY, setMouseY] = useState<number>(undefined);
   const selectedEntry = useRef<TS.FileSystemEntry>(undefined);
@@ -92,15 +93,17 @@ function ListPerspective(props: Props) {
     useState<null | HTMLElement>(null);
   const [sortingContextMenuAnchorEl, setSortingContextMenuAnchorEl] =
     useState<null | HTMLElement>(null);
-  const [optionsContextMenuAnchorEl, setOptionsContextMenuAnchorEl] =
-    useState<null | HTMLElement>(null);
+  // const [optionsContextMenuAnchorEl, setOptionsContextMenuAnchorEl] =
+  //   useState<null | HTMLElement>(null);
   const [isAddTagDialogOpened, setIsAddTagDialogOpened] =
     useState<TS.Tag>(undefined);
-  const [isShareFilesDialogOpened, setIsShareFilesDialogOpened] =
-    useState<boolean>(false);
   const [isGridSettingsDialogOpened, setIsGridSettingsDialogOpened] =
     useState<boolean>(false);
   const firstRender = useFirstRender();
+
+  useReloadOnFocus(currentLocation?.reloadOnFocus, () =>
+    openDirectory(currentDirectoryPath),
+  );
 
   useEffect(() => {
     if (!firstRender && actions && actions.length > 0) {
@@ -117,6 +120,10 @@ function ListPerspective(props: Props) {
   const handleSortBy = (handleSort) => {
     if (sortBy !== handleSort) {
       setSortBy(handleSort);
+      // Date-based sort defaults to descending (newest first) on first selection
+      if (handleSort === 'byDateModified') {
+        setOrderBy(false);
+      }
     } else {
       setOrderBy(!orderBy);
     }
@@ -152,12 +159,12 @@ function ListPerspective(props: Props) {
   };
 
   const openHelpWebPage = () => {
-    closeOptionsMenu();
+    // closeOptionsMenu();
     openURLExternally(Links.documentationLinks.defaultPerspective, true);
   };
 
   const openSettings = () => {
-    closeOptionsMenu();
+    // closeOptionsMenu();
     setIsGridSettingsDialogOpened(true);
   };
 
@@ -174,16 +181,9 @@ function ListPerspective(props: Props) {
     setTagContextMenuAnchorEl(event.currentTarget);
   };
 
-  const closeOptionsMenu = () => {
-    setOptionsContextMenuAnchorEl(null);
-  };
-
-  const openShareFilesDialog = () => {
-    const currentLocation = findLocation();
-    if (currentLocation && currentLocation.haveObjectStoreSupport()) {
-      setIsShareFilesDialogOpened(true);
-    }
-  };
+  // const closeOptionsMenu = () => {
+  //   setOptionsContextMenuAnchorEl(null);
+  // };
 
   const keyMap = {
     nextDocument: keyBindings.nextDocument,
@@ -199,17 +199,6 @@ function ListPerspective(props: Props) {
     openFileExternally: keyBindings.openFileExternally,
     reloadDocument: keyBindings.reloadDocument,
   };
-
-  /*const onContextMenu = (event: React.MouseEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    setMouseX(event.clientX);
-    setMouseY(event.clientY);
-    if (selectedEntries.length > 0) {
-      setSelectedEntries([]);
-    }
-    perspectiveMode.current = false;
-    setDirContextMenuAnchorEl(event.currentTarget);
-  };*/
 
   const onClick = (event: React.MouseEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -228,8 +217,21 @@ function ListPerspective(props: Props) {
       }
     },
     addRemoveTags: () => {
-      if (selectedEntries && selectedEntries.length > 1) {
-        openAddRemoveTagsDialog();
+      if (selectedEntries && selectedEntries.length > 0) {
+        if (
+          openedEntry &&
+          fileChanged &&
+          selectedEntries &&
+          selectedEntries.some((e) => e.path === openedEntry.path)
+        ) {
+          showNotification(
+            `You can't edit tags, because '${openedEntry.path}' is opened for editing`,
+            'default',
+            true,
+          );
+          return;
+        }
+        openAddRemoveTagsDialog(selectedEntries);
       }
     },
     renameFile: () => {
@@ -239,7 +241,7 @@ function ListPerspective(props: Props) {
     },
     copyMoveSelectedEntries: () => {
       if (selectedEntries && selectedEntries.length > 0) {
-        openMoveCopyFilesDialog();
+        openMoveCopyFilesDialog(selectedEntries);
       }
     },
     openEntry: (e) => {
@@ -278,7 +280,8 @@ function ListPerspective(props: Props) {
 
   const getCellContent = (
     fsEntry: TS.FileSystemEntry,
-    selectedEntries: Array<TS.FileSystemEntry>,
+    selected: boolean,
+    selectionMode: boolean,
     index: number,
     handleGridContextMenu: (
       event: React.MouseEvent<HTMLDivElement>,
@@ -288,15 +291,6 @@ function ListPerspective(props: Props) {
     handleGridCellDblClick,
     isLast?: boolean,
   ) => {
-    let selected = false;
-    if (
-      selectedEntries &&
-      selectedEntries.some((entry) => entry.path === fsEntry.path)
-    ) {
-      selected = true;
-    }
-
-    const selectionMode = selectedEntries.length > 1;
     return (
       <FileSourceDnd entry={fsEntry}>
         <TagDropContainer entry={fsEntry}>
@@ -323,11 +317,11 @@ function ListPerspective(props: Props) {
   };
 
   return (
-    <div
-      style={{
+    <Box
+      sx={{
         height: '100%', // 'calc(100% - 47px)'
       }}
-      data-tid={defaultSettings.testID}
+      data-tid="listPerspectiveContainer"
     >
       <MainToolbar
         prefixDataTID={'list'}
@@ -335,7 +329,6 @@ function ListPerspective(props: Props) {
         handleSortingMenu={handleSortingMenu}
         handleExportCsvMenu={handleExportCsvMenu}
         openSettings={openSettings}
-        openShareFilesDialog={openShareFilesDialog}
       />
       <GlobalHotKeys
         keyMap={keyMap}
@@ -350,7 +343,6 @@ function ListPerspective(props: Props) {
             getCellContent={getCellContent}
             currentDirectoryPath={currentDirectoryPath}
             onClick={onClick}
-            selectedEntries={selectedEntries}
             setSelectedEntries={handleSetSelectedEntries}
             clearSelection={clearSelection}
           />
@@ -373,12 +365,6 @@ function ListPerspective(props: Props) {
           handleSortingMenu={handleSortingMenu}
         />
       )}
-      {isShareFilesDialogOpened && Pro && (
-        <ShareFilesDialog
-          open={isShareFilesDialogOpened}
-          onClose={() => setIsShareFilesDialogOpened(false)}
-        />
-      )}
       {/* TODO EntryTagMenu is used in TagSelect we cannot move confirm dialog from menu */}
       <EntryTagMenu
         anchorEl={tagContextMenuAnchorEl}
@@ -396,7 +382,7 @@ function ListPerspective(props: Props) {
           handleSortBy={handleSortBy}
         />
       )}
-      {Boolean(optionsContextMenuAnchorEl) && (
+      {/* {Boolean(optionsContextMenuAnchorEl) && (
         <GridOptionsMenu
           open={Boolean(optionsContextMenuAnchorEl)}
           onClose={closeOptionsMenu}
@@ -404,8 +390,9 @@ function ListPerspective(props: Props) {
           openHelpWebPage={openHelpWebPage}
           openSettings={openSettings}
         />
-      )}
-    </div>
+      )} */}
+    </Box>
   );
 }
+
 export default ListPerspective;

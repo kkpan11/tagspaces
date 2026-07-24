@@ -1,17 +1,16 @@
-import 'webpack-dev-server';
-import path from 'path';
-import fs from 'fs';
-import webpack from 'webpack';
-import HtmlWebpackPlugin from 'html-webpack-plugin';
 import chalk from 'chalk';
+import fs from 'fs';
+import HtmlWebpackPlugin from 'html-webpack-plugin';
+import path from 'path';
+import webpack from 'webpack';
+import 'webpack-dev-server';
 import { merge } from 'webpack-merge';
 //import NodePolyfillPlugin from 'node-polyfill-webpack-plugin';
-import { execSync, spawn } from 'child_process';
 import ReactRefreshWebpackPlugin from '@pmmmwh/react-refresh-webpack-plugin';
+import { execSync, spawn } from 'child_process';
+import checkNodeEnv from '../scripts/check-node-env';
 import baseConfig from './webpack.config.base';
 import webpackPaths from './webpack.paths';
-import checkNodeEnv from '../scripts/check-node-env';
-import { generateJWT } from '../../src/main/util';
 
 // When an ESLint server is running, we can't set the NODE_ENV so we'll check if it's
 // at the dev webpack config is not accidentally run in a production environment
@@ -25,7 +24,6 @@ const skipDLLs =
   module.parent?.filename.includes('webpack.config.renderer.dev.dll') ||
   module.parent?.filename.includes('webpack.config.eslint');
 
-generateJWT();
 /**
  * Warn if the DLL is not built
  */
@@ -73,24 +71,8 @@ const configuration: webpack.Configuration = {
   module: {
     rules: [
       {
-        test: /\.s?(c|a)ss$/,
-        use: [
-          'style-loader',
-          {
-            loader: 'css-loader',
-            options: {
-              modules: true,
-              sourceMap: true,
-              importLoaders: 1,
-            },
-          },
-          'sass-loader',
-        ],
-        include: /\.module\.s?(c|a)ss$/,
-      },
-      {
-        test: /\.s?css$/,
-        use: ['style-loader', 'css-loader', 'sass-loader'],
+        test: /\.css$/,
+        use: ['style-loader', 'css-loader'],
         exclude: /\.module\.s?(c|a)ss$/,
       },
       // Fonts
@@ -100,7 +82,7 @@ const configuration: webpack.Configuration = {
       },
       // Images
       {
-        test: /\.(png|jpg|jpeg|gif)$/i,
+        test: /\.(png|jpg|jpeg|gif|avif|mp4|webm)$/i,
         type: 'asset/resource',
       },
       // Text files
@@ -170,7 +152,7 @@ const configuration: webpack.Configuration = {
       filename: path.join('index.html'),
       template: path.join(webpackPaths.srcRendererPath, 'index.ejs'),
       templateParameters: {
-        csp: "connect-src files: *; frame-src 'self' tsfile: *; default-src 'self' ; object-src 'none' ; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline' data:  blob: ; media-src * blob: ; img-src tsfile: * blob: data: content:;",
+        csp: "connect-src files: *; frame-src 'self' tsfile: *; default-src 'self' ; object-src 'none' ; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline' data:  blob: ; media-src * blob: tsfile:; img-src tsfile: * blob: data: content:;",
       },
       minify: {
         collapseWhitespace: true,
@@ -206,21 +188,30 @@ const configuration: webpack.Configuration = {
     },
     hot: true,
     headers: { 'Access-Control-Allow-Origin': '*' },
-    static: {
-      // directory: webpackPaths.distRendererPath, //'src/renderer/'),
-      publicPath: '/', //`http://localhost:${port}/renderer`, //'/', //'/src/renderer',//'/release/app/dist',  //'/assets',
-      //staticOptions: {},
-      //serveIndex: true,
-      //watch: true
-      /*watch: {
-        aggregateTimeout: 300,
-        ignored: /node_modules/,
-        poll: 100,
-      },*/
-    },
+    static: [
+      {
+        // directory: webpackPaths.distRendererPath, //'src/renderer/'),
+        publicPath: '/', //`http://localhost:${port}/renderer`, //'/', //'/src/renderer',//'/release/app/dist',  //'/assets',
+        //staticOptions: {},
+        //serveIndex: true,
+        //watch: true
+        /*watch: {
+          aggregateTimeout: 300,
+          ignored: /node_modules/,
+          poll: 100,
+        },*/
+      },
+      {
+        // Serve release/app/node_modules at /modules so that extension paths
+        // like 'modules/@tagspaces/extensions/text-viewer' resolve correctly
+        // in dev mode (mirrors the '../../node_modules/' path used in prod).
+        directory: webpackPaths.appNodeModulesPath,
+        publicPath: '/modules',
+      },
+    ],
     historyApiFallback: {
       verbose: true,
-      disableDotRule: false,
+      // disableDotRule: false,
     },
     setupMiddlewares(middlewares) {
       console.log('Starting preload.js builder...');

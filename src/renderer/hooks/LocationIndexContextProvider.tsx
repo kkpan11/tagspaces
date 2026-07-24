@@ -23,17 +23,28 @@ import { useEditedEntryContext } from '-/hooks/useEditedEntryContext';
 import { useFSWatcherContext } from '-/hooks/useFSWatcherContext';
 import { useNotificationContext } from '-/hooks/useNotificationContext';
 import { Pro } from '-/pro';
-import { getEnableWS } from '-/reducers/settings';
+import { getEnableWS, getTagDelimiter } from '-/reducers/settings';
 import Search from '-/services/search';
+import { extractPDFcontent } from '-/services/thumbsgenerator';
 import {
   executePromisesInBatches,
   isWorkerAvailable,
 } from '-/services/utils-io';
+import { prepareIndex, fuseOptions } from '@tagspaces/tagspaces-search';
+import Fuse from 'fuse.js';
 import { TS } from '-/tagspaces.namespace';
 import { CommonLocation } from '-/utils/CommonLocation';
+import {
+  applyBulkCreateToIndex,
+  applyBulkUpdateToIndex,
+  applyCreateToIndex,
+  applyDeleteToIndex,
+  applyUpdateToIndex,
+} from '-/utils/indexReflect';
 import useFirstRender from '-/utils/useFirstRender';
 import { locationType } from '@tagspaces/tagspaces-common/misc';
 import {
+  cleanRootPath,
   cleanTrailingDirSeparator,
   getMetaDirectoryPath,
   getThumbFileLocationForDirectory,
@@ -43,25 +54,48 @@ import {
 import { loadJSONString } from '@tagspaces/tagspaces-common/utils-io';
 import {
   createIndex,
+  createIncrementalIndex,
   getMetaIndexFilePath,
+  getMetaFullTextFilePath,
+  parseFullTextJsonl,
+  serializeFullTextJsonl,
+  mergeFullTextIntoIndex,
 } from '@tagspaces/tagspaces-indexer';
-import React, { createContext, useEffect, useReducer, useRef } from 'react';
+import React, {
+  createContext,
+  useEffect,
+  useReducer,
+  useRef,
+  useState,
+} from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSelector } from 'react-redux';
 
 type LocationIndexContextData = {
-  //index: TS.FileSystemEntry[];
-  indexLoadedOn: number;
-  isIndexing: string;
-  getIndex: () => TS.FileSystemEntry[];
-  cancelDirectoryIndexing: () => void;
-  createLocationIndex: (location: CommonLocation) => Promise<boolean>;
-  createLocationsIndexes: (extractText?: boolean) => Promise<boolean>;
+  indexLoadedOn: number | undefined;
+  indexExpired: () => boolean;
+  isIndexing: string | undefined;
+  indexingProgress: { count: number; folder: string } | undefined;
+  getIndex: () => TS.FileSystemEntry[] | undefined;
+  getLastIndex: (locationId: string) => Promise<TS.FileSystemEntry[]>;
+  cancelDirectoryIndexing: (locationId: string) => void;
+  createLocationIndex: (
+    location: CommonLocation,
+    force?: boolean,
+    fullTextIndex?: boolean,
+    extractLinks?: boolean,
+  ) => Promise<boolean>;
+  createLocationsIndexes: (
+    extractText?: boolean,
+    workSpace?: TS.WorkSpace,
+  ) => Promise<boolean>;
   clearDirectoryIndex: (persist?: boolean) => void;
   searchLocationIndex: (searchQuery: TS.SearchQuery) => void;
-  searchAllLocations: (searchQuery: TS.SearchQuery) => void;
+  searchAllLocations: (
+    searchQuery: TS.SearchQuery,
+    workSpace?: TS.WorkSpace,
+  ) => void;
   setIndex: (i: TS.FileSystemEntry[], location?: CommonLocation) => void;
-  //indexUpdateSidecarTags: (path: string, tags: Array<TS.Tag>) => void;
   reflectUpdateSidecarMeta: (path: string, entryMeta: Object) => void;
   findLinks: (
     link: string,
@@ -73,9 +107,12 @@ type LocationIndexContextData = {
 export const LocationIndexContext = createContext<LocationIndexContextData>({
   //index: [],
   indexLoadedOn: undefined,
+  indexExpired: () => true,
   isIndexing: undefined,
-  getIndex: undefined,
-  cancelDirectoryIndexing: () => {},
+  indexingProgress: undefined,
+  getIndex: () => undefined,
+  getLastIndex: undefined,
+  cancelDirectoryIndexing: undefined,
   createLocationIndex: () => Promise.resolve(false),
   createLocationsIndexes: () => Promise.resolve(false),
   clearDirectoryIndex: () => {},
@@ -96,49 +133,103 @@ export const LocationIndexContextProvider = ({
 }: LocationIndexContextProviderProps) => {
   const { t } = useTranslation();
 
-  const { locations, findLocation, currentLocationId, getLocationPath } =
-    useCurrentLocationContext();
+  const {
+    locations,
+    findLocation,
+    currentLocationId,
+    currentLocation,
+    getLocationPath,
+  } = useCurrentLocationContext();
   const { ignoreByWatcher, deignoreByWatcher } = useFSWatcherContext();
   const { setSearchResults, appendSearchResults, updateCurrentDirEntries } =
     useDirectoryContentContext();
   const { actions } = useEditedEntryContext();
-  const { showNotification, hideNotifications } = useNotificationContext();
+  const { showNotification, hideNotifications, openConfirmDialog } =
+    useNotificationContext();
 
   const enableWS = useSelector(getEnableWS);
-  //const allLocations = useSelector(getLocations);
+  const tagDelimiter: string = useSelector(getTagDelimiter);
 
   const isIndexing = useRef<string>(undefined);
-  let walking = true;
-  //const lastError = useRef(undefined);
+  const [indexingProgress, setIndexingProgress] = useState<
+    { count: number; folder: string } | undefined
+  >(undefined);
+  const walkingRef = useRef(true);
   const index = useRef<TS.FileSystemEntry[]>(undefined);
   const indexLoadedOn = useRef<number>(undefined);
   const [ignored, forceUpdate] = useReducer((x) => x + 1, 0, undefined);
   const firstRender = useFirstRender();
-  const currentLocation = findLocation();
   const maxIndexAge = useRef<number>(getMaxIndexAge(currentLocation));
+  const prevLocationId = useRef<string>(currentLocationId);
+  const enhancedIndex = useRef<any[]>(undefined);
+  const fuseInstance = useRef<any>(undefined);
+  // Entries the cached Fuse instance was built from — used to invalidate
+  // the Fuse cache when searchAllLocations iterates over other locations
+  // that have different prepared indexes.
+  const fuseEntriesRef = useRef<any[]>(undefined);
+  const fullTextMap = useRef<Record<string, string>>(undefined);
+  const fullTextLoaded = useRef<boolean>(false);
+  // In-flight fulltext load — coalesces concurrent searches so two queries
+  // in the same tick don't both fetch+merge the same tsft.jsonl.
+  const fullTextLoadPromise = useRef<Promise<void> | undefined>(undefined);
 
   useEffect(() => {
     if (currentLocationId) {
       clearDirectoryIndex(false);
       maxIndexAge.current = getMaxIndexAge(findLocation());
     }
+    if (AppConfig.isElectron && prevLocationId.current !== currentLocationId) {
+      if (prevLocationId.current) {
+        window.electronIO.ipcRenderer.sendMessage(
+          'cancelRequest',
+          prevLocationId.current,
+        );
+      }
+      prevLocationId.current = currentLocationId;
+    }
   }, [currentLocationId]);
 
   useEffect(() => {
     if (!firstRender && actions && actions.length > 0) {
+      // Bulk fast paths. Calling reflectCreateEntry / reflectUpdateEntry per
+      // action does an O(n) array allocation each iteration — for a 3500-file
+      // bulk copy/move reflected into a 50k-entry index that's ~1.5 GB of
+      // intermediate arrays in one synchronous tick (the OOM the user saw).
+      // Detect uniform-add and uniform-move/update batches and apply them in
+      // a single allocation.
+      if (actions.length > 1 && actions.every((a) => a.action === 'add')) {
+        const next = applyBulkCreateToIndex(
+          index.current,
+          actions.map((a) => a.entry).filter(Boolean),
+        );
+        if (next) setIndex(next, currentLocation);
+        return;
+      }
+      if (
+        actions.length > 1 &&
+        actions.every((a) => a.action === 'move' || a.action === 'update')
+      ) {
+        const next = applyBulkUpdateToIndex(
+          index.current,
+          actions
+            .filter((a) => a.oldEntryPath && a.entry)
+            .map((a) => ({ oldPath: a.oldEntryPath, entry: a.entry })),
+        );
+        if (next) setIndex(next, currentLocation);
+        return;
+      }
       for (const action of actions) {
         if (action.action === 'add') {
           reflectCreateEntry(action.entry);
         } else if (action.action === 'delete') {
           reflectDeleteEntry(action.entry.path);
-        } else if (action.action === 'update') {
+        } else if (action.action === 'update' || action.action === 'move') {
           reflectUpdateEntry(action.oldEntryPath, action.entry);
-          /*let i = index.current.findIndex(
-            (e) => e.path === action.oldEntryPath,
+        } else {
+          console.warn(
+            'LocationIndexContextProvider: unhandled action type',
+            action.action,
           );
-          if (i !== -1) {
-            index.current[i] = action.entry;
-          }*/
         }
       }
     }
@@ -151,6 +242,12 @@ export const LocationIndexContextProvider = ({
   }
   function setIndex(i, location: CommonLocation = undefined) {
     index.current = i;
+    enhancedIndex.current = undefined;
+    fuseInstance.current = undefined;
+    fuseEntriesRef.current = undefined;
+    fullTextMap.current = undefined;
+    fullTextLoaded.current = false;
+    fullTextLoadPromise.current = undefined;
     if (index.current && index.current.length > 0) {
       indexLoadedOn.current = new Date().getTime();
     } else {
@@ -207,58 +304,40 @@ export const LocationIndexContextProvider = ({
         location.uuid,
       );
       if (directoryIndex) {
-        // index is up to date
-        setIndex(directoryIndex, location);
-      } else {
+        // Cache the loaded index so subsequent reads (triggered by effects
+        // re-firing on isIndexing changes, navigation, etc.) don't re-read
+        // and re-enhance the file from disk every time.
+        setIndex(directoryIndex);
+        return directoryIndex;
+      } else if (!location?.isReadOnly) {
+        // Read-only locations have no way to produce or persist a fresh
+        // index, so falling through to createLocationIndex only risks
+        // returning an empty/failed walker result. Prefer returning
+        // index.current (likely undefined) and let the caller handle it.
+        // createLocationIndex itself handles an undefined location as a
+        // no-op, so optional chaining here preserves the original behavior.
         await createLocationIndex(location);
       }
     }
-
     return index.current;
   }
 
+  // Thin wrappers over the pure transforms in utils/indexReflect (covered
+  // by tests/unit/indexReflect.test.js). `apply*` return null when nothing
+  // should change, so persisting the result is gated on a truthy next.
   function reflectDeleteEntry(path: string) {
-    if (!index.current || index.current.length < 1) {
-      return;
-    }
-    for (let i = 0; i < index.current.length; i += 1) {
-      if (index.current[i].path === path) {
-        setIndex(index.current.splice(i, 1), currentLocation);
-        //i -= 1;
-        break;
-      }
-    }
+    const next = applyDeleteToIndex(index.current, path);
+    if (next) setIndex(next, currentLocation);
   }
 
   function reflectCreateEntry(newEntry: TS.FileSystemEntry) {
-    if (!index.current || index.current.length < 1) {
-      return;
-    }
-    let entryFound = index.current.some(
-      (entry) => entry.path === newEntry.path,
-    );
-    if (!entryFound) {
-      setIndex([...index.current, newEntry], currentLocation);
-      //index.current.push(newEntry);
-    }
-    // else todo update index entry ?
+    const next = applyCreateToIndex(index.current, newEntry);
+    if (next) setIndex(next, currentLocation);
   }
 
   function reflectUpdateEntry(path: string, newEntry: TS.FileSystemEntry) {
-    if (!index.current || index.current.length < 1) {
-      return;
-    }
-    if (index.current.some((i) => i.path === path)) {
-      setIndex(
-        index.current.map((i) => {
-          if (i.path === path) {
-            return newEntry;
-          }
-          return i;
-        }),
-        currentLocation,
-      );
-    }
+    const next = applyUpdateToIndex(index.current, path, newEntry);
+    if (next) setIndex(next, currentLocation);
   }
 
   async function findLinks(
@@ -288,20 +367,6 @@ export const LocationIndexContextProvider = ({
     return foundEntriesLinkingToId;
   }
 
-  /*function indexUpdateSidecarTags(path: string, tags: Array<TS.Tag>) {
-    if (!index.current || index.current.length < 1) {
-      return;
-    }
-    for (let i = 0; i < index.current.length; i += 1) {
-      if (index.current[i].path === path) {
-        index.current[i].tags = [
-          ...index.current[i].tags.filter((tag) => tag.type === 'plain'),
-          ...tags,
-        ];
-      }
-    }
-  }*/
-
   function reflectUpdateSidecarMeta(path: string, entryMeta: Object) {
     if (!index.current || index.current.length < 1) {
       return;
@@ -318,24 +383,20 @@ export const LocationIndexContextProvider = ({
       }),
       currentLocation,
     );
-    /*for (let i = 0; i < index.current.length; i += 1) {
-      if (index.current[i].path === path) {
-        index.current[i] = {
-          ...index.current[i],
-          meta: {...(index.current[i].meta && index.current[i].meta), ...entryMeta},
-        };
-      }
-    }*/
   }
 
   function isWalking() {
-    return walking;
+    return walkingRef.current;
   }
 
-  function cancelDirectoryIndexing() {
-    walking = false;
-    isIndexing.current = undefined;
-    forceUpdate();
+  function cancelDirectoryIndexing(locationId: string) {
+    if (locationId) {
+      window.electronIO.ipcRenderer.sendMessage('cancelRequest', locationId);
+      walkingRef.current = false;
+      isIndexing.current = undefined;
+      setIndexingProgress(undefined);
+      forceUpdate();
+    }
   }
 
   function createDirectoryIndex(
@@ -344,7 +405,8 @@ export const LocationIndexContextProvider = ({
     ignorePatterns: Array<string> = [],
     enableWS = true,
     isWalking = () => true,
-    // disableIndexing = true,
+    extractLinks?: boolean,
+    forceFullReindex = false,
   ): Promise<TS.FileSystemEntry[]> {
     if (isWalking()) {
       if (Pro && Pro.Watcher) {
@@ -358,15 +420,26 @@ export const LocationIndexContextProvider = ({
           enableWS &&
           !loc.haveObjectStoreSupport() &&
           !loc.haveWebDavSupport() &&
-          !AppConfig.isCordova
+          !AppConfig.isNativeMobile
         ) {
           // Start indexing in worker if not in the object store mode
           return loc
-            .createDirectoryIndexInWorker(dirPath, extractText, ignorePatterns)
+            .createDirectoryIndexInWorker(
+              dirPath,
+              extractText,
+              extractLinks ?? !!loc.extractLinks,
+              ignorePatterns,
+              loc.uuid,
+              forceFullReindex,
+              !!Pro,
+            )
             .then((result) => {
               if (result && result.success) {
                 return loadIndexFromDisk(dirPath, param.locationID);
               } else if (result && result.error) {
+                if (result.error === 'AbortError') {
+                  return undefined;
+                }
                 console.error(
                   'createDirectoryIndexInWorker failed:' + result.error,
                 );
@@ -381,6 +454,8 @@ export const LocationIndexContextProvider = ({
                 extractText,
                 ignorePatterns,
                 isWalking,
+                extractLinks,
+                forceFullReindex,
               );
             });
         }
@@ -391,52 +466,112 @@ export const LocationIndexContextProvider = ({
           extractText,
           ignorePatterns,
           isWalking,
+          extractLinks,
+          forceFullReindex,
         );
       });
     }
     return Promise.resolve(undefined);
   }
 
-  function createNotWorkerIndex(
+  async function createNotWorkerIndex(
     param: any,
     loc: CommonLocation,
     extractText = false,
     ignorePatterns: Array<string> = [],
     isWalking = () => true,
+    extractLinks?: boolean,
+    forceFullReindex = false,
   ): Promise<TS.FileSystemEntry[]> {
-    const mode = ['extractThumbPath'];
+    const mode = ['loadMeta'];
     if (extractText) {
       mode.push('extractTextContent');
-      mode.push('extractLinks');
+      if (extractLinks ?? loc.extractLinks) {
+        mode.push('extractLinks');
+      }
     }
-    return createIndex(
-      {
-        ...param,
-        listDirectoryPromise: loc.listDirectoryPromise,
-        getFileContentPromise: loc.getFileContentPromise,
-      },
-      mode,
-      ignorePatterns,
-      isWalking,
-    )
-      .then((directoryIndex) => {
-        if (!loc.isReadOnly) {
-          persistIndex(param, directoryIndex).then((success) => {
-            if (success) {
-              console.log('Index generated in folder: ' + param.path);
-            }
-          });
+
+    // Throttled progress callback — update shared state at most every 250ms
+    // to avoid flooding React with re-renders during large index walks.
+    // The value is consumed by PageNotification, which merges it into the
+    // single "indexing" snackbar that also hosts the cancel button.
+    const PROGRESS_THROTTLE_MS = 250;
+    let lastProgressTs = 0;
+    let lastDir = '';
+    const onProgress = ({ count, entry }: { count: number; entry: any }) => {
+      const now = Date.now();
+      if (now - lastProgressTs < PROGRESS_THROTTLE_MS) return;
+      lastProgressTs = now;
+      const entryDir = entry.isFile
+        ? entry.path.substring(0, entry.path.lastIndexOf('/'))
+        : entry.path;
+      // Skip UI update if we're still in the same directory
+      if (entryDir === lastDir) return;
+      lastDir = entryDir;
+      const shortDir =
+        entryDir.length > 60 ? '…' + entryDir.slice(-59) : entryDir;
+      setIndexingProgress({ count, folder: shortDir });
+    };
+
+    const indexParam: any = {
+      ...param,
+      listDirectoryPromise: loc.listDirectoryPromise,
+      getFileContentPromise: loc.getFileContentPromise,
+      onProgress,
+    };
+    if (extractText) {
+      indexParam.extendedExtraction = Pro ? extractPDFcontent : false;
+    }
+
+    // Try incremental indexing if an existing index is available
+    let existingIdx = index.current;
+    if (!existingIdx && !forceFullReindex) {
+      existingIdx = await loadIndexFromDisk(param.path, param.locationID);
+    }
+
+    let directoryIndex;
+    if (existingIdx && existingIdx.length > 0 && !forceFullReindex) {
+      // existingIdx here is the enhanced (absolute-path) form that the renderer
+      // caches/returns from loadIndexFromDisk. createIncrementalIndex compares
+      // entry.path against cleanRootPath(walked.path, rootPath) which is
+      // relative, so we must de-enhance before handing it off — otherwise
+      // every entry misses the map and the "incremental" run re-processes
+      // (and on error re-persists) the whole index with bad paths.
+      const sep = loc.getDirSeparator();
+      const relativeExistingIdx = existingIdx.map((e) => ({
+        ...e,
+        path: cleanRootPath(e.path, param.path, sep),
+      }));
+      console.log('Attempting incremental index for: ' + param.path);
+      const result = await createIncrementalIndex(
+        indexParam,
+        mode,
+        ignorePatterns,
+        isWalking,
+        relativeExistingIdx,
+        fullTextMap.current,
+      );
+      directoryIndex = result.index;
+      console.log(
+        `Incremental index stats: +${result.stats.added} ~${result.stats.modified} -${result.stats.deleted} =${result.stats.unchanged}`,
+      );
+    } else {
+      directoryIndex = await createIndex(
+        indexParam,
+        mode,
+        ignorePatterns,
+        isWalking,
+      );
+    }
+
+    if (!loc.isReadOnly) {
+      persistIndex(param, directoryIndex).then((success) => {
+        if (success) {
+          console.log('Index generated in folder: ' + param.path);
         }
-        return enhanceDirectoryIndex(
-          directoryIndex,
-          param.locationID,
-          param.path,
-        );
-      })
-      .catch((err) => {
-        console.log('Error creating index: ', err);
-        return undefined;
       });
+    }
+    return enhanceDirectoryIndex(directoryIndex, param.locationID, param.path);
   }
 
   function createDirectoryIndexWrapper(
@@ -444,7 +579,8 @@ export const LocationIndexContextProvider = ({
     extractText = false,
     ignorePatterns: Array<string> = [],
     enableWS = true,
-    // disableIndexing = true,
+    extractLinks?: boolean,
+    forceFullReindex = false,
   ): Promise<any> {
     const indexFilePath = getMetaIndexFilePath(param.path);
 
@@ -455,6 +591,8 @@ export const LocationIndexContextProvider = ({
       ignorePatterns,
       enableWS,
       isWalking,
+      extractLinks,
+      forceFullReindex,
     )
       .then((index) => {
         deignoreByWatcher(indexFilePath);
@@ -467,45 +605,94 @@ export const LocationIndexContextProvider = ({
       });
   }
 
-  function createLocationIndex(location: CommonLocation): Promise<boolean> {
-    if (location && !location.disableIndexing) {
-      return getLocationPath(location).then((locationPath) => {
-        const isCurrentLocation =
-          currentLocation && currentLocation.uuid === location.uuid;
-        isIndexing.current = location.name;
-        forceUpdate();
-        return createDirectoryIndexWrapper(
-          { path: locationPath, locationID: location.uuid },
-          location.fullTextIndex,
-          location.ignorePatternPaths,
-          enableWS,
-        )
-          .then((directoryIndex) => {
-            if (isCurrentLocation) {
-              // Load index only if current location
-              setIndex(directoryIndex);
-            }
-            isIndexing.current = undefined;
-            forceUpdate();
-            return true;
-          })
-          .catch((err) => {
-            isIndexing.current = undefined;
-            //lastError.current = err;
-            forceUpdate();
-            return false;
-          });
-      });
+  function createLocationIndex(
+    location: CommonLocation,
+    force = false,
+    fullTextIndex?: boolean,
+    extractLinks?: boolean,
+  ): Promise<boolean> {
+    walkingRef.current = true;
+    if (location) {
+      if (location.disableIndexing) {
+        if (force) {
+          openConfirmDialog(
+            t('core:confirm'),
+            t('core:indexDisabledConfirm'),
+            (result) => {
+              if (result) {
+                createLocationIndexInt(location, fullTextIndex, extractLinks);
+              }
+            },
+            'cancelIndexDisabledDialogTID',
+            'confirmIndexDisabledDialogTID',
+            'indexDisabledContentTID',
+          );
+        }
+      } else {
+        return createLocationIndexInt(location, fullTextIndex, extractLinks);
+      }
     }
     return Promise.resolve(false);
   }
 
-  async function createLocationsIndexes(extractText = true): Promise<boolean> {
-    for (let location of locations) {
+  function createLocationIndexInt(
+    location: CommonLocation,
+    fullTextIndex?: boolean,
+    extractLinks?: boolean,
+  ): Promise<boolean> {
+    if (location) {
+      isIndexing.current = location.uuid;
+      forceUpdate();
+    }
+    return getLocationPath(location).then((locationPath) => {
+      const isCurrentLocation =
+        currentLocation && currentLocation.uuid === location.uuid;
+      return createDirectoryIndexWrapper(
+        { path: locationPath, locationID: location.uuid },
+        fullTextIndex ?? location.fullTextIndex,
+        location.ignorePatternPaths,
+        enableWS,
+        extractLinks,
+      )
+        .then((directoryIndex) => {
+          // createDirectoryIndexWrapper returns `false` on error — guard
+          // against that sentinel wiping a previously good index (see
+          // readonly-location / slow-S3 failure paths).
+          if (
+            isCurrentLocation &&
+            Array.isArray(directoryIndex) &&
+            directoryIndex.length > 0
+          ) {
+            setIndex(directoryIndex);
+          }
+          isIndexing.current = undefined;
+          setIndexingProgress(undefined);
+          forceUpdate();
+          return true;
+        })
+        .catch((err) => {
+          isIndexing.current = undefined;
+          setIndexingProgress(undefined);
+          //lastError.current = err;
+          forceUpdate();
+          return false;
+        });
+    });
+  }
+
+  async function createLocationsIndexes(
+    extractText = true,
+    workSpace: TS.WorkSpace = undefined,
+  ): Promise<boolean> {
+    walkingRef.current = true;
+    const searchingLocation = workSpace
+      ? locations.filter((l) => l.workSpaceId === workSpace.uuid)
+      : locations;
+    for (let location of searchingLocation) {
       try {
         if (!location.disableIndexing) {
           const locationPath = await getLocationPath(location);
-          isIndexing.current = locationPath;
+          isIndexing.current = location.uuid; //locationPath
           forceUpdate();
           await createDirectoryIndexWrapper(
             { path: locationPath, locationID: location.uuid },
@@ -519,6 +706,7 @@ export const LocationIndexContextProvider = ({
       }
     }
     isIndexing.current = undefined;
+    setIndexingProgress(undefined);
     forceUpdate();
     console.log('Resolution is complete!');
     return true;
@@ -526,17 +714,9 @@ export const LocationIndexContextProvider = ({
 
   function clearDirectoryIndex(persist = false) {
     isIndexing.current = undefined;
+    setIndexingProgress(undefined);
     setIndex(undefined, persist ? currentLocation : undefined);
     forceUpdate();
-  }
-
-  function normalizePath(filePath) {
-    //filePath = filePath.replace(new RegExp("//+", "g"), "/");
-    filePath = filePath.replace('\\', '/');
-    if (filePath.indexOf('/') === 0) {
-      filePath = filePath.substr(1);
-    }
-    return decodeURIComponent(filePath);
   }
 
   function enhanceSearchEntry(
@@ -568,40 +748,6 @@ export const LocationIndexContextProvider = ({
     return undefined;
   }
 
-  /*function getURLforPath(path: string, location: CommonLocation) {
-    const api = objectStoreAPI.getS3Api(location);
-    return api.getSignedUrl('getObject', {
-      Bucket: location.bucketName,
-      Key: normalizePath(path),
-      Expires: 900,
-    });
-  }*/
-
-  /*function checkFileExist(
-    path: string,
-    location: CommonLocation,
-  ): Promise<boolean> {
-    if (location.type === locationType.TYPE_LOCAL) {
-      return window.electronIO.ipcRenderer.invoke('checkFileExist', path);
-    } else if (location.type === locationType.TYPE_CLOUD) {
-      const api = objectStoreAPI.getS3Api(location);
-      return api
-        .headObject({
-          Bucket: location.bucketName,
-          Key: normalizePath(path),
-        })
-        .promise()
-        .then(
-          () => true,
-          (err) => false,
-        );
-    } else if (location.type === locationType.TYPE_WEBDAV) {
-      // TODO
-    } else if (AppConfig.isCordova) {
-      return cordovaIO.checkFileExist(path);
-    }
-  }*/
-
   function enhanceSearchEntries(entries: TS.FileSystemEntry[]) {
     const promises: Promise<TS.FileSystemEntry>[] = entries.map(
       (entry: TS.FileSystemEntry) => enhanceSearchEntry(entry),
@@ -611,18 +757,140 @@ export const LocationIndexContextProvider = ({
     });
   }
 
-  function getSearchResults(
+  function getOrCreateEnhancedIndex(
+    searchIndex: TS.FileSystemEntry[],
+    showUnixHiddenEntries: boolean,
+  ) {
+    // Use cached enhanced index if the raw index hasn't changed
+    if (enhancedIndex.current && searchIndex === index.current) {
+      return enhancedIndex.current;
+    }
+    const prepared = prepareIndex(
+      searchIndex,
+      tagDelimiter,
+      showUnixHiddenEntries,
+    );
+    // Only cache if this is the current location's index
+    if (searchIndex === index.current) {
+      enhancedIndex.current = prepared;
+    }
+    return prepared;
+  }
+
+  function getOrCreateFuse(entries: any[]) {
+    // Fuse cache tied to the specific entries array — otherwise
+    // searchAllLocations would reuse the current location's Fuse when
+    // iterating over other locations, and text search would return wrong
+    // results (Fuse's internal index is bound to the collection at
+    // construction).
+    if (fuseInstance.current && fuseEntriesRef.current === entries) {
+      return fuseInstance.current;
+    }
+    const fuse = new Fuse(entries, fuseOptions);
+    // Only cache when this is the current location's prepared index —
+    // otherwise each searchAllLocations iteration would overwrite the cache
+    if (entries === enhancedIndex.current) {
+      fuseInstance.current = fuse;
+      fuseEntriesRef.current = entries;
+    }
+    return fuse;
+  }
+
+  function loadFullTextIfNeeded(
+    searchIndex: TS.FileSystemEntry[],
+  ): Promise<void> {
+    // Only load fulltext for the current location's index, and only once
+    if (
+      fullTextLoaded.current ||
+      searchIndex !== index.current ||
+      !currentLocation
+    ) {
+      return Promise.resolve();
+    }
+    if (fullTextLoadPromise.current) {
+      return fullTextLoadPromise.current;
+    }
+
+    const loadPromise = (async () => {
+      try {
+        const locationPath = await getLocationPath(currentLocation);
+        const ftPath = getMetaFullTextFilePath(locationPath);
+        // loadTextFilePromise returns undefined for non-existent files
+        // (Electron main swallows ENOENT) — no separate existence check
+        // needed, which saves a round-trip on S3/cloud locations.
+        const ftContent = await currentLocation.loadTextFilePromise(ftPath);
+        if (ftContent) {
+          const trimmed = ftContent.trim();
+          let ftMap: Record<string, string>;
+          if (trimmed.startsWith('{') && !trimmed.startsWith('{"p"')) {
+            try {
+              ftMap = JSON.parse(trimmed);
+            } catch (e) {
+              ftMap = parseFullTextJsonl(ftContent);
+            }
+          } else {
+            ftMap = parseFullTextJsonl(ftContent);
+          }
+
+          if (ftMap && typeof ftMap === 'object') {
+            // Fulltext stores relative paths; index entries have absolute
+            // paths after enhanceDirectoryIndex. Convert keys to absolute
+            // so mergeFullTextIntoIndex matches by entry.path.
+            // Defensive: legacy tsft.jsonl files (from before persist
+            // normalization) may contain absolute keys — cleanRootPath
+            // first so the subsequent join doesn't double the prefix.
+            const sep = currentLocation.getDirSeparator();
+            const absoluteFtMap: Record<string, string> = {};
+            for (const [storedKey, content] of Object.entries(ftMap)) {
+              const relPath = cleanRootPath(storedKey, locationPath, sep);
+              const absPath = joinPaths(sep, locationPath, relPath);
+              absoluteFtMap[absPath] = content as string;
+            }
+            fullTextMap.current = absoluteFtMap;
+            mergeFullTextIntoIndex(searchIndex, absoluteFtMap);
+            // Invalidate caches that were built without textContent
+            enhancedIndex.current = undefined;
+            fuseInstance.current = undefined;
+            fuseEntriesRef.current = undefined;
+          }
+        }
+      } catch (e: any) {
+        // tsft.jsonl may not exist (no fulltext indexing enabled)
+        console.log('No fulltext index found (tsft.jsonl)', e?.message || e);
+      }
+      fullTextLoaded.current = true;
+    })();
+
+    fullTextLoadPromise.current = loadPromise;
+    return loadPromise;
+  }
+
+  async function getSearchResults(
     searchIndex: TS.FileSystemEntry[],
     searchQuery: TS.SearchQuery,
-    //isCloudLocation: boolean,
   ): Promise<TS.FileSystemEntry[]> {
-    return Search.searchLocationIndex(searchIndex, searchQuery)
+    // Lazy-load fulltext index only when text search is needed
+    const hasTextQuery =
+      searchQuery.textQuery && searchQuery.textQuery.length > 1;
+    if (hasTextQuery && !fullTextLoaded.current) {
+      await loadFullTextIfNeeded(searchIndex);
+    }
+
+    const prepared = getOrCreateEnhancedIndex(
+      searchIndex,
+      searchQuery.showUnixHiddenEntries,
+    );
+    // Build Fuse lazily only when text query is present
+    const fuse = hasTextQuery ? getOrCreateFuse(prepared) : undefined;
+
+    return Search.searchLocationIndex(searchIndex, searchQuery, tagDelimiter, {
+      preparedIndex: prepared,
+      fuseInstance: fuse,
+    })
       .then((searchResults) => {
-        //enhanceSearchEntries(searchResults);
         return searchResults;
       })
       .catch((err) => {
-        // dispatch(AppActions.hideNotifications());
         console.log('Searching Index failed: ', err);
         showNotification(
           t('core:searchingFailed') + ' ' + err.message,
@@ -634,9 +902,8 @@ export const LocationIndexContextProvider = ({
   }
 
   function searchLocationIndex(searchQuery: TS.SearchQuery) {
-    walking = true;
+    walkingRef.current = true;
     if (!currentLocation) {
-      //showNotification(t('core:pleaseOpenLocation'), 'warning', true);
       searchAllLocations(searchQuery);
       return;
     }
@@ -666,25 +933,52 @@ export const LocationIndexContextProvider = ({
         ? currentTime - indexLoadedOn.current
         : 0;
 
+      // On readonly locations a usable existing index (in memory or on
+      // disk) is reused as-is — we cannot persist a fresh one anyway, and
+      // a walker error would wipe the good index via the `false` sentinel
+      // from createDirectoryIndexWrapper.
+      const hasUsableIndex = index.current && index.current.length > 0;
+      const skipReindexOnReadOnly =
+        currentLocation.isReadOnly && hasUsableIndex;
+
       if (
-        searchQuery.forceIndexing ||
-        (!currentLocation.disableIndexing &&
-          (!index.current ||
-            index.current.length < 1 ||
-            indexAge > maxIndexAge.current))
+        !skipReindexOnReadOnly &&
+        (searchQuery.forceIndexing ||
+          (!currentLocation.disableIndexing &&
+            (!index.current ||
+              index.current.length < 1 ||
+              indexAge > maxIndexAge.current)))
       ) {
         console.log('Start creating index for : ' + currentPath);
-        const newIndex = await createDirectoryIndexWrapper(
-          {
-            path: currentPath,
-            locationID: currentLocation.uuid,
-            ...(isCloudLocation && { bucketName: currentLocation.bucketName }),
-          },
-          currentLocation.fullTextIndex,
-          currentLocation.ignorePatternPaths,
-          enableWS,
-        );
-        setIndex(newIndex);
+        // Surface the indexing snackbar (with live progress + cancel)
+        // while the walker runs. Without this, search-triggered re-index
+        // on Electron + S3 walks silently because PageNotification gates
+        // on `isIndexing !== undefined`.
+        isIndexing.current = currentLocation.uuid;
+        forceUpdate();
+        try {
+          const newIndex = await createDirectoryIndexWrapper(
+            {
+              path: currentPath,
+              locationID: currentLocation.uuid,
+              ...(isCloudLocation && {
+                bucketName: currentLocation.bucketName,
+              }),
+            },
+            currentLocation.fullTextIndex,
+            currentLocation.ignorePatternPaths,
+            enableWS,
+            undefined,
+            !!searchQuery.forceIndexing,
+          );
+          if (Array.isArray(newIndex) && newIndex.length > 0) {
+            setIndex(newIndex);
+          }
+        } finally {
+          isIndexing.current = undefined;
+          setIndexingProgress(undefined);
+          forceUpdate();
+        }
       }
       getSearchResults(index.current, searchQuery).then((results) => {
         setSearchResults(results);
@@ -695,70 +989,90 @@ export const LocationIndexContextProvider = ({
     }, 50);
   }
 
-  function searchAllLocations(searchQuery: TS.SearchQuery) {
+  function searchAllLocations(
+    searchQuery: TS.SearchQuery,
+    workSpace: TS.WorkSpace = undefined,
+  ) {
     console.time('globalSearch');
     setSearchResults([]);
     showNotification(t('core:searching'), 'default', false, 'TIDSearching');
 
-    walking = true;
-    //let searchResultCount = 0;
+    walkingRef.current = true;
     let searchResults = [];
     let maxSearchResultReached = false;
+    const searchingLocations = workSpace
+      ? locations.filter((l) => l.workSpaceId === workSpace.uuid)
+      : locations;
 
-    const result = locations.reduce(
-      (accumulatorPromise, location) =>
-        accumulatorPromise.then(async () => {
-          // cancel search if max search result count reached
-          if (searchResults.length >= searchQuery.maxSearchResults) {
-            maxSearchResultReached = true;
-            return Promise.resolve();
-          }
-          const nextPath = await getLocationPath(location);
-          const isCloudLocation = location.type === locationType.TYPE_CLOUD;
-          let directoryIndex = await loadIndexFromDisk(nextPath, location.uuid);
-          //console.log('Searching in: ' + nextPath);
-          showNotification(
-            t('core:searching') + ' ' + location.name,
-            'default',
-            false,
-            'TIDSearching',
-          );
+    // Sequential on mobile (memory), parallel on desktop/web
+    const CONCURRENCY = AppConfig.isNativeMobile ? 1 : 3;
 
-          if (
-            !location.disableIndexing &&
-            (!directoryIndex ||
-              directoryIndex.length < 1 ||
-              searchQuery.forceIndexing)
-            // || (!location.disableIndexing && !indexExist)
-          ) {
-            console.log('Creating index for : ' + nextPath);
-            directoryIndex = await createDirectoryIndexWrapper(
-              {
-                path: nextPath,
-                locationID: location.uuid,
-                ...(isCloudLocation && { bucketName: location.bucketName }),
-              },
-              location.fullTextIndex,
-              location.ignorePatternPaths,
-              enableWS,
-            );
-          }
-          return getSearchResults(directoryIndex, searchQuery).then(
-            (results) => {
-              //searchResultCount += results.length;
-              if (results.length > 0) {
-                searchResults = [...searchResults, ...results];
-                appendSearchResults(results);
-              }
-              //hideNotifications();
-              return true;
-            },
-          );
-        }),
-      Promise.resolve(),
+    const searchSingleLocation = async (location: CommonLocation) => {
+      if (searchResults.length >= searchQuery.maxSearchResults) {
+        maxSearchResultReached = true;
+        return;
+      }
+      const nextPath = await getLocationPath(location);
+      const isCloudLocation = location.type === locationType.TYPE_CLOUD;
+      let directoryIndex = await loadIndexFromDisk(nextPath, location.uuid);
+      showNotification(
+        t('core:searching') + ' ' + location.name,
+        'default',
+        false,
+        'TIDSearching',
+      );
+
+      if (
+        !location.disableIndexing &&
+        (!directoryIndex ||
+          directoryIndex.length < 1 ||
+          searchQuery.forceIndexing)
+      ) {
+        console.log('Creating index for : ' + nextPath);
+        // Set per-location so the snackbar shows the currently-active
+        // name; the single global clear happens after the whole batch
+        // below (CONCURRENCY > 1 means a per-location clear would hide
+        // the snackbar while other walkers are still running).
+        isIndexing.current = location.uuid;
+        forceUpdate();
+        directoryIndex = await createDirectoryIndexWrapper(
+          {
+            path: nextPath,
+            locationID: location.uuid,
+            ...(isCloudLocation && { bucketName: location.bucketName }),
+          },
+          location.fullTextIndex,
+          location.ignorePatternPaths,
+          enableWS,
+          undefined,
+          !!searchQuery.forceIndexing,
+        );
+      }
+      const results = await getSearchResults(directoryIndex, searchQuery);
+      if (results.length > 0) {
+        searchResults = [...searchResults, ...results];
+        appendSearchResults(results);
+      }
+    };
+
+    // Execute with concurrency limiting
+    const tasks = searchingLocations.map(
+      (loc) => () => searchSingleLocation(loc),
     );
+    const batchPromises = [];
+    for (let i = 0; i < tasks.length; i += CONCURRENCY) {
+      const batch = tasks.slice(i, i + CONCURRENCY);
+      batchPromises.push(batch);
+    }
 
-    result
+    batchPromises
+      .reduce(
+        (acc, batch) =>
+          acc.then(() =>
+            Promise.allSettled(batch.map((task) => task())).then(() => {}),
+          ),
+        Promise.resolve(),
+      )
       .then(() => {
         enhanceSearchEntries(searchResults);
         console.timeEnd('globalSearch');
@@ -778,11 +1092,16 @@ export const LocationIndexContextProvider = ({
       .catch((e) => {
         console.timeEnd('globalSearch');
         console.log('Global search failed!', e);
+      })
+      .finally(() => {
+        isIndexing.current = undefined;
+        setIndexingProgress(undefined);
+        forceUpdate();
       });
   }
 
   /**
-   * persistIndex based on location - used for S3 and cordova only
+   * persistIndex based on location - used for S3 and Capacitor only
    * for native used common-platform/indexer.js -> persistIndex instead
    * @param param
    * @param directoryIndex
@@ -794,20 +1113,53 @@ export const LocationIndexContextProvider = ({
     } else {
       directoryPath = param;
     }
+    const cLocation = findLocation(param?.locationID);
+    // Don't persist index for directories that no longer exist —
+    // would otherwise recreate deleted folders via the .ts subdir
+    const parentExists = await cLocation.checkDirExist(directoryPath);
+    if (!parentExists) {
+      console.log(
+        'Skipping index persist — directory does not exist: ' + directoryPath,
+      );
+      return false;
+    }
     const metaDirectory = getMetaDirectoryPath(directoryPath);
-    const exist = await currentLocation.checkDirExist(metaDirectory);
+    const exist = await cLocation.checkDirExist(metaDirectory);
     try {
       if (!exist) {
-        await currentLocation.createDirectoryPromise(metaDirectory); // todo platformFacade?
+        await cLocation.createDirectoryPromise(metaDirectory);
       }
-      const folderIndexPath =
-        metaDirectory +
-        currentLocation?.getDirSeparator() +
-        AppConfig.folderIndexFile; // getMetaIndexFilePath(directoryPath);
-      return currentLocation
+      const sep = cLocation?.getDirSeparator();
+      const folderIndexPath = metaDirectory + sep + AppConfig.folderIndexFile;
+      const folderFullTextPath =
+        metaDirectory + sep + AppConfig.folderFullTextFile;
+
+      // Persisted tsi.json / tsft.jsonl must store paths relative to the
+      // location root. Callers may hand us either relative entries (fresh
+      // output of createIndex / createIncrementalIndex) or the enhanced
+      // absolute-path entries cached in index.current (reflectCreate/
+      // reflectDelete/reflectUpdate/reflectUpdateSidecarMeta all persist
+      // index.current). cleanRootPath is a no-op when the root isn't a
+      // prefix, so running it unconditionally is safe for both inputs.
+      // Split: strip textContent from main index, collect into fulltext map
+      const fullTextEntries: Record<string, string> = {};
+      let hasFullText = false;
+      const strippedIndex = directoryIndex.map((entry: any) => {
+        if (!entry) return entry;
+        const relPath = cleanRootPath(entry.path, directoryPath, sep);
+        if (entry.textContent) {
+          fullTextEntries[relPath] = entry.textContent;
+          hasFullText = true;
+          const { textContent, ...rest } = entry;
+          return { ...rest, path: relPath };
+        }
+        return entry.path === relPath ? entry : { ...entry, path: relPath };
+      });
+
+      const saveIndex = cLocation
         .saveTextFilePromise(
           { ...param, path: folderIndexPath },
-          JSON.stringify(directoryIndex), // relativeIndex),
+          JSON.stringify(strippedIndex),
           true,
         )
         .then(() => {
@@ -819,6 +1171,28 @@ export const LocationIndexContextProvider = ({
         .catch((err) => {
           console.log('Error saving the index for ' + folderIndexPath, err);
         });
+
+      if (hasFullText) {
+        const saveFullText = cLocation
+          .saveTextFilePromise(
+            { ...param, path: folderFullTextPath },
+            serializeFullTextJsonl(fullTextEntries),
+            true,
+          )
+          .then(() => {
+            console.log('Fulltext index persisted to ' + folderFullTextPath);
+          })
+          .catch((err) => {
+            console.log(
+              'Error saving fulltext index for ' + folderFullTextPath,
+              err,
+            );
+          });
+        return Promise.all([saveIndex, saveFullText]).then(
+          ([indexResult]) => indexResult,
+        );
+      }
+      return saveIndex;
     } catch (e) {
       console.log('Error saving the index', e);
     }
@@ -830,17 +1204,23 @@ export const LocationIndexContextProvider = ({
     folderPath,
   ): TS.FileSystemEntry[] {
     const loc = findLocation(locationID);
-    return directoryIndex.map((i: TS.FileSystemEntry) => ({
-      ...i,
-      locationID,
-      path: joinPaths(
-        loc.getDirSeparator(),
-        folderPath,
-        AppConfig.isWin
-          ? i.path.replaceAll('/', loc.getDirSeparator())
-          : i.path, //toPlatformPath()
-      ),
-    }));
+    const sep = loc ? loc.getDirSeparator() : AppConfig.dirSeparator;
+    return directoryIndex.map((i: TS.FileSystemEntry) => {
+      // Defensive: some legacy tsi.json files (from before the persist
+      // normalization was in place) contain absolute paths. Running
+      // cleanRootPath first yields the relative form in both cases and
+      // avoids a double-join like "/a/b/c" + "/a/b/c/file" → "/a/b/c/a/b/c/file".
+      const relPath = cleanRootPath(i.path, folderPath, sep);
+      return {
+        ...i,
+        locationID,
+        path: joinPaths(
+          sep,
+          folderPath,
+          AppConfig.isWin ? relPath.replaceAll('/', sep) : relPath,
+        ),
+      };
+    });
   }
 
   function loadIndexFromDisk(
@@ -858,7 +1238,15 @@ export const LocationIndexContextProvider = ({
         .then((indexFile: TS.FileSystemEntry) => {
           if (indexFile) {
             const indexAge = new Date().getTime() - indexFile.lmdt;
-            if (loc.disableIndexing || indexAge < maxIndexAge.current) {
+            // Read-only locations can never refresh their on-disk index, so
+            // the disk copy is the best (and only) source — bypass the age
+            // check. Otherwise a stale tsi.json forces a walker fallback
+            // that cannot persist and risks returning an empty/failed state.
+            if (
+              loc.isReadOnly ||
+              loc.disableIndexing ||
+              indexAge < maxIndexAge.current
+            ) {
               return loc
                 .loadTextFilePromise(folderIndexPath)
                 .then((jsonContent) => {
@@ -883,31 +1271,11 @@ export const LocationIndexContextProvider = ({
     return Promise.resolve(undefined);
   }
 
-  /*const context = useMemo(() => {
-    return {
-      //index: index.current,
-      indexLoadedOn: indexLoadedOn.current,
-      isIndexing: isIndexing.current,
-      cancelDirectoryIndexing,
-      createLocationIndex,
-      createLocationsIndexes,
-      clearDirectoryIndex,
-      searchLocationIndex,
-      searchAllLocations,
-      setIndex,
-      getIndex,
-      //reflectDeleteEntry,
-      //reflectDeleteEntries,
-      //reflectCreateEntry,
-      //reflectRenameEntry,
-      //indexUpdateSidecarTags,
-      reflectUpdateSidecarMeta,
-    };
-  }, [currentLocation, index.current, isIndexing.current, enableWS]);*/
-
   const context = {
     indexLoadedOn: indexLoadedOn.current,
+    indexExpired,
     isIndexing: isIndexing.current,
+    indexingProgress,
     cancelDirectoryIndexing,
     createLocationIndex,
     createLocationsIndexes,
@@ -916,6 +1284,7 @@ export const LocationIndexContextProvider = ({
     searchAllLocations,
     setIndex,
     getIndex,
+    getLastIndex,
     reflectUpdateSidecarMeta,
     findLinks,
     checkIndexExist,

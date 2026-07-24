@@ -17,7 +17,7 @@
  */
 
 import AppConfig from '-/AppConfig';
-import TooltipTS from '-/components/Tooltip';
+import TsTooltip from '-/components/TsTooltip';
 import { isDesktopMode } from '-/reducers/settings';
 import { Typography } from '@mui/material';
 import IconButton, { IconButtonProps } from '@mui/material/IconButton';
@@ -38,7 +38,7 @@ function TsToolbarButton(props: TSIconButtonProps) {
     tooltip,
     title = '‎',
     disabled,
-    style,
+    sx: style,
     // showTitle = false,
     ...restProps
   } = props;
@@ -49,35 +49,28 @@ function TsToolbarButton(props: TSIconButtonProps) {
     <IconButton
       size={desktopMode ? 'medium' : 'large'}
       disabled={disabled}
-      style={{
-        borderRadius: AppConfig.defaultCSSRadius,
-        padding: 8,
-        paddingLeft: 6,
-        paddingRight: 6,
-        display: 'block',
-        ...style,
-      }}
       sx={{
         '& .MuiSvgIcon-root ': {
           width: showTitle ? '0.9em' : '1em',
           heigh: showTitle ? '0.9em' : '1em',
         },
-        // border: '1px solid transparent',
-        // '&:hover': {
-        //   border: '1px solid ' + alpha(theme.palette.divider, 0.9),
-        //   borderRadius: AppConfig.defaultCSSRadius,
-        // },
+        borderRadius: AppConfig.defaultCSSRadius,
+        padding: '8px',
+        paddingLeft: '6px',
+        paddingRight: '6px',
+        display: 'block',
+        ...style,
       }}
       {...restProps}
     >
       {children}
       {showTitle && (
         <Typography
-          style={{
+          sx={{
             display: 'block',
             fontSize: 11,
-            marginTop: -5,
-            width: 45,
+            marginTop: '-5px',
+            width: '45px',
             padding: 0,
             whiteSpace: 'nowrap',
             textOverflow: 'ellipsis',
@@ -90,9 +83,9 @@ function TsToolbarButton(props: TSIconButtonProps) {
     </IconButton>
   );
   return tooltip && !disabled ? (
-    <TooltipTS keyBinding={keyBinding} title={tooltip}>
+    <TsTooltip keyBinding={keyBinding} title={tooltip}>
       {iconButton}
-    </TooltipTS>
+    </TsTooltip>
   ) : (
     iconButton
   );

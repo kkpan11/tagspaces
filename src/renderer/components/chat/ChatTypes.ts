@@ -16,7 +16,11 @@
  *
  */
 
-export type AIProviders = 'ollama' | 'node-lama' | 'chatgpt';
+export type AIProviders =
+  | 'ollama'
+  | 'openai-compatible'
+  | 'node-lama'
+  | 'chatgpt';
 export type ChatRole = 'user' | 'system' | 'assistant' | 'tool';
 export type ChatMode =
   | 'summary'
@@ -32,6 +36,7 @@ export type AIProvider = {
   enable: boolean;
   url: string;
   //alive?: boolean;
+  authKey?: string; // optional bearer token for OpenAI-compatible/cloud endpoints
   defaultImageModel?: string;
   defaultTextModel?: string;
 };

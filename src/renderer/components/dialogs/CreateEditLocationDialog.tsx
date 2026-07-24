@@ -17,7 +17,15 @@
  */
 
 import AppConfig from '-/AppConfig';
-import { ExpandIcon, IDIcon, RemoveIcon } from '-/components/CommonIcons';
+import {
+  CheckIcon,
+  ExpandIcon,
+  IDIcon,
+  PasswordIcon,
+  RemoveIcon,
+  VisibilityOffIcon,
+  VisibilityOnIcon,
+} from '-/components/CommonIcons';
 import DraggablePaper from '-/components/DraggablePaper';
 import { BetaLabel, ProLabel, ProTooltip } from '-/components/HelperComponents';
 import InfoIcon from '-/components/InfoIcon';
@@ -25,25 +33,25 @@ import TsButton from '-/components/TsButton';
 import TsIconButton from '-/components/TsIconButton';
 import TsSelect from '-/components/TsSelect';
 import TsTextField from '-/components/TsTextField';
-import ConfirmDialog from '-/components/dialogs/ConfirmDialog';
 import MaxLoopsSelect from '-/components/dialogs/MaxLoopsSelect';
 import ObjectStoreForm from '-/components/dialogs/components/ObjectStoreForm';
 import TsDialogActions from '-/components/dialogs/components/TsDialogActions';
 import TsDialogTitle from '-/components/dialogs/components/TsDialogTitle';
 import WebdavForm from '-/components/dialogs/components/WebdavForm';
+import WorkSpacesDropdown from '-/components/dialogs/components/WorkSpacesDropdown';
 import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
 import { useLocationIndexContext } from '-/hooks/useLocationIndexContext';
 import { useNotificationContext } from '-/hooks/useNotificationContext';
 import { useTagGroupsLocationContext } from '-/hooks/useTagGroupsLocationContext';
 import { Pro } from '-/pro';
-import { getPersistTagsInSidecarFile, isDevMode } from '-/reducers/settings';
+import {
+  getPersistTagsInSidecarFile,
+  isDevMode,
+  isHideProFeatures,
+} from '-/reducers/settings';
 import { TS } from '-/tagspaces.namespace';
 import { CommonLocation } from '-/utils/CommonLocation';
 import useFirstRender from '-/utils/useFirstRender';
-import CheckIcon from '@mui/icons-material/Check';
-import PasswordIcon from '@mui/icons-material/Password';
-import Visibility from '@mui/icons-material/Visibility';
-import VisibilityOff from '@mui/icons-material/VisibilityOff';
 import {
   Accordion,
   AccordionDetails,
@@ -62,7 +70,7 @@ import ListItem from '@mui/material/ListItem';
 import ListItemIcon from '@mui/material/ListItemIcon';
 import ListItemText from '@mui/material/ListItemText';
 import Paper from '@mui/material/Paper';
-import Switch from '@mui/material/Switch';
+import TsSwitch from '-/components/TsSwitch';
 import ToggleButtonGroup from '@mui/material/ToggleButtonGroup';
 import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
@@ -70,7 +78,7 @@ import useMediaQuery from '@mui/material/useMediaQuery';
 import { locationType } from '@tagspaces/tagspaces-common/misc';
 import { getUuid } from '@tagspaces/tagspaces-common/utils-io';
 import CryptoJS from 'crypto-js';
-import React, { ChangeEvent, useEffect, useState } from 'react';
+import React, { ChangeEvent, useContext, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSelector } from 'react-redux';
 import TsToggleButton from '../TsToggleButton';
@@ -85,22 +93,26 @@ interface Props {
 function CreateEditLocationDialog(props: Props) {
   const { t } = useTranslation();
 
-  const { showNotification } = useNotificationContext();
+  const { showNotification, openConfirmDialog } = useNotificationContext();
   const { createLocationIndex } = useLocationIndexContext();
   const { loadLocationDataPromise } = useTagGroupsLocationContext();
-  const { addLocation, editLocation, selectedLocation, findLocation } =
-    useCurrentLocationContext();
+  const {
+    addLocation,
+    editLocation,
+    selectedLocation,
+    findLocation,
+    locations,
+  } = useCurrentLocationContext();
   const isPersistTagsInSidecar = useSelector(getPersistTagsInSidecarFile);
   //const locations: Array<CommonLocation> = useSelector(getLocations);
   const devMode: boolean = useSelector(isDevMode);
+  const hideProFeatures: boolean = useSelector(isHideProFeatures);
   const IgnorePatternDialog =
     Pro && Pro.UI ? Pro.UI.IgnorePatternDialog : false;
   /*const { location } = props;*/
   const [showSecretAccessKey, setShowSecretAccessKey] =
     useState<boolean>(false);
   const [showEncryptionKey, setShowEncryptionKey] = useState<boolean>(false);
-  const [isConfirmEncryptionChanged, setConfirmEncryptionChanged] =
-    useState<boolean>(false);
   const [showPassword, setShowPassword] = useState<boolean>(false);
   const [errorTextPath, setErrorTextPath] = useState<boolean>(false);
   const [errorTextName, setErrorTextName] = useState<boolean>(false);
@@ -166,6 +178,9 @@ function CreateEditLocationDialog(props: Props) {
   const [isReadOnly, setIsReadOnly] = useState<boolean>(
     selectedLocation ? selectedLocation.isReadOnly : false,
   );
+  const [workSpaceId, setWorkSpaceId] = useState<string>(
+    selectedLocation ? selectedLocation.workSpaceId || '' : '',
+  );
   const [watchForChanges, setWatchForChanges] = useState<boolean>(
     selectedLocation ? selectedLocation.watchForChanges : false,
   );
@@ -181,6 +196,9 @@ function CreateEditLocationDialog(props: Props) {
     );
   const [fullTextIndex, setFullTextIndex] = useState<boolean>(
     selectedLocation ? selectedLocation.fullTextIndex : false,
+  );
+  const [extractLinks, setExtractLinks] = useState<boolean>(
+    selectedLocation ? selectedLocation.extractLinks : false,
   );
   const [accessKeyId, setAccessKeyId] = useState<string>(
     selectedLocation ? selectedLocation.accessKeyId : '',
@@ -232,11 +250,6 @@ function CreateEditLocationDialog(props: Props) {
 
   const [isIgnorePatternDialogOpen, setIgnorePatternDialogOpen] =
     useState<boolean>(false);
-
-  const [
-    isFullTextIndexConfirmDialogOpened,
-    setFullTextIndexConfirmDialogOpened,
-  ] = useState<boolean>(false);
 
   const firstRender = useFirstRender();
 
@@ -290,7 +303,7 @@ function CreateEditLocationDialog(props: Props) {
     if (!location) {
       setNewUuid(newId);
     } else {
-      showNotification('Location with this ID already exists', 'error');
+      showNotification(t('core:locationIdAlreadyExists'), 'error');
     }
   }
   /**
@@ -387,7 +400,18 @@ function CreateEditLocationDialog(props: Props) {
       selectedLocation &&
       encryptionKey !== selectedLocation.encryptionKey
     ) {
-      setConfirmEncryptionChanged(true);
+      openConfirmDialog(
+        t('core:confirm'),
+        t('core:confirmEncryptionChanged'),
+        (result) => {
+          if (result) {
+            onConfirm();
+          }
+        },
+        'cancelConfirmEncryptionChanged',
+        'confirmConfirmEncryptionChanged',
+        'confirmConfirmEncryptionChangedContent',
+      );
     } else {
       onConfirm();
     }
@@ -399,6 +423,7 @@ function CreateEditLocationDialog(props: Props) {
       if (type === locationType.TYPE_LOCAL) {
         loc = {
           uuid: selectedLocation ? selectedLocation.uuid : newuuid,
+          workSpaceId,
           type,
           name,
           path,
@@ -409,6 +434,7 @@ function CreateEditLocationDialog(props: Props) {
           reloadOnFocus,
           disableThumbnailGeneration,
           fullTextIndex,
+          extractLinks,
           watchForChanges,
           maxIndexAge,
           ignorePatternPaths,
@@ -417,6 +443,7 @@ function CreateEditLocationDialog(props: Props) {
       } else if (type === locationType.TYPE_WEBDAV) {
         loc = {
           uuid: selectedLocation ? selectedLocation.uuid : newuuid,
+          workSpaceId,
           type,
           authType,
           name,
@@ -430,6 +457,7 @@ function CreateEditLocationDialog(props: Props) {
           reloadOnFocus,
           disableThumbnailGeneration,
           fullTextIndex,
+          extractLinks,
           watchForChanges,
           maxIndexAge,
           ignorePatternPaths,
@@ -438,6 +466,7 @@ function CreateEditLocationDialog(props: Props) {
       } else if (type === locationType.TYPE_CLOUD) {
         loc = {
           uuid: selectedLocation ? selectedLocation.uuid : newuuid,
+          workSpaceId,
           type,
           name: storeName,
           path: storePath,
@@ -455,6 +484,7 @@ function CreateEditLocationDialog(props: Props) {
           reloadOnFocus,
           disableThumbnailGeneration,
           fullTextIndex,
+          extractLinks,
           watchForChanges: false,
           maxIndexAge,
           maxLoops,
@@ -467,20 +497,27 @@ function CreateEditLocationDialog(props: Props) {
         loc = { ...loc, persistTagsInSidecarFile };
       }
 
+      let editedLocation;
       if (!selectedLocation) {
-        const commonLocation = new CommonLocation(loc);
-        getMetaLocationId(commonLocation).then((uuid) => {
+        const editedLocation = new CommonLocation(loc);
+        getMetaLocationId(editedLocation).then((uuid) => {
           if (uuid) {
-            commonLocation.uuid = uuid;
+            editedLocation.uuid = uuid;
           }
-          addLocation(commonLocation);
+          addLocation(editedLocation);
         });
       } else {
         loc.newuuid = newuuid;
-        editLocation(new CommonLocation(loc));
-      } /*else {
-        console.log('No addLocation or editLocation props exist');
-      }*/
+        editedLocation = new CommonLocation(loc);
+        editLocation(editedLocation);
+      }
+      if (
+        selectedLocation &&
+        JSON.stringify(selectedLocation.ignorePatternPaths) !==
+          JSON.stringify(loc.ignorePatternPaths)
+      ) {
+        createLocationIndex(editedLocation);
+      }
       onClose();
       // this.props.resetState('createLocationDialogKey');
     }
@@ -565,16 +602,24 @@ function CreateEditLocationDialog(props: Props) {
     locationTypeName = t('core:objectStorage');
   }
 
+  const workSpacesContext = Pro?.contextProviders?.WorkSpacesContext
+    ? useContext<TS.WorkSpacesContextData>(
+        Pro.contextProviders.WorkSpacesContext,
+      )
+    : undefined;
+  const workSpaces = workSpacesContext?.getWorkSpaces() ?? [];
+
   const okButton = (
     <TsButton
       disabled={disableConfirmButton()}
       onClick={preConfirm}
       data-tid="confirmLocationCreation"
       variant="contained"
-      style={{
-        // @ts-ignore
-        WebkitAppRegion: 'no-drag',
-      }}
+      style={
+        {
+          WebkitAppRegion: 'no-drag',
+        } as React.CSSProperties & { WebkitAppRegion?: string }
+      }
     >
       {t('core:ok')}
     </TsButton>
@@ -611,34 +656,17 @@ function CreateEditLocationDialog(props: Props) {
         actionSlot={okButton}
       ></TsDialogTitle>
       <DialogContent
-        style={{
-          overflow: 'auto',
-          minHeight: 200,
-          padding: 8,
+        sx={{
+          overflowY: 'auto',
+          overflowX: 'hidden',
+          minHeight: '200px',
+          padding: '8px',
         }}
       >
-        <ConfirmDialog
-          open={isConfirmEncryptionChanged}
-          onClose={() => {
-            setConfirmEncryptionChanged(false);
-          }}
-          title={t('core:confirm')}
-          content={t('core:confirmEncryptionChanged')}
-          confirmCallback={(result) => {
-            if (result) {
-              onConfirm();
-            } else {
-              setConfirmEncryptionChanged(false);
-            }
-          }}
-          cancelDialogTID="cancelConfirmEncryptionChanged"
-          confirmDialogTID="confirmConfirmEncryptionChanged"
-          confirmDialogContentTID="confirmConfirmEncryptionChangedContent"
-        />
         {selectedLocation && (
           <>
             <Typography
-              style={{ display: 'block', marginTop: -5, marginLeft: 15 }}
+              sx={{ display: 'block', marginTop: '-5px', marginLeft: '15px' }}
               variant="overline"
             >
               {t('core:locationType') + ': ' + locationTypeName}
@@ -646,7 +674,7 @@ function CreateEditLocationDialog(props: Props) {
           </>
         )}
         <Accordion defaultExpanded>
-          <AccordionDetails style={{ paddingTop: 16 }}>
+          <AccordionDetails sx={{ paddingTop: '16px' }}>
             <FormGroup>
               {!selectedLocation && (
                 <FormControl disabled={disableLocationTypeSwitch} fullWidth>
@@ -672,26 +700,34 @@ function CreateEditLocationDialog(props: Props) {
                       value={locationType.TYPE_CLOUD}
                       data-tid="cloudLocationTID"
                     >
-                      {t('core:objectStorage') + ' (AWS, MinIO, Wasabi,...)'}
+                      {t('core:objectStorage') +
+                        ' (AWS S3, CloudFlare R2, Wasabi,...)'}
                     </MenuItem>
-                    {Pro && devMode && (
-                      <MenuItem
-                        key="TYPE_WEBDAV"
-                        value={locationType.TYPE_WEBDAV}
-                        data-tid="webdavLocationTID"
-                      >
-                        {t('core:webdavLocation') + ' (experimental)'}
-                      </MenuItem>
-                    )}
                   </TsSelect>
                 </FormControl>
               )}
               {content}
+              <WorkSpacesDropdown
+                disabled={!Pro}
+                dataTid="locationWorkspaceTID"
+                workSpaceId={workSpaceId}
+                setWorkSpaceId={setWorkSpaceId}
+                workSpaces={workSpaces}
+                label={
+                  <>
+                    {t('core:workspace')}
+                    <ProLabel />
+                  </>
+                }
+                onOpenNewWorkspace={() =>
+                  workSpacesContext.openNewWorkspaceDialog()
+                }
+              />
               <FormControlLabel
                 labelPlacement="start"
-                style={{ justifyContent: 'space-between', marginLeft: 0 }}
+                sx={{ justifyContent: 'space-between', marginLeft: 0 }}
                 control={
-                  <Switch
+                  <TsSwitch
                     data-tid="locationIsDefault"
                     name="isDefault"
                     checked={isDefault}
@@ -704,70 +740,101 @@ function CreateEditLocationDialog(props: Props) {
               />
               <FormControlLabel
                 labelPlacement="start"
-                style={{ justifyContent: 'space-between', marginLeft: 0 }}
+                sx={{ justifyContent: 'space-between', marginLeft: 0 }}
                 control={
-                  <Switch
-                    disabled={!Pro}
+                  <TsSwitch
                     data-tid="changeFullTextIndex"
                     name="fullTextIndex"
                     checked={fullTextIndex}
                     onChange={(event: ChangeEvent<HTMLInputElement>) => {
-                      setFullTextIndex(event.target.checked);
-                      if (event.target.checked) {
-                        setFullTextIndexConfirmDialogOpened(true);
+                      const checked = event.target.checked;
+                      setFullTextIndex(checked);
+                      if (checked && !devMode) {
+                        setExtractLinks(true);
                       }
                     }}
                   />
                 }
                 label={
                   <>
-                    {t('core:createFullTextIndex') + ' (TXT, HTML, MD, PDF)'}
-                    {Pro ? <BetaLabel /> : <ProLabel />}
+                    {t('core:createFullTextIndex')}
+                    <InfoIcon
+                      tooltip={
+                        <div style={{ lineHeight: 1.5 }}>
+                          <div style={{ marginBottom: 4 }}>
+                            <b>Supported file formats:</b>
+                          </div>
+                          <div>Plain text: .txt, .md, .marp</div>
+                          <div>HTML: .htm, .html, .xhtml, .shtml, .mhtml</div>
+                          <div>Email: .eml</div>
+                          <div>
+                            Web shortcuts: .url, .website, .webloc, .desktop
+                          </div>
+                          <div>Tabular: .csv</div>
+                          <div>Contacts: .vcf</div>
+                          {(Pro ? true : !hideProFeatures) && (
+                            <>
+                              <div style={{ marginTop: 4 }}>
+                                <b>{t('core:fullTextIndexProOnly')}</b>
+                              </div>
+                              <div>Documents: .pdf, .docx, .odt</div>
+                              <div>Spreadsheets: .xlsx, .ods</div>
+                              <div>Presentations: .pptx, .odp</div>
+                              <div>Ebooks: .epub</div>
+                            </>
+                          )}
+                        </div>
+                      }
+                    />
+                    <BetaLabel />
                   </>
                 }
               />
-              {isFullTextIndexConfirmDialogOpened && selectedLocation && (
-                <ConfirmDialog
-                  open={isFullTextIndexConfirmDialogOpened}
-                  onClose={() => {
-                    setFullTextIndexConfirmDialogOpened(false);
-                  }}
-                  title={t('core:confirm')}
-                  content={t('core:fullTextIndexRegenerate')}
-                  confirmCallback={(result) => {
-                    if (result) {
-                      createLocationIndex(selectedLocation);
-                    } else {
-                      setFullTextIndexConfirmDialogOpened(false);
-                    }
-                  }}
-                  cancelDialogTID="cancelSaveBeforeCloseDialog"
-                  confirmDialogTID="confirmSaveBeforeCloseDialog"
-                  confirmDialogContentTID="confirmDialogContent"
+              {devMode && fullTextIndex && (
+                <FormControlLabel
+                  labelPlacement="start"
+                  sx={{ justifyContent: 'space-between', marginLeft: 0 }}
+                  control={
+                    <TsSwitch
+                      data-tid="extractLinksTID"
+                      name="extractLinks"
+                      checked={extractLinks}
+                      onChange={(event: ChangeEvent<HTMLInputElement>) => {
+                        setExtractLinks(event.target.checked);
+                      }}
+                    />
+                  }
+                  label={
+                    <>
+                      {t('core:extractLinks')}
+                      <BetaLabel />
+                    </>
+                  }
                 />
               )}
               <FormControlLabel
-                disabled={
-                  !Pro ||
-                  type === locationType.TYPE_CLOUD ||
-                  AppConfig.isCordova
-                }
                 labelPlacement="start"
-                style={{ justifyContent: 'space-between', marginLeft: 0 }}
+                sx={{ justifyContent: 'space-between', marginLeft: 0 }}
                 control={
-                  <Switch
-                    data-tid="changeWatchForChanges"
-                    name="watchForChanges"
-                    checked={watchForChanges}
+                  <TsSwitch
+                    // disabled={!Pro}
+                    data-tid="reloadOnFocusTID"
+                    name="reloadOnFocus"
+                    checked={reloadOnFocus}
                     onChange={(event: ChangeEvent<HTMLInputElement>) =>
-                      setWatchForChanges(event.target.checked)
+                      setReloadOnFocus(event.target.checked)
                     }
                   />
                 }
                 label={
                   <>
-                    {t('core:watchForChangesInLocation')}
-                    {!Pro && <ProLabel />}
+                    {t('core:reloadOnFocus')}
+                    <InfoIcon
+                      tooltip={t(
+                        'Reloads the current folder, when the app regains focus in order to show changes which may have happened in the background.',
+                      )}
+                    />
+                    <ProLabel />
                   </>
                 }
               />
@@ -787,9 +854,9 @@ function CreateEditLocationDialog(props: Props) {
             <FormGroup>
               <FormControlLabel
                 labelPlacement="start"
-                style={{ justifyContent: 'space-between', marginLeft: 0 }}
+                sx={{ justifyContent: 'space-between', marginLeft: 0 }}
                 control={
-                  <Switch
+                  <TsSwitch
                     disabled={!Pro}
                     data-tid="changeReadOnlyMode"
                     name="isReadOnly"
@@ -806,11 +873,38 @@ function CreateEditLocationDialog(props: Props) {
                   </>
                 }
               />
+              {devMode && (
+                <FormControlLabel
+                  disabled={
+                    !Pro ||
+                    type === locationType.TYPE_CLOUD ||
+                    AppConfig.isNativeMobile
+                  }
+                  labelPlacement="start"
+                  sx={{ justifyContent: 'space-between', marginLeft: 0 }}
+                  control={
+                    <TsSwitch
+                      data-tid="changeWatchForChanges"
+                      name="watchForChanges"
+                      checked={watchForChanges}
+                      onChange={(event: ChangeEvent<HTMLInputElement>) =>
+                        setWatchForChanges(event.target.checked)
+                      }
+                    />
+                  }
+                  label={
+                    <>
+                      {t('core:watchForChangesInLocation')}
+                      {!Pro && <ProLabel />}
+                    </>
+                  }
+                />
+              )}
               <FormControlLabel
                 labelPlacement="start"
-                style={{ justifyContent: 'space-between', marginLeft: 0 }}
+                sx={{ justifyContent: 'space-between', marginLeft: 0 }}
                 control={
-                  <Switch
+                  <TsSwitch
                     data-tid="locationSettingsGenThumbsTID"
                     name="locationSettingsGenThumbs"
                     checked={disableThumbnailGeneration}
@@ -823,9 +917,9 @@ function CreateEditLocationDialog(props: Props) {
               />
               <FormControlLabel
                 labelPlacement="start"
-                style={{ justifyContent: 'space-between', marginLeft: 0 }}
+                sx={{ justifyContent: 'space-between', marginLeft: 0 }}
                 control={
-                  <Switch
+                  <TsSwitch
                     disabled={!Pro}
                     data-tid="disableIndexingTID"
                     name="disableIndexing"
@@ -844,33 +938,12 @@ function CreateEditLocationDialog(props: Props) {
               />
               <FormControlLabel
                 labelPlacement="start"
-                style={{ justifyContent: 'space-between', marginLeft: 0 }}
-                control={
-                  <Switch
-                    disabled={!Pro}
-                    data-tid="reloadOnFocusTID"
-                    name="reloadOnFocus"
-                    checked={reloadOnFocus}
-                    onChange={(event: ChangeEvent<HTMLInputElement>) =>
-                      setReloadOnFocus(event.target.checked)
-                    }
-                  />
-                }
-                label={
-                  <>
-                    {t('core:reloadOnFocus')}
-                    <ProLabel />
-                  </>
-                }
-              />
-              <FormControlLabel
-                labelPlacement="start"
-                style={{ justifyContent: 'space-between', marginLeft: 0 }}
+                sx={{ justifyContent: 'space-between', marginLeft: 0 }}
                 control={
                   <TsTextField
                     name="maxIndexAge"
-                    style={{
-                      width: 100,
+                    sx={{
+                      width: '100px',
                     }}
                     type="number"
                     data-tid="maxIndexAgeTID"
@@ -891,7 +964,7 @@ function CreateEditLocationDialog(props: Props) {
               {type === locationType.TYPE_CLOUD && (
                 <FormControlLabel
                   labelPlacement="start"
-                  style={{ justifyContent: 'space-between', marginLeft: 0 }}
+                  sx={{ justifyContent: 'space-between', marginLeft: 0 }}
                   control={
                     <MaxLoopsSelect
                       maxLoops={maxLoops}
@@ -906,10 +979,10 @@ function CreateEditLocationDialog(props: Props) {
                   }
                 />
               )}
-              {AppConfig.useSidecarsForFileTaggingDisableSetting ? (
+              {AppConfig.ExtUseSidecarsForFileTagging !== undefined ? (
                 <FormControlLabel
                   labelPlacement="start"
-                  style={{ justifyContent: 'space-between', marginLeft: 0 }}
+                  sx={{ justifyContent: 'space-between', marginLeft: 0 }}
                   control={
                     <TsButton disabled>
                       {currentTagsSetting
@@ -917,18 +990,14 @@ function CreateEditLocationDialog(props: Props) {
                         : t('core:renameFile')}
                     </TsButton>
                   }
-                  label={
-                    <Typography variant="caption" display="block" gutterBottom>
-                      {t('core:fileTaggingSetting')}
-                    </Typography>
-                  }
+                  label={t('core:fileTaggingSetting')}
                 />
               ) : (
                 <FormControlLabel
                   labelPlacement="top"
-                  style={{
+                  sx={{
                     alignItems: 'start',
-                    marginBottom: 10,
+                    marginBottom: '10px',
                     marginLeft: 0,
                   }}
                   control={
@@ -943,7 +1012,7 @@ function CreateEditLocationDialog(props: Props) {
                             ? persistTagsInSidecarFile
                             : false
                         }
-                        style={{
+                        sx={{
                           borderTopRightRadius: 0,
                           borderBottomRightRadius: 0,
                         }}
@@ -964,7 +1033,7 @@ function CreateEditLocationDialog(props: Props) {
                       </TsToggleButton>
                       <TsToggleButton
                         value={false}
-                        style={{
+                        sx={{
                           borderRadius: 0,
                         }}
                         data-tid="locationSetPersistTagsInFileName"
@@ -979,7 +1048,7 @@ function CreateEditLocationDialog(props: Props) {
                       </TsToggleButton>
                       <TsToggleButton
                         value={true}
-                        style={{
+                        sx={{
                           borderTopLeftRadius: 0,
                           borderBottomLeftRadius: 0,
                         }}
@@ -1002,31 +1071,13 @@ function CreateEditLocationDialog(props: Props) {
                   }
                 />
               )}
-              <FormControl fullWidth={true}>
-                <TsTextField
-                  name="autoOpenedFilename"
-                  data-tid="autoOpenedFilenameTID"
-                  placeholder={
-                    t('core:forExample') + ': index.md, index.html or readme.md'
-                  }
-                  onChange={(event) =>
-                    setAutoOpenedFilename(event.target.value)
-                  }
-                  updateValue={(value) => {
-                    setAutoOpenedFilename(value);
-                  }}
-                  retrieveValue={() => autoOpenedFilename}
-                  value={autoOpenedFilename}
-                  label={t('core:autoOpenedFilename')}
-                />
-              </FormControl>
               <>
                 <FormControlLabel
                   disabled={!Pro}
                   labelPlacement="start"
-                  style={{
+                  sx={{
                     justifyContent: 'space-between',
-                    marginTop: 15,
+                    marginTop: '15px',
                     marginLeft: 0,
                     marginRight: 0,
                   }}
@@ -1037,7 +1088,7 @@ function CreateEditLocationDialog(props: Props) {
                         onClick={() => {
                           setIgnorePatternDialogOpen(true);
                         }}
-                        style={{
+                        sx={{
                           marginBottom: AppConfig.defaultSpaceBetweenButtons,
                         }}
                       >
@@ -1055,18 +1106,18 @@ function CreateEditLocationDialog(props: Props) {
                 />
                 {ignorePatternPaths && ignorePatternPaths.length > 0 && (
                   <List
-                    style={{
-                      padding: 5,
+                    sx={{
+                      padding: '5px',
                       backgroundColor: '#d3d3d34a',
-                      borderRadius: 10,
+                      borderRadius: '10px',
                     }}
                     dense
                   >
                     {ignorePatternPaths.map((ignorePatternPath) => (
-                      <ListItem style={{ padding: 0 }}>
+                      <ListItem sx={{ padding: 0 }}>
                         <ListItemText primary={ignorePatternPath} />
                         <ListItemIcon
-                          style={{ minWidth: 0 }}
+                          sx={{ minWidth: 0 }}
                           title={t('core:ignorePatternRemove')}
                           onClick={() => {
                             const array = [...ignorePatternPaths];
@@ -1093,12 +1144,30 @@ function CreateEditLocationDialog(props: Props) {
                   />
                 )}
               </>
-              <FormControl fullWidth={true} style={{ marginTop: 10 }}>
+              <FormControl fullWidth sx={{ marginTop: '10px' }}>
+                <TsTextField
+                  name="autoOpenedFilename"
+                  data-tid="autoOpenedFilenameTID"
+                  placeholder={
+                    t('core:forExample') + ': index.md, index.html or readme.md'
+                  }
+                  onChange={(event) =>
+                    setAutoOpenedFilename(event.target.value)
+                  }
+                  updateValue={(value) => {
+                    setAutoOpenedFilename(value);
+                  }}
+                  retrieveValue={() => autoOpenedFilename}
+                  value={autoOpenedFilename}
+                  label={t('core:autoOpenedFilename')}
+                />
+              </FormControl>
+              <FormControl fullWidth sx={{ marginTop: '10px' }}>
                 <TsTextField
                   required
                   name="newuuid"
                   data-tid="newuuid"
-                  placeholder="Unique location identifier"
+                  placeholder={t('core:uniqueLocationIdentifier')}
                   onChange={(event) => setNewLocationID(event.target.value)}
                   value={newuuid}
                   label={t('core:locationId')}
@@ -1108,7 +1177,7 @@ function CreateEditLocationDialog(props: Props) {
                   slotProps={{
                     input: {
                       endAdornment: (
-                        <InputAdornment position="end" style={{ height: 32 }}>
+                        <InputAdornment position="end" sx={{ height: '32px' }}>
                           <TsIconButton
                             tooltip={t('core:generateNewLocationId')}
                             onClick={() => {
@@ -1131,7 +1200,7 @@ function CreateEditLocationDialog(props: Props) {
             </FormGroup>
           </AccordionDetails>
         </Accordion>
-        {type === locationType.TYPE_CLOUD && (
+        {devMode && type === locationType.TYPE_CLOUD && (
           <Accordion>
             <AccordionSummary
               data-tid="switchEncryptionTID"
@@ -1146,7 +1215,7 @@ function CreateEditLocationDialog(props: Props) {
             </AccordionSummary>
             <AccordionDetails>
               <FormControl fullWidth={true}>
-                <FormLabel style={{ marginBottom: 15 }}>
+                <FormLabel sx={{ marginBottom: '15px' }}>
                   {t('encryptionExplanation')}
                 </FormLabel>
                 <TsTextField
@@ -1175,9 +1244,9 @@ function CreateEditLocationDialog(props: Props) {
                             }
                           >
                             {showEncryptionKey ? (
-                              <Visibility />
+                              <VisibilityOnIcon />
                             ) : (
-                              <VisibilityOff />
+                              <VisibilityOffIcon />
                             )}
                           </TsIconButton>
                           <TsIconButton

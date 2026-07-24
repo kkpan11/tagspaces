@@ -17,7 +17,14 @@
  */
 
 import AppConfig from '-/AppConfig';
-import { CloseIcon } from '-/components/CommonIcons';
+import {
+  AddIcon,
+  ArrowDropDownIcon,
+  CloseIcon,
+  OrIcon,
+  RemoveIcon,
+  RemoveTagIcon,
+} from '-/components/CommonIcons';
 import {
   ActionType,
   ExecActions,
@@ -31,13 +38,14 @@ import {
   scope,
 } from '-/components/SearchOptions';
 import { getSearchOptions } from '-/components/SearchOptionsMenu';
-import Tooltip from '-/components/Tooltip';
 import TsButton from '-/components/TsButton';
 import TsIconButton from '-/components/TsIconButton';
 import TsTextField from '-/components/TsTextField';
 import { useBrowserHistoryContext } from '-/hooks/useBrowserHistoryContext';
 import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
 import { useDirectoryContentContext } from '-/hooks/useDirectoryContentContext';
+import { useEditedTagLibraryContext } from '-/hooks/useEditedTagLibraryContext';
+import { useHistoryContext } from '-/hooks/useHistoryContext';
 import { useLocationIndexContext } from '-/hooks/useLocationIndexContext';
 import { useOpenedEntryContext } from '-/hooks/useOpenedEntryContext';
 import { useSavedSearchesContext } from '-/hooks/useSavedSearchesContext';
@@ -49,13 +57,10 @@ import {
   isDesktopMode,
 } from '-/reducers/settings';
 import { haveSearchFilters } from '-/services/search';
-import { getTagLibrary } from '-/services/taglibrary-utils';
 import { dataTidFormat } from '-/services/test';
 import { removePrefix } from '-/services/utils-io';
 import { TS } from '-/tagspaces.namespace';
 import useFirstRender from '-/utils/useFirstRender';
-import ArrowDropDownIcon from '@mui/icons-material/ArrowDropDown';
-import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
 import AdvancedSearchIcon from '@mui/icons-material/TuneOutlined';
 import { Autocomplete, Box } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
@@ -72,22 +77,12 @@ import React, {
 import { useTranslation } from 'react-i18next';
 import { useDispatch, useSelector } from 'react-redux';
 import { actions as AppActions, AppDispatch } from '../reducers/app';
-import { useHistoryContext } from '-/hooks/useHistoryContext';
 
 interface Props {
   style?: any;
-  open: boolean;
+  //open: boolean;
   setAnchorSearch: (el: HTMLButtonElement) => void;
 }
-
-/*const useStyles = makeStyles(theme => ({
-  customWidth: {
-    maxWidth: 550
-  },
-  noMaxWidth: {
-    maxWidth: 'none'
-  }
-}));*/
 
 function SearchAutocomplete(props: Props) {
   const { t } = useTranslation();
@@ -102,9 +97,11 @@ function SearchAutocomplete(props: Props) {
     openCurrentDirectory,
     searchQuery,
     setSearchQuery,
+    isSearchMode,
   } = useDirectoryContentContext();
   const { tempSearchQuery, setTempSearchQuery } = useSearchQueryContext();
   const { openHistoryItem } = useBrowserHistoryContext();
+  const { tagGroups } = useEditedTagLibraryContext();
   const { isIndexing, searchAllLocations, searchLocationIndex } =
     useLocationIndexContext();
   const { searches } = useSavedSearchesContext();
@@ -120,7 +117,7 @@ function SearchAutocomplete(props: Props) {
 
   const openLinkDispatch = (link, options) => openLink(link, options);
 
-  const { open, setAnchorSearch } = props;
+  const { setAnchorSearch } = props;
   const [openSavedSearches, setOpenSavedSearches] =
     useState<null | HTMLElement>(null);
   const searchOptions = useRef<Array<SearchOptionType>>(getSearchOptions());
@@ -128,7 +125,7 @@ function SearchAutocomplete(props: Props) {
   const fileTypes = useRef<Array<string>>(
     searchQuery.fileTypes
       ? searchQuery.fileTypes
-      : AppConfig.SearchTypeGroups.any,
+      : AppConfig.SearchTypeGroups?.any,
   );
   const [ignored, forceUpdate] = useReducer((x) => x + 1, 0, undefined);
   const actionValues = useRef<Array<SearchOptionType>>([]);
@@ -141,6 +138,9 @@ function SearchAutocomplete(props: Props) {
   );
   const lastModified = useRef<string>(
     searchQuery.lastModified ? searchQuery.lastModified : '',
+  );
+  const dateCreated = useRef<string>(
+    searchQuery.dateCreated ? searchQuery.dateCreated : '',
   );
   const tagTimePeriod = useRef<string>('');
   const tagTimePeriodHelper = useRef<string>(' ');
@@ -162,6 +162,16 @@ function SearchAutocomplete(props: Props) {
 
   // const mainSearchField = useRef<HTMLInputElement>(null);
   const isOpen = useRef<boolean>(true);
+  const workSpacesContext = Pro?.contextProviders?.WorkSpacesContext
+    ? useContext<TS.WorkSpacesContextData>(
+        Pro.contextProviders.WorkSpacesContext,
+      )
+    : undefined;
+
+  const currentWorkSpace =
+    workSpacesContext && workSpacesContext.getCurrentWorkSpace
+      ? workSpacesContext?.getCurrentWorkSpace()
+      : undefined;
 
   const firstRender = useFirstRender();
 
@@ -236,7 +246,7 @@ function SearchAutocomplete(props: Props) {
       if (
         searchQuery.fileTypes &&
         JSON.stringify(searchQuery.fileTypes) !==
-          JSON.stringify(AppConfig.SearchTypeGroups.any)
+          JSON.stringify(AppConfig.SearchTypeGroups?.any)
       ) {
         fileTypes.current = searchQuery.fileTypes;
         emptySearch = false;
@@ -274,6 +284,17 @@ function SearchAutocomplete(props: Props) {
             SearchQueryComposition.LAST_MODIFIED.fullName +
             ' ' +
             t('core:' + searchQuery.lastModified),
+        });
+      }
+      if (searchQuery.dateCreated) {
+        dateCreated.current = searchQuery.dateCreated;
+        emptySearch = false;
+        actions.push({
+          action: SearchQueryComposition.DATE_CREATED.fullName,
+          label:
+            SearchQueryComposition.DATE_CREATED.fullName +
+            ' ' +
+            t('core:' + searchQuery.dateCreated),
         });
       }
       if (searchQuery.tagTimePeriodFrom) {
@@ -314,7 +335,7 @@ function SearchAutocomplete(props: Props) {
             textQuery: txtQuery,
           };
           if (searchBoxing === 'global') {
-            searchAllLocations(sQuery);
+            searchAllLocations(sQuery, currentWorkSpace);
           } else {
             searchLocationIndex(sQuery);
           }
@@ -387,6 +408,13 @@ function SearchAutocomplete(props: Props) {
     ) {
       lastModified.current = '';
     }
+    if (
+      !exceptions.some((action) =>
+        isAction(action.action, SearchQueryComposition.DATE_CREATED),
+      )
+    ) {
+      dateCreated.current = '';
+    }
     tagTimePeriod.current = '';
     tagTimePeriodHelper.current = ' ';
     tagTimePeriodFrom.current = null;
@@ -428,48 +456,6 @@ function SearchAutocomplete(props: Props) {
   ) => {
     setOpenSavedSearches(event.currentTarget);
   };
-
-  function HelpTooltip(hClasses) {
-    return (
-      <Tooltip
-        title={
-          <span style={{ fontSize: 14 }}>
-            The search query consists of a tag part and a search term. This term
-            is optional and can be a single word. The tag part can have one or
-            more tags preceded by the following symbols:
-            <ul>
-              <li>
-                + will add only entries having this tag in the search results
-                (logical AND)
-              </li>
-              <li>
-                | will include all entries having this tag in the search results
-                (logical OR)
-              </li>
-              <li>
-                - will exclude entries having this tags from the search results
-              </li>
-            </ul>
-            Example queries:
-            <ul>
-              <li>
-                "italy +beach -sunset" - will find all files and folders having
-                italy in their name and the tag beach but not sunset
-              </li>
-              <li>
-                "|beach |sunset" - will find all files and folder having the
-                tags beach or sunset
-              </li>
-            </ul>
-          </span>
-        }
-      >
-        <TsIconButton edge="end">
-          <HelpOutlineIcon style={{ color: 'lightgray' }} />
-        </TsIconButton>
-      </Tooltip>
-    );
-  }
 
   function getTags(
     actions: Array<SearchOptionType>,
@@ -527,6 +513,7 @@ function SearchAutocomplete(props: Props) {
       searchType: searchType.current,
       fileTypes: fileTypes.current,
       lastModified: lastModified.current,
+      dateCreated: dateCreated.current,
       fileSize: fileSize.current,
       tagTimePeriodFrom: tagTimePeriodFrom.current,
       tagTimePeriodTo: tagTimePeriodTo.current,
@@ -663,7 +650,6 @@ function SearchAutocomplete(props: Props) {
     ) {
       currentOptions.current = action;
       const searchAction = toExecAction(action);
-      const tagGroups = getTagLibrary();
       const options = [];
       for (let j = 0; j < tagGroups.length; j++) {
         tagGroups[j].children.forEach((tag: TS.Tag) => {
@@ -759,6 +745,24 @@ function SearchAutocomplete(props: Props) {
           options.push({
             id: period[1].key,
             action: ExecActions.LAST_MODIFIED_SEARCH,
+            label: t('core:' + period[1].key),
+            filter,
+          });
+        });
+        searchOptions.current = options;
+        optionsChanged = true;
+      }
+    } else if (isAction(action, SearchQueryComposition.DATE_CREATED)) {
+      if (
+        currentOptions.current !== SearchQueryComposition.DATE_CREATED.shortName
+      ) {
+        currentOptions.current = action;
+        const options = [];
+
+        Object.entries(AppConfig.SearchTimePeriods).forEach((period: any) => {
+          options.push({
+            id: period[1].key,
+            action: ExecActions.DATE_CREATED_SEARCH,
             label: t('core:' + period[1].key),
             filter,
           });
@@ -1035,7 +1039,8 @@ function SearchAutocomplete(props: Props) {
           }
           // executeSearch();
         } else if (
-          isAction(option.action, SearchQueryComposition.LAST_MODIFIED)
+          isAction(option.action, SearchQueryComposition.LAST_MODIFIED) ||
+          isAction(option.action, SearchQueryComposition.DATE_CREATED)
         ) {
           if (hasOptionsChanged) {
             changeOptions(option.action);
@@ -1058,6 +1063,22 @@ function SearchAutocomplete(props: Props) {
             changeOptions(option.action);
           }
           // executeSearch();
+        } else if (option.action === ExecActions.DATE_CREATED_SEARCH) {
+          const id = setActionLabel(
+            SearchQueryComposition.DATE_CREATED,
+            option,
+          );
+          if (id) {
+            dateCreated.current = id;
+            setSearchQuery({
+              ...searchQuery,
+              dateCreated: id,
+              executeSearch: false,
+            });
+          }
+          if (hasOptionsChanged) {
+            changeOptions(option.action);
+          }
         } else if (isAction(option.action, SearchQueryComposition.SCOPE)) {
           if (hasOptionsChanged) {
             changeOptions(option.action);
@@ -1119,8 +1140,99 @@ function SearchAutocomplete(props: Props) {
     return actions;
   }
 
+  /**
+   * Look up a tag's color from the current tag library by title.
+   * Returns undefined fields if the tag isn't in any group — the chip
+   * will still render, just without the library's custom colors.
+   */
+  function lookupTagColor(title: string): {
+    color?: string;
+    textcolor?: string;
+  } {
+    for (const group of tagGroups) {
+      const found = group.children?.find((t: any) => t.title === title);
+      if (found) {
+        return { color: found.color, textcolor: found.textcolor };
+      }
+    }
+    return {};
+  }
+
+  /**
+   * Parse a whitespace-separated query string into text + action chips.
+   * Handles tokens like "+tag" (AND), "-tag" (NOT), "|tag" (OR).
+   * Everything else falls into the free-text part.
+   *
+   * Example input:  "project notes +work +urgent -draft |client-a"
+   *   textQuery:  "project notes"
+   *   actions:    [
+   *     {label:"+work",  action:"+"}, {label:"+urgent", action:"+"},
+   *     {label:"-draft", action:"-"}, {label:"|client-a", action:"|"},
+   *   ]
+   */
+  function parseComplexQuery(value: string): {
+    textQuery: string;
+    actions: SearchOptionType[];
+  } {
+    const tokens = value.trim().split(/\s+/).filter(Boolean);
+    const textParts: string[] = [];
+    const actions: SearchOptionType[] = [];
+    for (const token of tokens) {
+      const prefix = token[0];
+      if (
+        (prefix === '+' || prefix === '-' || prefix === '|') &&
+        token.length > 1
+      ) {
+        const title = token.slice(1);
+        const colors = lookupTagColor(title);
+        actions.push({
+          label: token,
+          fullName: token,
+          action: prefix,
+          ...(colors.color && { color: colors.color }),
+          ...(colors.textcolor && { textcolor: colors.textcolor }),
+        });
+      } else {
+        textParts.push(token);
+      }
+    }
+    return { textQuery: textParts.join(' '), actions };
+  }
+
   function handleInputChange(event: any, value: string, reason: string) {
     if (reason === 'input') {
+      // Fast path for pasted / fully-typed complex queries like
+      //   "search-term +tag1 -tag2 |tag3"
+      // Triggered only when the value has internal whitespace AND at least
+      // one prefix token — single-prefix-while-typing ("+t") falls through
+      // to the original character-by-character path so the dropdown can
+      // still offer autocomplete suggestions.
+      const trimmed = value.trim();
+      const hasInternalWhitespace = /\s/.test(trimmed);
+      const hasPrefixToken = /(?:^|\s)[+\-|]\S/.test(trimmed);
+      if (hasInternalWhitespace && hasPrefixToken) {
+        const { textQuery, actions: newActions } = parseComplexQuery(value);
+        // Preserve any existing chips not present in the new parse
+        const existing = actionValues.current;
+        const combined = [...existing];
+        for (const a of newActions) {
+          if (
+            !existing.some((e) => e.action === a.action && e.label === a.label)
+          ) {
+            combined.push(a);
+          }
+        }
+        actionValues.current = combined;
+        setTempSearchQuery({ textQuery }, true);
+        searchQuery.textQuery = textQuery;
+        // Close the dropdown — a pasted/fully-typed complex query is a
+        // complete intent. Leaving it open would make the next Enter press
+        // just close the dropdown instead of executing the search.
+        isOpen.current = false;
+        forceUpdate();
+        return;
+      }
+
       const valueArr = value.split(' ');
       actionValues.current = execActions(
         [...actionValues.current, ...valueArr],
@@ -1202,7 +1314,7 @@ function SearchAutocomplete(props: Props) {
     }
   }
 
-  if (!open) {
+  if (!isSearchMode) {
     return null;
   }
 
@@ -1212,14 +1324,12 @@ function SearchAutocomplete(props: Props) {
         tooltip={t('core:advancedSearch')}
         id="advancedButton"
         data-tid="advancedSearch"
-        style={{ maxHeight: 34 }}
         size={desktopMode ? 'small' : 'medium'}
         onClick={(event: React.MouseEvent<HTMLButtonElement>) => {
           setAnchorSearch(event.currentTarget);
         }}
       >
         <AdvancedSearchIcon fontSize={desktopMode ? 'small' : 'medium'} />
-        {/* <DropDownIcon /> */}
       </TsIconButton>
       <TsIconButton
         tooltip={t('clearSearch') + ' (ESC)'}
@@ -1227,7 +1337,6 @@ function SearchAutocomplete(props: Props) {
         onClick={() => {
           clearSearch();
         }}
-        style={{ maxHeight: 34 }}
         size={desktopMode ? 'small' : 'medium'}
         edge="end"
       >
@@ -1249,22 +1358,24 @@ function SearchAutocomplete(props: Props) {
     <>
       <div
         id="searchAutocompleteComp"
-        style={{
-          width: '100%',
-          whiteSpace: 'nowrap',
-          display: 'flex',
-          alignItems: 'center',
-          // @ts-ignore
-          WebkitAppRegion: 'no-drag',
-        }}
+        style={
+          {
+            width: '100%',
+            whiteSpace: 'nowrap',
+            display: 'flex',
+            alignItems: 'center',
+            WebkitAppRegion: 'no-drag',
+          } as React.CSSProperties & { WebkitAppRegion?: string }
+        }
       >
         <style>
           {`
           #searchAutocompleteComp .MuiAutocomplete-root .MuiInputBase-root {
-            padding: 1px 15px 0 5px !important;
+            padding: 2px 6px 2px 4px !important;
           }
           #searchAutocompleteComp .MuiTextField-root {
             overflow-x: hidden !important;
+            margin-bottom: 0;
           }
           .MuiAutocomplete-popper {
             min-width: 350px;
@@ -1278,9 +1389,35 @@ function SearchAutocomplete(props: Props) {
           autoSelect
           autoComplete
           handleHomeEndKeys
-          value={actionValues.current.map((v) =>
-            v.fullName ? v.fullName : v.label,
-          )}
+          value={
+            // Sort for display:
+            //   1. scope and accuracy first (search-wide modifiers)
+            //   2. other filters next (type, size, dates)
+            //   3. tag chips (+/-/|) last
+            // Only visual — actionValues.current itself isn't reordered.
+            actionValues.current
+              .map((v, i) => {
+                let priority = 1; // other filters
+                if (v.action === SearchQueryComposition.SCOPE.fullName) {
+                  priority = 0;
+                } else if (
+                  v.action === SearchQueryComposition.ACCURACY.fullName
+                ) {
+                  priority = 0;
+                } else if (
+                  v.action === SearchQueryComposition.TAG_AND.shortName ||
+                  v.action === SearchQueryComposition.TAG_OR.shortName ||
+                  v.action === SearchQueryComposition.TAG_NOT.shortName
+                ) {
+                  priority = 2;
+                }
+                return { v, i, priority };
+              })
+              .sort((a, b) =>
+                a.priority !== b.priority ? a.priority - b.priority : a.i - b.i,
+              )
+              .map(({ v }) => (v.fullName ? v.fullName : v.label))
+          }
           onChange={handleChange}
           inputValue={
             tempSearchQuery.textQuery ? tempSearchQuery.textQuery : ''
@@ -1322,26 +1459,52 @@ function SearchAutocomplete(props: Props) {
             }
             return filteredOptions;
           }}
-          renderTags={(value) =>
+          renderValue={(value) =>
             value.map((option, index: number) => {
               const action = actionValues.current.find(
                 (a) => a.fullName === option || a.label === option,
               );
+
+              let booleanTagIcon = option;
+              if (option.startsWith('+')) {
+                booleanTagIcon = (
+                  <>
+                    <AddIcon fontSize="small" sx={{ marginRight: '3px' }} />
+                    {option.slice(1)}
+                  </>
+                );
+              } else if (option.startsWith('-')) {
+                booleanTagIcon = (
+                  <>
+                    <RemoveIcon fontSize="small" sx={{ marginRight: '3px' }} />
+                    {option.slice(1)}
+                  </>
+                );
+              } else if (option.startsWith('|')) {
+                booleanTagIcon = (
+                  <>
+                    <OrIcon fontSize="small" sx={{ marginRight: '3px' }} />
+                    {option.slice(1)}
+                  </>
+                );
+              }
+
               return (
                 <Box
                   key={'button_' + index}
-                  style={{
+                  sx={{
                     border: '1px solid gray',
-                    minHeight: 0,
-                    minWidth: 0,
-                    margin: 2,
-                    marginLeft: 1,
-                    marginTop: 3,
-                    paddingTop: 0,
-                    paddingBottom: 0,
-                    paddingRight: 0,
-                    paddingLeft: 4,
-                    borderRadius: 5,
+                    display: 'flex',
+                    minHeight: '0',
+                    minWidth: '0',
+                    margin: '2px',
+                    marginLeft: '1px',
+                    marginTop: '3px',
+                    paddingTop: '0px',
+                    paddingBottom: '0px',
+                    paddingRight: '0px',
+                    paddingLeft: '4px',
+                    borderRadius: '7px', // AppConfig.defaultCSSRadius,
                     ...(action &&
                       action.color && {
                         color: action.textcolor,
@@ -1354,13 +1517,14 @@ function SearchAutocomplete(props: Props) {
                   isAction(action.action, SearchQueryComposition.TAG_OR) ||
                   isAction(action.action, SearchQueryComposition.TAG_NOT) ? (
                     <Box
-                      style={{
-                        fontSize: 13,
-                        fontWeight: 'bold',
-                        display: 'inline',
+                      sx={{
+                        fontSize: '13px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        height: 20,
                       }}
                     >
-                      {option}
+                      {booleanTagIcon}
                     </Box>
                   ) : (
                     <TsButton
@@ -1368,19 +1532,17 @@ function SearchAutocomplete(props: Props) {
                       onClick={() => {
                         changeOptions(action.action, false);
                       }}
+                      color="inherit"
                       data-tid={dataTidFormat('menu' + option)}
                       variant="text"
-                      style={{
+                      sx={{
                         backgroundColor: 'transparent',
                         textTransform: 'lowercase',
                         padding: 0,
                         margin: 0,
                       }}
                       endIcon={
-                        <ArrowDropDownIcon
-                          style={{ marginLeft: -10 }}
-                          fontSize="small"
-                        />
+                        <ArrowDropDownIcon sx={{ marginLeft: '-10px' }} />
                       }
                     >
                       {removePrefix(option, action.action)}
@@ -1396,14 +1558,13 @@ function SearchAutocomplete(props: Props) {
                         onClick={() => {
                           handleChange(null, [option], 'remove-value');
                         }}
-                        style={{
-                          padding: 0,
-                          margin: 0,
+                        sx={{
+                          padding: '0 3px 0 0',
                           textTransform: 'lowercase',
                         }}
                         data-tid={dataTidFormat('close' + option)}
                       >
-                        <CloseIcon fontSize="small" />
+                        <RemoveTagIcon fontSize="small" />
                       </TsIconButton>
                     )}
                 </Box>
@@ -1432,19 +1593,19 @@ function SearchAutocomplete(props: Props) {
               {option.color ? (
                 <TsButton
                   variant="text"
-                  style={{
-                    fontSize: 13,
+                  sx={{
+                    fontSize: '13px',
                     textTransform: 'none',
                     color: option.textcolor,
                     backgroundColor: option.color,
                     minHeight: 0,
                     minWidth: 0,
-                    margin: 2,
+                    margin: '2px',
                     paddingTop: 0,
                     paddingBottom: 0,
-                    paddingRight: 5,
-                    paddingLeft: 5,
-                    borderRadius: 5,
+                    paddingRight: '5px',
+                    paddingLeft: '5px',
+                    borderRadius: '5px',
                   }}
                 >
                   {option.label}
@@ -1462,18 +1623,18 @@ function SearchAutocomplete(props: Props) {
           onKeyDown={onKeyDownHandler}
           disableClearable={true}
           renderInput={(params) => {
-            if (params.InputProps.endAdornment) {
-              params.InputProps.endAdornment = [
-                params.InputProps.endAdornment,
+            if (params.slotProps.input.endAdornment) {
+              params.slotProps.input.endAdornment = [
+                params.slotProps.input.endAdornment,
                 endAdornment,
               ];
             } else {
-              params.InputProps.endAdornment = [endAdornment];
+              params.slotProps.input.endAdornment = [endAdornment];
             }
             return (
               <TsTextField
                 {...params}
-                style={{ overflow: 'auto', maxHeight: 40 }}
+                sx={{ overflow: 'auto', maxHeight: '40px' }}
                 onBlur={() => {
                   isOpen.current = false;
                   forceUpdate();
@@ -1493,10 +1654,9 @@ function SearchAutocomplete(props: Props) {
           tooltip={isIndexing ? t('searchDisabledWhileIndexing') : ''}
           id="searchButton"
           disabled={isIndexing !== undefined}
-          style={{
-            marginRight: 10,
-            marginLeft: 10,
-            marginTop: 3,
+          sx={{
+            marginRight: '10px',
+            marginLeft: '10px',
           }}
           onClick={clickSearchButton}
         >

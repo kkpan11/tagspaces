@@ -2,10 +2,6 @@
 import { URL } from 'url';
 import path from 'path';
 import { BrowserWindow } from 'electron';
-import webpackPaths from '../../.erb/configs/webpack.paths';
-import fs from 'fs';
-import chalk from 'chalk';
-import { execSync } from 'child_process';
 import http from 'http';
 import settings from './settings';
 
@@ -20,62 +16,28 @@ export function resolveHtmlPath(htmlFileName: string) {
 }
 
 /**
- * Warn version.json is missing
- */
-export function checkVersionJson() {
-  const version = path.resolve(webpackPaths.srcRendererPath, 'version.json');
-  execSync('npm run version-meta');
-}
-
-/**
- * Warn third-party.txt is missing
- */
-export function checkThirdPartyTxt() {
-  const thirdParty = path.resolve(
-    webpackPaths.srcRendererPath,
-    'third-party.txt',
-  );
-  if (!fs.existsSync(thirdParty)) {
-    console.log(
-      chalk.black.bgYellow.bold(
-        'The third-party.txt files are missing. Sit back while we build them for you with "npm run third-party"',
-      ),
-    );
-    execSync('npm run third-party');
-  }
-}
-
-/**
- * generate JWT token
- */
-export function generateJWT() {
-  const env = path.resolve(webpackPaths.appPath, '.env');
-  if (!fs.existsSync(env)) {
-    console.log(
-      chalk.black.bgYellow.bold(
-        'The env files are missing. Sit back while we generate them for you with "KEY=testDevKey"',
-      ),
-    );
-    console.log(
-      chalk.red.bgWhiteBright.bold("Don't forget to change this KEY!"),
-    );
-    execSync('echo KEY=testDevKey > ' + env);
-  }
-
-  execSync('npm run generate-jwt');
-}
-
-/**
  * @param payload: string
  * @param endpoint: string
+ * @param signal
  */
-export function postRequest(payload, endpoint) {
+export function postRequest(payload, endpoint, signal = undefined) {
   return isWorkerAvailable().then((workerAvailable) => {
     if (!workerAvailable) {
       return Promise.reject(new Error('no Worker Available!'));
     }
+
     return new Promise((resolve, reject) => {
-      const option = {
+      // quick abort check
+      if (signal && signal.aborted) {
+        const e = new Error('Aborted before sending');
+        e.name = 'AbortError';
+        return reject(e);
+      }
+
+      let settled = false; // ensure we resolve/reject only once
+      let respRef = null; // keep response to remove listeners on cleanup
+
+      const options = {
         hostname: '127.0.0.1',
         port: settings.getUsedWsPort(),
         method: 'POST',
@@ -86,35 +48,116 @@ export function postRequest(payload, endpoint) {
           'Content-Length': Buffer.byteLength(payload, 'utf8'),
         },
       };
-      const reqPost = http
-        .request(option, (resp) => {
-          // .get('http://127.0.0.1:8888/thumb-gen?' + search.toString(), resp => {
-          let data = '';
+      const reqPost = http.request(options, (resp) => {
+        respRef = resp;
+        let data = '';
 
-          // A chunk of data has been received.
-          resp.on('data', (chunk) => {
-            data += chunk;
-          });
+        const onData = (chunk) => {
+          data += chunk;
+        };
 
-          // The whole response has been received. Print out the result.
-          resp.on('end', () => {
-            if (data) {
-              try {
-                resolve(JSON.parse(data));
-              } catch (ex) {
-                reject(ex);
-              }
-            } else {
-              reject(new Error('Error: no data'));
+        // The whole response has been received. Print out the result.
+        const onEnd = () => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          if (data) {
+            try {
+              resolve(JSON.parse(data));
+            } catch (ex) {
+              reject(ex);
             }
-          });
-        })
-        .on('error', (err) => {
-          console.log('Error: ' + err.message);
+          } else {
+            reject(new Error('Error: no data'));
+          }
+        };
+
+        const onRespError = (err) => {
+          if (settled) return;
+          settled = true;
+          cleanup();
           reject(err);
-        });
-      reqPost.write(payload);
-      reqPost.end();
+        };
+
+        resp.on('data', onData);
+        resp.on('end', onEnd);
+        resp.on('error', onRespError);
+      });
+
+      // handle request-level errors
+      const onReqError = (err) => {
+        if (settled) return;
+        // If the signal caused abort, we'll already reject from the abort handler.
+        // But http.request abort may also emit an 'error' (ECONNRESET). If signal was aborted,
+        // map this to AbortError for consistency.
+        if (signal && signal.aborted) {
+          const e = new Error('Request aborted');
+          e.name = 'AbortError';
+          settled = true;
+          cleanup();
+          return reject(e);
+        }
+        settled = true;
+        cleanup();
+        reject(err);
+      };
+
+      reqPost.on('error', onReqError);
+
+      // cleanup removes listeners
+      const cleanup = () => {
+        if (signal && typeof signal.removeEventListener === 'function') {
+          try {
+            signal.removeEventListener('abort', onSignalAbort);
+          } catch (ex) {}
+        }
+        reqPost.removeListener('error', onReqError);
+        if (respRef) {
+          respRef.removeAllListeners('data');
+          respRef.removeAllListeners('end');
+          respRef.removeAllListeners('error');
+        }
+      };
+
+      // abort handler
+      const onSignalAbort = () => {
+        if (settled) return;
+        // mark settled first to avoid race with req 'error' emission
+        settled = true;
+        cleanup();
+
+        // destroy/abort the underlying request. We don't pass an Error here
+        // because it may synchronously emit 'error' events that could be
+        // reentrant; we've already set settled and removed listeners.
+        try {
+          reqPost.destroy();
+        } catch (ex) {
+          /* ignore */
+        }
+
+        const abortErr = new Error('Request aborted by signal');
+        abortErr.name = 'AbortError';
+        reject(abortErr);
+      };
+
+      // attach abort listener once
+      if (signal && typeof signal.addEventListener === 'function') {
+        // use { once: true } so handler runs only once
+        signal.addEventListener('abort', onSignalAbort, { once: true });
+      }
+
+      // send payload
+      try {
+        reqPost.write(payload);
+        reqPost.end();
+      } catch (err) {
+        // synchronous error writing the payload
+        if (!settled) {
+          settled = true;
+          cleanup();
+          reject(err);
+        }
+      }
     });
   });
 }
@@ -276,55 +319,6 @@ export function ollamaPostRequest(
       });
     reqPost.write(payload);
     reqPost.end();
-  });
-}
-
-/**
- * @param filename
- * @returns {Promise<TS.Tag[]>}
- */
-export function readMacOSTags(filename) {
-  const cmdArr = [
-    'mdls',
-    '-raw',
-    '-name',
-    'kMDItemUserTags',
-    '"' + filename + '"',
-  ];
-  const cmd = cmdArr.join(' ');
-
-  return new Promise((resolve, reject) => {
-    const foundTags = [];
-    const { exec } = require('child_process');
-    exec(cmd, (error, stdout, stderr) => {
-      if (error) {
-        console.error(error);
-        reject(error);
-      }
-      if (stderr) {
-        console.log(stderr);
-        reject(stderr);
-      }
-      if (stdout && stdout !== '(null)') {
-        stdout
-          .toString()
-          .replace(/^\(|\)$/g, '')
-          .split(',')
-          .map((item) => {
-            const newTag = {
-              // id: uuidv1(),
-              title: item.trim(),
-            };
-            foundTags.push(newTag);
-            return newTag;
-          });
-
-        resolve(foundTags);
-        // console.log('Tags in file "' + filename + '": ' + JSON.stringify(foundTags));
-      } else {
-        resolve(foundTags);
-      }
-    });
   });
 }
 

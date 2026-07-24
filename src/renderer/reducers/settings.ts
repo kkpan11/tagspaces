@@ -16,35 +16,39 @@
  *
  */
 
-import semver from 'semver';
 import AppConfig from '-/AppConfig';
-import defaultSettings from './settings-default';
-import Links from 'assets/links';
-import versionMeta from '-/version.json';
-import { actions as AppActions } from './app';
-import { TS } from '-/tagspaces.namespace';
-import { Pro } from '../pro';
-import { getUuid } from '@tagspaces/tagspaces-common/utils-io';
+import { AIProvider } from '-/components/chat/ChatTypes';
+import { TabNames } from '-/hooks/EntryPropsTabsContextProvider';
 import {
   getDefaultEditor,
   getDefaultViewer,
+  getLastVersionPromise,
   mergeByProp,
   setZoomFactorElectron,
   updateByProp,
 } from '-/services/utils-io';
-import { AIProvider } from '-/components/chat/ChatTypes';
-import { TabNames } from '-/hooks/EntryPropsTabsContextProvider';
+import { mergeImportedSettings } from '-/services/export-import-validators';
+import { TS } from '-/tagspaces.namespace';
+import versionMeta from '-/version.json';
+import { getUuid } from '@tagspaces/tagspaces-common/utils-io';
+import semver from 'semver';
+import { actions as AppActions } from './app';
+import defaultSettings from './settings-default';
 
 export const types = {
   UPGRADE_SETTINGS: 'SETTINGS/UPGRADE_SETTINGS',
+  IMPORT_SETTINGS: 'SETTINGS/IMPORT_SETTINGS',
   SET_LANGUAGE: 'SETTINGS/SET_LANGUAGE',
   TOGGLE_SHOWUNIXHIDDENENTRIES: 'SETTINGS/TOGGLE_SHOWUNIXHIDDENENTRIES',
+  TOGGLE_SHOWSYMBOLICLINKS: 'SETTINGS/TOGGLE_SHOWSYMBOLICLINKS',
   SET_ENTRY_CONTAINER_TAB: 'SETTINGS/SET_ENTRY_CONTAINER_TAB',
-  //SET_SHOW_DETAILS: 'SETTINGS/SET_SHOW_DETAILS',
   SET_DESKTOPMODE: 'SETTINGS/SET_DESKTOPMODE',
   SET_USEONLYTAGSFROMTAGLIBRARY: 'SETTINGS/SET_USEONLYTAGSFROMTAGLIBRARY',
   SET_DEVMODE: 'SETTINGS/SET_DEVMODE',
   SET_ENABLE_WS: 'SETTINGS/SET_ENABLE_WS',
+  SET_ENCRYPT_CREDENTIALS_AT_REST: 'SETTINGS/SET_ENCRYPT_CREDENTIALS_AT_REST',
+  SET_ENCRYPT_CREDENTIALS_KEY_SOURCE:
+    'SETTINGS/SET_ENCRYPT_CREDENTIALS_KEY_SOURCE',
   WARNING_OPENING_FILES_EXTERNALLY: 'SETTINGS/WARNING_OPENING_FILES_EXTERNALLY',
   SET_SAVE_TAGS_IN_LOCATION: 'SETTINGS/SET_SAVE_TAGS_IN_LOCATION',
   SET_TAG_DELIMITER: 'SETTINGS/SET_TAG_DELIMITER',
@@ -75,9 +79,11 @@ export const types = {
   REMOVE_AI_PROVIDER: 'SETTINGS/REMOVE_AI_PROVIDER',
   SET_AI_PROVIDERS: 'SETTINGS/SET_AI_PROVIDERS',
   SET_PREFIX_TAG_CONTAINER: 'SETTINGS/SET_PREFIX_TAG_CONTAINER',
+  SET_AUTHOR: 'SETTINGS/SET_AUTHOR',
   SET_USEGENERATETHUMBNAILS: 'SETTINGS/SET_USEGENERATETHUMBNAILS',
   SET_TAGCOLOR: 'SETTINGS/SET_TAGCOLOR',
   SET_TAGTEXTCOLOR: 'SETTINGS/SET_TAGTEXTCOLOR',
+  SET_DEFAULT_FOLDER_COLOR: 'SETTINGS/SET_DEFAULT_FOLDER_COLOR',
   SET_CURRENTTHEME: 'SETTINGS/SET_CURRENTTHEME',
   SET_CURRENT_REGULAR_THEME: 'SETTINGS/SET_CURRENT_REGULAR_THEME',
   SET_CURRENT_DARK_THEME: 'SETTINGS/SET_CURRENT_DARK_THEME',
@@ -93,11 +99,15 @@ export const types = {
   SET_SUPPORTED_FILE_TYPES: 'SETTINGS/SET_SUPPORTED_FILE_TYPES',
   ADD_SUPPORTED_FILE_TYPES: 'SETTINGS/ADD_SUPPORTED_FILE_TYPES',
   REMOVE_SUPPORTED_FILE_TYPES: 'SETTINGS/REMOVE_SUPPORTED_FILE_TYPES',
-  //ENABLE_EXTENSION: 'SETTINGS/ENABLE_EXTENSION',
   SET_LAST_PUBLISHED_VERSION: 'SETTINGS/SET_LAST_PUBLISHED_VERSION',
   SET_ENTRY_PROPERTIES_SPLIT_SIZE: 'SETTINGS/SET_ENTRY_PROPERTIES_SPLIT_SIZE',
   SET_MAIN_VSPLIT_SIZE: 'SETTINGS/SET_MAIN_VSPLIT_SIZE',
+  SET_LEFT_PANEL_WIDTH: 'SETTINGS/SET_LEFT_PANEL_WIDTH',
   SET_FIRST_RUN: 'SETTINGS/SET_FIRST_RUN',
+  SET_ONBOARDING_COMPLETED: 'SETTINGS/SET_ONBOARDING_COMPLETED',
+  SET_HIDE_HOWTOSTART: 'SETTINGS/SET_HIDE_HOWTOSTART',
+  SET_HIDE_MOBILE_TEASER: 'SETTINGS/SET_HIDE_MOBILE_TEASER',
+  SET_ONBOARDING_VERSION: 'SETTINGS/SET_ONBOARDING_VERSION',
   TOGGLE_TAGGROUP: 'TOGGLE_TAGGROUP',
   ADD_MAPTILE_SERVER: 'SET_MAPTILE_SERVER',
   EDIT_MAPTILE_SERVER: 'EDIT_MAPTILE_SERVER',
@@ -107,6 +117,14 @@ export const types = {
   SET_FILE_OPEN_HISTORY: 'SET_FILE_OPEN_HISTORY',
   SET_FOLDER_OPEN_HISTORY: 'SET_FOLDER_OPEN_HISTORY',
   SET_FILE_EDIT_HISTORY: 'SET_FILE_EDIT_HISTORY',
+  SET_LAST_MOVE_COPY_MODE: 'SETTINGS/SET_LAST_MOVE_COPY_MODE',
+  SET_LAST_LINK_TYPE: 'SETTINGS/SET_LAST_LINK_TYPE',
+  SET_HIDE_PRO_FEATURES: 'SETTINGS/SET_HIDE_PRO_FEATURES',
+  SET_AUTO_SAVE_DESCRIPTION: 'SETTINGS/SET_AUTO_SAVE_DESCRIPTION',
+  SET_PERSPECTIVE_ENABLED: 'SETTINGS/SET_PERSPECTIVE_ENABLED',
+  SET_ENABLED_PERSPECTIVES: 'SETTINGS/SET_ENABLED_PERSPECTIVES',
+  MARK_PERSPECTIVE_ONBOARDING_SEEN: 'SETTINGS/MARK_PERSPECTIVE_ONBOARDING_SEEN',
+  RESET_PERSPECTIVE_ONBOARDING: 'SETTINGS/RESET_PERSPECTIVE_ONBOARDING',
 };
 
 function generateUniqueName(array: Array<any>, baseName: string): string {
@@ -133,24 +151,26 @@ export default (state: any = defaultSettings, action: any) => {
           state.keyBindings.find((y) => y.name === x.name),
         ),
       );
+
+      const explicitlyDeletedTypes = state.explicitlyDeletedFileTypes || [];
+      const defaultFileTypes = defaultSettings.supportedFileTypes.filter(
+        (item) => !explicitlyDeletedTypes.includes(item.type),
+      );
       return {
         ...defaultSettings,
         ...state,
-        currentTheme: window.ExtTheme || state.currentTheme,
+        currentTheme: AppConfig.ExtTheme || state.currentTheme,
         currentRegularTheme:
-          window.ExtRegularTheme || state.currentRegularTheme,
-        currentDarkTheme: window.ExtDarkTheme || state.currentDarkTheme,
-        // TODO dynamically add supportedThemes functionality
+          AppConfig.ExtRegularTheme || state.currentRegularTheme,
+        currentDarkTheme: AppConfig.ExtDarkTheme || state.currentDarkTheme,
         supportedThemes: defaultSettings.supportedThemes, // taking always the themes from default settings
-        supportedRegularThemes: defaultSettings.supportedRegularThemes, // taking always the themes from default settings
-        supportedDarkThemes: defaultSettings.supportedDarkThemes, // taking always the themes from default settings
         supportedLanguages: defaultSettings.supportedLanguages, // taking always the languages from default settings
         keyBindings: [
           // ...defaultSettings.keyBindings, // use to reset to the default key bindings
           ...mergedKeyBindings,
         ],
         supportedFileTypes: mergeByProp(
-          defaultSettings.supportedFileTypes,
+          defaultFileTypes,
           state.supportedFileTypes,
           'type',
         ),
@@ -168,8 +188,20 @@ export default (state: any = defaultSettings, action: any) => {
         }),
       };
     }
+    case types.IMPORT_SETTINGS: {
+      // Merge imported settings over the current (trusted) state — never over
+      // defaults — so a partial/old file can't wipe local-only preferences.
+      return mergeImportedSettings(
+        state,
+        action.settings,
+        defaultSettings.keyBindings,
+      );
+    }
     case types.TOGGLE_SHOWUNIXHIDDENENTRIES: {
       return { ...state, showUnixHiddenEntries: !state.showUnixHiddenEntries };
+    }
+    case types.TOGGLE_SHOWSYMBOLICLINKS: {
+      return { ...state, showSymbolicLinks: !state.showSymbolicLinks };
     }
     case types.SET_ENTRY_CONTAINER_TAB: {
       return { ...state, entryContainerTab: action.entryContainerTab };
@@ -195,8 +227,26 @@ export default (state: any = defaultSettings, action: any) => {
     case types.SET_DEVMODE: {
       return { ...state, devMode: action.devMode };
     }
+    case types.SET_HIDE_PRO_FEATURES: {
+      return { ...state, hideProFeatures: action.hideProFeatures };
+    }
+    case types.SET_AUTO_SAVE_DESCRIPTION: {
+      return { ...state, autoSaveDescription: action.autoSaveDescription };
+    }
     case types.SET_ENABLE_WS: {
       return { ...state, enableWS: action.enableWS };
+    }
+    case types.SET_ENCRYPT_CREDENTIALS_AT_REST: {
+      return {
+        ...state,
+        encryptCredentialsAtRest: action.encryptCredentialsAtRest,
+      };
+    }
+    case types.SET_ENCRYPT_CREDENTIALS_KEY_SOURCE: {
+      return {
+        ...state,
+        encryptCredentialsKeySource: action.encryptCredentialsKeySource,
+      };
     }
     case types.WARNING_OPENING_FILES_EXTERNALLY: {
       return {
@@ -233,6 +283,18 @@ export default (state: any = defaultSettings, action: any) => {
     }
     case types.SET_FIRST_RUN: {
       return { ...state, firstRun: action.firstRun };
+    }
+    case types.SET_ONBOARDING_COMPLETED: {
+      return { ...state, onboardingCompleted: action.onboardingCompleted };
+    }
+    case types.SET_HIDE_HOWTOSTART: {
+      return { ...state, hideHowToStart: action.hideHowToStart };
+    }
+    case types.SET_HIDE_MOBILE_TEASER: {
+      return { ...state, hideMobileTeaser: action.hideMobileTeaser };
+    }
+    case types.SET_ONBOARDING_VERSION: {
+      return { ...state, onboardingVersion: action.onboardingVersion };
     }
     case types.SET_LANGUAGE: {
       return { ...state, interfaceLanguage: action.language };
@@ -313,6 +375,11 @@ export default (state: any = defaultSettings, action: any) => {
     case types.SET_PREFIX_TAG_CONTAINER: {
       return { ...state, prefixTagContainer: action.prefixTagContainer };
     }
+    case types.SET_AUTHOR: {
+      const author =
+        action.author === undefined ? defaultSettings.author : action.author;
+      return { ...state, author: author };
+    }
     case types.SET_USEGENERATETHUMBNAILS: {
       return { ...state, useGenerateThumbnails: action.useGenerateThumbnails };
     }
@@ -328,6 +395,9 @@ export default (state: any = defaultSettings, action: any) => {
     }
     case types.SET_TAGTEXTCOLOR: {
       return { ...state, tagTextColor: action.tagTextColor };
+    }
+    case types.SET_DEFAULT_FOLDER_COLOR: {
+      return { ...state, defaultFolderColor: action.color };
     }
     case types.SET_CURRENTTHEME: {
       return { ...state, currentTheme: action.currentTheme };
@@ -409,9 +479,28 @@ export default (state: any = defaultSettings, action: any) => {
       return { ...state, zoomFactor: zoomLevel };
     }
     case types.SET_SUPPORTED_FILE_TYPES: {
+      const added = action.supportedFileTypes.filter(
+        (newObj) =>
+          !state.supportedFileTypes.some(
+            (oldObj) => oldObj.type === newObj.type,
+          ),
+      );
+
+      const removed = state.supportedFileTypes.filter(
+        (oldObj) =>
+          !action.supportedFileTypes.some(
+            (newObj) => newObj.type === oldObj.type,
+          ),
+      );
       return {
         ...state,
         supportedFileTypes: action.supportedFileTypes,
+        explicitlyDeletedFileTypes: [
+          ...state.explicitlyDeletedFileTypes.filter(
+            (type) => !added.some((add) => add.type === type),
+          ),
+          ...removed.map((del) => del.type),
+        ],
       };
     }
     case types.ADD_SUPPORTED_FILE_TYPES: {
@@ -424,34 +513,6 @@ export default (state: any = defaultSettings, action: any) => {
         ),
       };
     }
-    /*case types.ENABLE_EXTENSION: {
-      let enabledExtensions;
-      let supportedFileTypes;
-      if (action.enabled) {
-        if (!state.enabledExtensions.includes(action.extensionId)) {
-          enabledExtensions = [...state.enabledExtensions, action.extensionId];
-        } else {
-          enabledExtensions = [...state.enabledExtensions];
-        }
-      } else {
-        enabledExtensions = state.enabledExtensions.filter(
-          (extensionId) => extensionId === action.extensionId,
-        );
-        supportedFileTypes = state.supportedFileTypes.filter(
-          (fType) =>
-            !(
-              fType.viewer === action.extensionId &&
-              fType.editor === action.extensionId
-            ),
-        );
-      }
-
-      return {
-        ...state,
-        enabledExtensions: enabledExtensions,
-        ...(supportedFileTypes && { supportedFileTypes: supportedFileTypes }),
-      };
-    }*/
     case types.REMOVE_SUPPORTED_FILE_TYPES: {
       const supportedFileTypes = state.supportedFileTypes.map(
         (fType: TS.FileTypes) => ({
@@ -479,6 +540,12 @@ export default (state: any = defaultSettings, action: any) => {
       return {
         ...state,
         mainVSplitSize: action.mainVSplitSize,
+      };
+    }
+    case types.SET_LEFT_PANEL_WIDTH: {
+      return {
+        ...state,
+        leftPanelWidth: action.leftPanelWidth,
       };
     }
     case types.SET_LAST_PUBLISHED_VERSION: {
@@ -511,11 +578,59 @@ export default (state: any = defaultSettings, action: any) => {
         folderOpenHistory: action.folderOpenHistory,
       };
     }
+    case types.SET_LAST_MOVE_COPY_MODE: {
+      return {
+        ...state,
+        lastMoveCopyMode: action.mode,
+      };
+    }
+    case types.SET_LAST_LINK_TYPE: {
+      return {
+        ...state,
+        lastLinkType: action.linkType,
+      };
+    }
     case types.SET_FILE_EDIT_HISTORY: {
       return {
         ...state,
         fileEditHistory: action.fileEditHistory,
       };
+    }
+    case types.SET_PERSPECTIVE_ENABLED: {
+      const current: string[] = Array.isArray(state.enabledPerspectives)
+        ? state.enabledPerspectives
+        : [];
+      const isEnabled = current.includes(action.perspectiveId);
+      let next: string[];
+      if (action.enabled && !isEnabled) {
+        next = [...current, action.perspectiveId];
+      } else if (!action.enabled && isEnabled) {
+        next = current.filter((id) => id !== action.perspectiveId);
+      } else {
+        return state;
+      }
+      return { ...state, enabledPerspectives: next };
+    }
+    case types.SET_ENABLED_PERSPECTIVES: {
+      return { ...state, enabledPerspectives: action.enabledPerspectives };
+    }
+    case types.MARK_PERSPECTIVE_ONBOARDING_SEEN: {
+      const seen = state.seenPerspectiveOnboardings || {};
+      if (seen[action.perspectiveId] === true) {
+        return state;
+      }
+      return {
+        ...state,
+        seenPerspectiveOnboardings: {
+          ...seen,
+          [action.perspectiveId]: true,
+        },
+      };
+    }
+    case types.RESET_PERSPECTIVE_ONBOARDING: {
+      const seen = { ...(state.seenPerspectiveOnboardings || {}) };
+      delete seen[action.perspectiveId];
+      return { ...state, seenPerspectiveOnboardings: seen };
     }
     case types.TOGGLE_TAGGROUP: {
       let tagGroupCollapsed;
@@ -630,9 +745,27 @@ export const actions = {
     type: types.SET_DEVMODE,
     devMode,
   }),
+  setHideProFeatures: (hideProFeatures: boolean) => ({
+    type: types.SET_HIDE_PRO_FEATURES,
+    hideProFeatures,
+  }),
+  setAutoSaveDescription: (autoSaveDescription: boolean) => ({
+    type: types.SET_AUTO_SAVE_DESCRIPTION,
+    autoSaveDescription,
+  }),
   setEnableWS: (enableWS: boolean) => ({
     type: types.SET_ENABLE_WS,
     enableWS,
+  }),
+  setEncryptCredentialsAtRest: (encryptCredentialsAtRest: boolean) => ({
+    type: types.SET_ENCRYPT_CREDENTIALS_AT_REST,
+    encryptCredentialsAtRest,
+  }),
+  setEncryptCredentialsKeySource: (
+    encryptCredentialsKeySource: 'off' | 'keychain' | 'password',
+  ) => ({
+    type: types.SET_ENCRYPT_CREDENTIALS_KEY_SOURCE,
+    encryptCredentialsKeySource,
   }),
   setWarningOpeningFilesExternally: (
     warningOpeningFilesExternally: boolean,
@@ -647,16 +780,15 @@ export const actions = {
   toggleShowUnixHiddenEntries: () => ({
     type: types.TOGGLE_SHOWUNIXHIDDENENTRIES,
   }),
+  toggleShowSymbolicLinks: () => ({
+    type: types.TOGGLE_SHOWSYMBOLICLINKS,
+  }),
   setEntryContainerTab: (
     tabName: (typeof TabNames)[keyof typeof TabNames],
   ) => ({
     type: types.SET_ENTRY_CONTAINER_TAB,
     entryContainerTab: tabName,
   }),
-  /*  setShowDetails: (showDetails: boolean) => ({
-    type: types.SET_SHOW_DETAILS,
-    showDetails: showDetails,
-  }),*/
   setCheckForUpdates: (checkForUpdates: boolean) => ({
     type: types.SET_CHECKFORUPDATES,
     checkForUpdates,
@@ -665,11 +797,6 @@ export const actions = {
     type: types.SET_REORDER_TAGS,
     reorderTags,
   }),
-  /*setLanguage: (language: string) => (dispatch: (action) => void) => {
-    return i18n.changeLanguage(language).then(() => {
-      dispatch(actions.setLanguageInt(language));
-    });
-  },*/
   setLanguage: (language: string) => ({
     type: types.SET_LANGUAGE,
     language,
@@ -681,6 +808,23 @@ export const actions = {
   setDefaultPerspective: (defaultPerspective: string) => ({
     type: types.SET_DEFAULTPERSPECTIVE,
     defaultPerspective,
+  }),
+  setPerspectiveEnabled: (perspectiveId: string, enabled: boolean) => ({
+    type: types.SET_PERSPECTIVE_ENABLED,
+    perspectiveId,
+    enabled,
+  }),
+  setEnabledPerspectives: (enabledPerspectives: string[]) => ({
+    type: types.SET_ENABLED_PERSPECTIVES,
+    enabledPerspectives,
+  }),
+  markPerspectiveOnboardingSeen: (perspectiveId: string) => ({
+    type: types.MARK_PERSPECTIVE_ONBOARDING_SEEN,
+    perspectiveId,
+  }),
+  resetPerspectiveOnboarding: (perspectiveId: string) => ({
+    type: types.RESET_PERSPECTIVE_ONBOARDING,
+    perspectiveId,
   }),
   setColoredFileExtension: (coloredFileExtension: boolean) => ({
     type: types.SET_COLOREDFILEEXTENSION,
@@ -750,6 +894,10 @@ export const actions = {
     type: types.SET_PREFIX_TAG_CONTAINER,
     prefixTagContainer,
   }),
+  setAuthor: (author: string) => ({
+    type: types.SET_AUTHOR,
+    author,
+  }),
   setUseGenerateThumbnails: (useGenerateThumbnails: boolean) => ({
     type: types.SET_USEGENERATETHUMBNAILS,
     useGenerateThumbnails,
@@ -774,6 +922,10 @@ export const actions = {
   setTagTextColor: (tagTextColor: string) => ({
     type: types.SET_TAGTEXTCOLOR,
     tagTextColor,
+  }),
+  setDefaultFolderColor: (color: string) => ({
+    type: types.SET_DEFAULT_FOLDER_COLOR,
+    color,
   }),
   setCurrentTheme: (currentTheme: string) => ({
     type: types.SET_CURRENTTHEME,
@@ -818,16 +970,11 @@ export const actions = {
     type: types.REMOVE_SUPPORTED_FILE_TYPES,
     extensionId,
   }),
-  /*enableExtension: (extensionId: string, enabled: boolean) => ({
-    type: types.ENABLE_EXTENSION,
-    extensionId,
-    enabled,
-  }),*/
-  setSupportedFileTypes: (supportedFileTypes: []) => ({
+  setSupportedFileTypes: (supportedFileTypes: Array<TS.FileTypes>) => ({
     type: types.SET_SUPPORTED_FILE_TYPES,
     supportedFileTypes,
   }),
-  setEntryPropertiesSplitSize: (entrySplitSize: string) => ({
+  setEntryPropertiesSplitSize: (entrySplitSize: number) => ({
     type: types.SET_ENTRY_PROPERTIES_SPLIT_SIZE,
     entrySplitSize,
   }),
@@ -835,12 +982,36 @@ export const actions = {
     type: types.SET_MAIN_VSPLIT_SIZE,
     mainVSplitSize,
   }),
+  setLeftPanelWidth: (leftPanelWidth: number) => ({
+    type: types.SET_LEFT_PANEL_WIDTH,
+    leftPanelWidth,
+  }),
   setFirstRun: (firstRun: boolean) => ({
     type: types.SET_FIRST_RUN,
     firstRun,
   }),
+  setOnboardingCompleted: (onboardingCompleted: boolean) => ({
+    type: types.SET_ONBOARDING_COMPLETED,
+    onboardingCompleted,
+  }),
+  setHideHowToStart: (hideHowToStart: boolean) => ({
+    type: types.SET_HIDE_HOWTOSTART,
+    hideHowToStart,
+  }),
+  setHideMobileTeaser: (hideMobileTeaser: boolean) => ({
+    type: types.SET_HIDE_MOBILE_TEASER,
+    hideMobileTeaser,
+  }),
+  setOnboardingVersion: (onboardingVersion: number) => ({
+    type: types.SET_ONBOARDING_VERSION,
+    onboardingVersion,
+  }),
   upgradeSettings: () => ({
     type: types.UPGRADE_SETTINGS,
+  }),
+  importSettings: (settings: Record<string, any>) => ({
+    type: types.IMPORT_SETTINGS,
+    settings,
   }),
   setLastPublishedVersion: (lastPublishedVersion: string) => ({
     type: types.SET_LAST_PUBLISHED_VERSION,
@@ -866,82 +1037,37 @@ export const actions = {
     type: types.SET_FILE_EDIT_HISTORY,
     fileEditHistory,
   }),
-  checkForUpdate:
-    () =>
-    (
-      dispatch: (actions: Object) => void,
-      // getState: () => any
-    ) => {
-      // const { settings } = getState();
-      getLastVersionPromise()
-        .then((lastVersion) => {
-          console.log('Last version on server: ' + lastVersion);
-          const newVersion = semver.coerce(lastVersion); // lastVersion '3.0.5' ;
-          const currentVersion = semver.coerce(versionMeta.version);
-          // const lastPublishedVersion = semver.coerce(settings.lastPublishedVersion);
-          if (
-            semver.valid(newVersion) &&
-            semver.gt(newVersion, currentVersion)
-          ) {
-            console.log('New version available: ' + newVersion.version + '!');
-            dispatch(actions.setLastPublishedVersion(newVersion.version));
-            // if (semver.gt(newVersion, lastPublishedVersion)) {
-            dispatch(AppActions.setUpdateAvailable(true));
-            // }
-          } else {
-            console.log(
-              'Current version: ' + versionMeta.version + ' is up to date',
-            );
-          }
-          return true;
-        })
-        .catch((error) => {
-          console.log('Error while checking for update: ' + error);
-        });
-    },
+  setLastMoveCopyMode: (mode: 'move' | 'copy') => ({
+    type: types.SET_LAST_MOVE_COPY_MODE,
+    mode,
+  }),
+  setLastLinkType: (linkType: 'ts' | 'relative') => ({
+    type: types.SET_LAST_LINK_TYPE,
+    linkType,
+  }),
+  checkForUpdate: () => (dispatch: (actions: Object) => void) => {
+    getLastVersionPromise()
+      .then((lastVersion) => {
+        console.log('Last version on server: ' + lastVersion);
+        const newVersion = semver.coerce(lastVersion); // lastVersion '3.0.5' ;
+        const currentVersion = semver.coerce(versionMeta.version);
+        // const lastPublishedVersion = semver.coerce(settings.lastPublishedVersion);
+        if (semver.valid(newVersion) && semver.gt(newVersion, currentVersion)) {
+          console.log('New version available: ' + newVersion.version + '!');
+          dispatch(actions.setLastPublishedVersion(newVersion.version));
+          dispatch(AppActions.setUpdateAvailable(true));
+        } else {
+          console.log(
+            'Current version: ' + versionMeta.version + ' is up to date',
+          );
+        }
+        return true;
+      })
+      .catch((error) => {
+        console.log('Error while checking for update: ' + error);
+      });
+  },
 };
-
-/**
- * TODO move out of reducer
- */
-export function getLastVersionPromise(): Promise<string> {
-  return new Promise((resolve, reject) => {
-    console.log('Checking for new version...');
-    const xhr = new XMLHttpRequest();
-    let versionFile = 'tagspaces.json';
-    const proText = Pro ? 'pro-' : '';
-    if (AppConfig.isWeb) {
-      versionFile = 'tagspaces-pro-web.json';
-    } else if (AppConfig.isWin) {
-      versionFile = 'tagspaces-' + proText + 'win-x64.json';
-    } else if (AppConfig.isMacLike) {
-      versionFile = 'tagspaces-' + proText + 'mac.json';
-    } else if (AppConfig.isLinux) {
-      versionFile = 'tagspaces-' + proText + 'linux-x64.json';
-    } else if (AppConfig.isAndroid) {
-      versionFile = 'tagspaces-' + proText + 'android.json';
-    }
-    const updateUrl =
-      Links.links.checkNewVersionURL +
-      versionFile +
-      '?cv=' +
-      versionMeta.version;
-    xhr.open('GET', updateUrl, true);
-    xhr.responseType = 'json';
-    xhr.onerror = reject;
-    xhr.onload = () => {
-      const data = xhr.response || xhr.responseText;
-      // console.log('Response from server: ' + JSON.stringify(data));
-      const versioningData = JSON.parse(JSON.stringify(data));
-      if (versioningData.appVersion && versioningData.appVersion.length > 0) {
-        resolve(versioningData.appVersion);
-      } else {
-        reject('Could not validate update data');
-      }
-    };
-    xhr.send();
-  });
-}
 
 function getDefaultAI(aiProviderId: string, aiProviders: AIProvider[]) {
   if (aiProviderId) {
@@ -957,45 +1083,90 @@ function getDefaultAI(aiProviderId: string, aiProviders: AIProvider[]) {
 }
 
 // Selectors
-export const getEntrySplitSize = (state: any) => state.settings.entrySplitSize;
+export const getEntrySplitSize = (state: any): number => {
+  const raw = state.settings.entrySplitSize;
+  // Legacy values were strings like '45%' and are no longer valid (value is now pixels).
+  return typeof raw === 'number' && isFinite(raw) ? raw : 200;
+};
+export const getLeftPanelWidth = (state: any): number => {
+  const raw = state.settings.leftPanelWidth;
+  return typeof raw === 'number' && isFinite(raw) ? raw : 320;
+};
 export const getMapTileServer = (state: any): TS.MapTileServer =>
-  AppConfig.mapTileServers
-    ? AppConfig.mapTileServers[0]
+  AppConfig.ExtMapTileServers
+    ? AppConfig.ExtMapTileServers[0]
     : state.settings.mapTileServers[0];
 export const getMapTileServers = (state: any): Array<TS.MapTileServer> =>
-  AppConfig.mapTileServers || state.settings.mapTileServers;
+  AppConfig.ExtMapTileServers || state.settings.mapTileServers;
 export const getSettings = (state: any) => state.settings;
+export const getMaxRecentMoveCopyDestinations = (state: any): number => {
+  const v = state.settings.tsRecentMoveCopyDestinations;
+  return typeof v === 'number' && v >= 0 ? v : 6;
+};
+export const getLastMoveCopyMode = (state: any): 'move' | 'copy' => {
+  return state.settings.lastMoveCopyMode === 'copy' ? 'copy' : 'move';
+};
+export const getLastLinkType = (state: any): 'ts' | 'relative' => {
+  return state.settings.lastLinkType === 'ts' ? 'ts' : 'relative';
+};
 export const getEnableWS = (state: any) => state.settings.enableWS;
+export const getEncryptCredentialsAtRest = (state: any) =>
+  state.settings.encryptCredentialsAtRest === true;
+export const getEncryptCredentialsKeySource = (
+  state: any,
+): 'off' | 'keychain' | 'password' => {
+  const v = state.settings.encryptCredentialsKeySource;
+  return v === 'keychain' || v === 'password' ? v : 'off';
+};
 export const getDesktopMode = (state: any) => {
-  if (typeof window.ExtDisplayMode === 'undefined') {
+  if (typeof AppConfig.ExtDisplayMode === 'undefined') {
     return state.settings.desktopMode;
   }
-  return window.ExtDisplayMode !== 'mobile';
+  return AppConfig.ExtDisplayMode !== 'mobile';
 };
 export const isDevMode = (state: any) =>
-  window.ExtDevMode ? window.ExtDevMode : state.settings.devMode;
+  AppConfig.ExtDevMode ? AppConfig.ExtDevMode : state.settings.devMode;
+export const isHideProFeatures = (state: any) => {
+  // In a Pro build never hide licensed Pro features — the "Hide Pro features"
+  // switch (and the extconfig override) exist only to suppress Pro teasers in
+  // the Lite build. Resolve Pro lazily to avoid a reducer↔Pro import cycle.
+  try {
+    // eslint-disable-next-line global-require
+    const { Pro } = require('-/pro');
+    if (Pro) {
+      return false;
+    }
+  } catch (e) {
+    // Pro module not available (Lite build) — fall through to the flag
+  }
+  return AppConfig.ExtHideProFeatures !== undefined
+    ? AppConfig.ExtHideProFeatures
+    : state.settings.hideProFeatures;
+};
+export const isAutoSaveDescription = (state: any) =>
+  state.settings.autoSaveDescription;
 export const isRevisionsEnabled = (state: any) =>
   state.settings.isRevisionsEnabled;
 export const isReorderTags = (state: any) => state.settings.reorderTags;
-/*export const getDefaultAIProviderId = (state: any) =>
-  state.settings.aiProviderId;*/
 export const getDefaultAIProvider = (state: any) => {
-  if (typeof window.ExtAI === 'undefined') {
+  if (typeof AppConfig.ExtAI === 'undefined') {
     return getDefaultAI(
       state.settings.aiProviderId,
       state.settings.aiProviders,
     );
   }
-  return getDefaultAI(window.ExtAI.defaultEngine, window.ExtAI.engines);
+  return getDefaultAI(AppConfig.ExtAI.defaultEngine, AppConfig.ExtAI.engines);
 };
 export const getAIProviders = (state: any) => {
-  if (typeof window.ExtAI === 'undefined') {
+  if (typeof AppConfig.ExtAI === 'undefined') {
     return state.settings.aiProviders;
   }
-  return window.ExtAI.engines;
+  return AppConfig.ExtAI.engines;
 };
 export const getPrefixTagContainer = (state: any) =>
   state.settings.prefixTagContainer;
+export const getAuthor = (state: any) =>
+  AppConfig.ExtAuthor ?? state.settings.author;
 export const getGeoTaggingFormat = (state: any) =>
   state.settings.geoTaggingFormat;
 export const getAddTagsToLibrary = (state: any) =>
@@ -1003,17 +1174,39 @@ export const getAddTagsToLibrary = (state: any) =>
 export const getWarningOpeningFilesExternally = (state: any) =>
   state.settings.warningOpeningFilesExternally;
 export const getCheckForUpdateOnStartup = (state: any) =>
-  state.settings.checkForUpdates;
+  AppConfig.ExtCheckForUpdatesOnStartup !== undefined
+    ? AppConfig.ExtCheckForUpdatesOnStartup
+    : state.settings.checkForUpdates;
 export const getLastPublishedVersion = (state: any) =>
   state.settings.lastPublishedVersion;
 export const getShowUnixHiddenEntries = (state: any) =>
   state.settings.showUnixHiddenEntries;
+export const getShowSymbolicLinks = (state: any) =>
+  state.settings.showSymbolicLinks !== false;
 export const getEntryContainerTab = (state: any) =>
   state.settings.entryContainerTab;
 export const getUseDefaultLocation = (state: any) =>
   state.settings.useDefaultLocation;
 export const getDefaultPerspective = (state: any) =>
-  state.settings.defaultPerspective;
+  AppConfig.ExtDefaultPerspective ?? state.settings.defaultPerspective;
+// Precedence: when extconfig.json defines ExtEnabledPerspectives, it is
+// authoritative on every app load — the user's persisted toggles in
+// state.settings.enabledPerspectives are ignored. Distributors / admins win
+// over end-user preference; the Settings tab reflects this by rendering the
+// rows read-only (see isEnabledPerspectivesLocked).
+export const getEnabledPerspectives = (state: any): string[] => {
+  if (Array.isArray(AppConfig.ExtEnabledPerspectives)) {
+    return AppConfig.ExtEnabledPerspectives;
+  }
+  return Array.isArray(state.settings.enabledPerspectives)
+    ? state.settings.enabledPerspectives
+    : [];
+};
+export const isEnabledPerspectivesLocked = (): boolean =>
+  Array.isArray(AppConfig.ExtEnabledPerspectives);
+export const getSeenPerspectiveOnboardings = (
+  state: any,
+): Record<string, boolean> => state.settings.seenPerspectiveOnboardings || {};
 export const getColoredFileExtension = (state: any) =>
   state.settings.coloredFileExtension;
 export const getShowTagAreaOnStartup = (state: any) =>
@@ -1035,24 +1228,26 @@ export const getMaxCollectedTag = (state: any) =>
     ? state.settings.maxCollectedTag
     : AppConfig.maxCollectedTag;
 export const getPersistTagsInSidecarFile = (state: any): boolean =>
-  AppConfig.useSidecarsForFileTaggingDisableSetting
-    ? AppConfig.useSidecarsForFileTagging
+  AppConfig.ExtUseSidecarsForFileTagging !== undefined
+    ? AppConfig.ExtUseSidecarsForFileTagging
     : state.settings.persistTagsInSidecarFile;
 export const getFileNameTagPlace = (state: any): boolean =>
-  state.settings.filenameTagPlacedAtEnd;
+  typeof AppConfig.ExtFilenameTagPlacedAtEnd === 'undefined'
+    ? state.settings.filenameTagPlacedAtEnd
+    : AppConfig.ExtFilenameTagPlacedAtEnd;
 export const getUseGenerateThumbnails = (state: any) =>
   state.settings.useGenerateThumbnails;
 export const getKeyBindings = (state: any) => state.settings.keyBindings;
 export const getKeyBindingObject = (state: any) =>
   generateKeyBindingObject(state.settings.keyBindings);
 export const getSupportedFileTypes = (state: any) =>
-  state.settings.supportedFileTypes.sort((a, b) =>
-    a.type > b.type ? 1 : a.type < b.type ? -1 : 0,
-  );
+  state.settings.supportedFileTypes;
 export const getExtensionsFound = (state: any) =>
   state.settings.extensionsFound;
 export const getTagColor = (state: any) => state.settings.tagBackgroundColor;
 export const getTagTextColor = (state: any) => state.settings.tagTextColor;
+export const getDefaultFolderColor = (state: any) =>
+  AppConfig.ExtDefaultFolderColor ?? state.settings.defaultFolderColor;
 export const getCurrentTheme = (state: any) => state.settings.currentTheme;
 export const getDefaultRegularTheme = (state: any) =>
   state.settings.currentRegularTheme;
@@ -1078,7 +1273,9 @@ export const getStoredSearchesVisible = (state: any) =>
   state.settings.storedSearchesVisible;
 export const getShowBookmarks = (state: any) => state.settings.showBookmarks;
 export const getSaveTagInLocation = (state: any) =>
-  state.settings.saveTagInLocation;
+  typeof AppConfig.ExtUseLocationTags === 'undefined'
+    ? state.settings.saveTagInLocation
+    : AppConfig.ExtUseLocationTags;
 export const getFileOpenHistory = (state: any) =>
   state.settings.fileOpenHistory;
 export const getFolderOpenHistory = (state: any) =>
@@ -1086,14 +1283,23 @@ export const getFolderOpenHistory = (state: any) =>
 export const getFileEditHistory = (state: any) =>
   state.settings.fileEditHistory;
 export const isFirstRun = (state: any) => {
-  if (typeof window.ExtIsFirstRun === 'undefined') {
+  if (typeof AppConfig.ExtIsFirstRun === 'undefined') {
     return state.settings.firstRun;
   }
-  return window.ExtIsFirstRun;
+  return AppConfig.ExtIsFirstRun;
 };
+export const isOnboardingCompleted = (state: any) =>
+  state.settings.onboardingCompleted === true;
+export const isHowToStartHidden = (state: any) =>
+  state.settings.hideHowToStart === true;
+export const isMobileTeaserHidden = (state: any) =>
+  state.settings.hideMobileTeaser === true;
+export const getOnboardingVersion = (state: any) =>
+  state.settings.onboardingVersion || 0;
 
+const kbObject: any = {};
 function generateKeyBindingObject(keyBindings: Array<Object>) {
-  const kbObject: any = {};
+  // Object.keys(kbObject).forEach((k) => delete kbObject[k]);
   keyBindings.map((kb: any) => {
     kbObject[kb.name] = kb.command;
     return true;

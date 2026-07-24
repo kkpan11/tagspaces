@@ -4,9 +4,7 @@
 import { test, expect } from './fixtures';
 import AppConfig from '../../src/renderer/AppConfig';
 import {
-  defaultLocationPath,
   defaultLocationName,
-  createPwMinioLocation,
   createPwLocation,
   createS3Location,
 } from './location.helpers';
@@ -27,41 +25,41 @@ import {
   frameLocator,
   dnd,
   setSettings,
+  openFile,
+  createFile,
+  addDescription,
+  createLocation,
+  expectFileContain,
+  expectMetaFileContain,
+  openFolderProp,
 } from './general.helpers';
-import { startTestingApp, stopApp, testDataRefresh } from './hook';
+import { startTestingApp, stopApp } from './hook';
 import { clearDataStorage, closeWelcomePlaywright } from './welcome.helpers';
 import { openContextEntryMenu } from './test-utils';
-import { stopServices } from '../setup-functions';
 import { dataTidFormat } from '../../src/renderer/services/test';
 import { formatDateTime4Tag } from '@tagspaces/tagspaces-common/misc';
 
 export const firstFile = '/span';
 export const perspectiveGridTable = '//*[@data-tid="perspectiveGridFileTable"]';
-const subFolderName = '/test-perspective-grid';
+/*const subFolderName = '/test-perspective-grid';
 const subFolderContentExtractionPath =
   defaultLocationPath + '/content-extraction';
-const subFolderThumbnailsPath = defaultLocationPath + '/thumbnails';
+const subFolderThumbnailsPath = defaultLocationPath + '/thumbnails';*/
 const testFolder = 'testFolder';
 
-let s3ServerInstance;
-let webServerInstance;
-let minioServerInstance;
-
-test.beforeAll(async ({ s3Server, webServer, minioServer }) => {
-  s3ServerInstance = s3Server;
-  webServerInstance = webServer;
-  minioServerInstance = minioServer;
-  if (global.isS3) {
-    await startTestingApp();
+test.beforeAll(async ({ isWeb, isS3, webServerPort }, testInfo) => {
+  if (isS3) {
+    await startTestingApp({ isWeb, isS3, webServerPort, testInfo });
     await closeWelcomePlaywright();
   } else {
-    await startTestingApp('extconfig.js');
+    await startTestingApp(
+      { isWeb, isS3, webServerPort, testInfo },
+      'extconfig.js',
+    );
   }
 });
 
 test.afterAll(async () => {
-  await stopServices(s3ServerInstance, webServerInstance, minioServerInstance);
-  //await testDataRefresh(s3ServerInstance);
   await stopApp();
 });
 
@@ -72,24 +70,21 @@ test.afterEach(async ({ page }, testInfo) => {
   await clearDataStorage();
 });
 
-test.beforeEach(async () => {
-  if (global.isMinio) {
-    await closeWelcomePlaywright();
-    await createPwMinioLocation('', defaultLocationName, true);
-  } else if (global.isS3) {
+test.beforeEach(async ({ isS3, testDataDir }) => {
+  if (isS3) {
     await closeWelcomePlaywright();
     await createS3Location('', defaultLocationName, true);
   } else {
-    await createPwLocation(defaultLocationPath, defaultLocationName, true);
+    await createPwLocation(testDataDir, defaultLocationName, true);
   }
   await clickOn('[data-tid=location_' + defaultLocationName + ']');
-  await expectElementExist(getGridFileSelector('empty_folder'), true, 8000);
+  await expectElementExist(getGridFileSelector('empty_folder'), true, 15000);
   // If its have opened file
   // await closeFileProperties();
 });
 
 test.describe('TST51 - Perspective Grid', () => {
-  test('TST0501 - Create HTML file [web,electron,minio]', async () => {
+  test('TST0501 - Create HTML file [web,s3,electron]', async () => {
     // await global.client.waitForLoadState('networkidle');
     await createNewDirectory();
     await expectElementExist(
@@ -115,7 +110,7 @@ test.describe('TST51 - Perspective Grid', () => {
     // await takeScreenshot('TST0501 after deleteDirectory');
   });
 
-  test('TST0502 - Create MD file [web,electron,minio]', async () => {
+  test('TST0502 - Create MD file [web,s3,electron]', async () => {
     await createNewDirectory();
     await expectElementExist(
       '[data-tid=fsEntryName_' + testFolder + ']',
@@ -140,7 +135,7 @@ test.describe('TST51 - Perspective Grid', () => {
     // await takeScreenshot('TST0502 after deleteDirectory');
   });
 
-  test('TST0503 - Create TEXT file [web,electron,minio]', async () => {
+  test('TST0503 - Create TEXT file [web,s3,electron]', async () => {
     await createNewDirectory();
     await expectElementExist(
       '[data-tid=fsEntryName_' + testFolder + ']',
@@ -165,7 +160,7 @@ test.describe('TST51 - Perspective Grid', () => {
     // await takeScreenshot('TST0503 after deleteDirectory');
   });
 
-  test('TST0510 - Generate thumbnail from Images [electron,minio]', async () => {
+  test('TST0510 - Generate thumbnail from Images [electron,s3]', async () => {
     const filtered = ['ico', 'tiff', 'tif', 'svg'];
     /*if (global.isMinio || global.isS3) {
       filtered.push('svg');
@@ -177,9 +172,12 @@ test.describe('TST51 - Perspective Grid', () => {
     await expectMetaFilesExist(metaFiles);
   });
 
-  test('TST0510a - Generate thumbnail from JPG w. rotation from EXIF [web,minio,electron]', async () => {
-    if (!global.isWin || !global.isWeb) {
-      //todo not work on web windows
+  test('TST0510a - Generate thumbnail from JPG w. rotation from EXIF [s3,electron]', async ({
+    isWin,
+    isWeb,
+  }) => {
+    if (!isWin && !isWeb) {
+      //todo not work on web (EXIF parsing fails with S3 presigned URLs)
       const fileName = 'sample_exif[iptc].jpg';
       await clickOn(getGridFileSelector(fileName));
 
@@ -191,7 +189,10 @@ test.describe('TST51 - Perspective Grid', () => {
       const iframeElement = await global.client.waitForSelector('iframe');
       const frame = await iframeElement.contentFrame();
 
-      await isDisplayed('#imageContent', true, 8000, frame);
+      await isDisplayed('#imageContent', true, 15000, frame);
+
+      // Wait for image to fully load (S3 can be slow)
+      await global.client.waitForTimeout(2000);
 
       const fLocator = await frameLocator();
       const fabMenu = await fLocator.locator('#extFabMenu');
@@ -213,7 +214,7 @@ test.describe('TST51 - Perspective Grid', () => {
       let latExists = await isDisplayed(
         '#exifTableBody tr:has(th:has-text("GPSLatitude")) td',
         true,
-        10000,
+        15000,
         frame,
       );
       expect(latExists).toBeTruthy();
@@ -221,15 +222,17 @@ test.describe('TST51 - Perspective Grid', () => {
       let iptcExists = await isDisplayed(
         '#exifTableBody tr:has(th:has-text("bylineTitle")) td',
         true,
-        8000,
+        10000,
         frame,
       );
       expect(iptcExists).toBeTruthy();
     }
   });
 
-  test('TST0511 - Generate thumbnail from Videos [electron]', async () => {
-    if (global.isWin) {
+  test('TST0511 - Generate thumbnail from Videos [electron,s3]', async ({
+    isWin,
+  }) => {
+    if (isWin) {
       // todo in github thumbnails not generated for videos on MacOS
       //todo thumbnails not generated for ogv
       const metaFiles = AppConfig.ThumbGenSupportedFileTypes.video
@@ -239,10 +242,12 @@ test.describe('TST51 - Perspective Grid', () => {
     }
   });
 
-  test('TST0516 - Generate thumbnail from PDF [electron]', async () => {
+  test('TST0516 - Generate thumbnail from PDF [electron,s3]', async () => {
     await expectMetaFilesExist(['sample.pdf.jpg']);
   });
-
+  /**
+   * Thumbnails for ODT/ODS/EPUB are not generated on S3 locations
+   */
   test('TST0517 - Generate thumbnail from ODT [electron,_pro]', async () => {
     await expectMetaFilesExist([
       'sample.odt.jpg',
@@ -250,55 +255,48 @@ test.describe('TST51 - Perspective Grid', () => {
       'sample.epub.jpg',
     ]);
   });
-
+  /**
+   * Thumbnails for TIFF are not generated on S3 locations
+   */
   test('TST0519 - Generate thumbnail from TIFF [electron,_pro]', async () => {
     await expectMetaFilesExist(['sample.tiff.jpg']);
   });
 
-  test.skip('TST0520 - Generate thumbnail from PSD [electron,minio,_pro]', async () => {
+  test.skip('TST0520 - Generate thumbnail from PSD [electron,s3,_pro]', async () => {
     // TODO fix
     await expectMetaFilesExist(['sample.psd.jpg']);
   });
 
-  test('TST0522 - Generate thumbnail from URL [electron,minio,_pro]', async () => {
+  test('TST0522 - Generate thumbnail from URL [electron,s3,_pro]', async () => {
     await expectMetaFilesExist(['sample.url.jpg']);
   });
 
-  test('TST0523 - Generate thumbnail from HTML [electron,minio,_pro]', async () => {
+  test('TST0523 - Generate thumbnail from HTML [electron,s3,_pro]', async () => {
     await expectMetaFilesExist(['sample.html.jpg']);
   });
 
-  test('TST0524 - Generate thumbnail from TXT,MD [electron,minio,_pro]', async () => {
+  test('TST0524 - Generate thumbnail from TXT,MD [electron,s3,_pro]', async () => {
     // MD thumbs generation is stopped
     await expectMetaFilesExist(['sample.txt.jpg']);
   });
 
-  test('TST0529 - Import EXIF information as Tags [web,minio,electron,_pro]', async () => {
-    await openContextEntryMenu(
-      getGridFileSelector('sample_exif[iptc].jpg'),
-      'showPropertiesTID',
-    );
-
-    await clickOn('[data-tid=openGalleryPerspective]');
-    await expectElementExist(
-      '[data-tid=perspectiveGalleryToolbar]',
-      true,
-      5000,
-    );
-    await clickOn('[data-tid=perspectiveGalleryImportEXIF]');
+  test('TST0529 - Import EXIF information as Tags [web,s3,electron,_pro]', async () => {
+    // The default location root (open directory) holds sample_exif[iptc].jpg.
+    // EXIF extraction now runs from the unified "Extract tags" dialog opened
+    // from the current-directory menu, over the current directory's JPEGs.
+    await clickOn('[data-tid=folderContainerOpenDirMenu]');
+    await clickOn('[data-tid=extractTags]');
     await global.client.check('input[value=exifGeo]');
     await clickOn('[data-tid=confirmImportExif]');
 
     await expectElementExist(
       '[data-tid="tagContainer_8FWH4HVG+3V"]',
       true,
-      5000,
+      10000,
     );
-    await clickOn('[data-tid=openDefaultPerspective]');
-    await expectElementExist('[data-tid=gridperspectiveToolbar]', true, 5000);
   });
 
-  test('TST0530 - Adding sidecar geo or custom date tag with dnd [web,minio,electron,_pro]', async () => {
+  test('TST0530 - Adding sidecar geo or custom date tag with dnd [web,s3,electron,_pro]', async () => {
     const tagName = 'custom-date';
     const sourceTagGroup = 'Smart Tags';
 

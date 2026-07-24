@@ -20,9 +20,9 @@ import DraggablePaper from '-/components/DraggablePaper';
 import TsButton from '-/components/TsButton';
 import TsSelect from '-/components/TsSelect';
 import TsDialogActions from '-/components/dialogs/components/TsDialogActions';
+import { useEditedTagLibraryContext } from '-/hooks/useEditedTagLibraryContext';
 import { useTaggingActionsContext } from '-/hooks/useTaggingActionsContext';
 import { getTagColor, getTagTextColor } from '-/reducers/settings';
-import { getTagLibrary } from '-/services/taglibrary-utils';
 import { TS } from '-/tagspaces.namespace';
 import { Paper, useTheme } from '@mui/material';
 import Dialog from '@mui/material/Dialog';
@@ -46,6 +46,7 @@ interface Props {
 function AddTagToTagGroupDialog(props: Props) {
   const { t } = useTranslation();
   const { addTag } = useTaggingActionsContext();
+  const { tagGroups } = useEditedTagLibraryContext();
   const [tagGroup, setTagGroup] = useState<string>(undefined);
   const defaultBackgroundColor = useSelector(getTagColor);
   const defaultTextColor = useSelector(getTagTextColor);
@@ -77,10 +78,11 @@ function AddTagToTagGroupDialog(props: Props) {
       onClick={onConfirm}
       data-tid="createTagsConfirmButton"
       variant="contained"
-      style={{
-        // @ts-ignore
-        WebkitAppRegion: 'no-drag',
-      }}
+      sx={
+        {
+          WebkitAppRegion: 'no-drag',
+        } as React.CSSProperties & { WebkitAppRegion?: string }
+      }
     >
       {t('core:ok')}
     </TsButton>
@@ -110,14 +112,14 @@ function AddTagToTagGroupDialog(props: Props) {
         onClose={onClose}
         actionSlot={okButton}
       />
-      <DialogContent style={{ paddingTop: 10, minWidth: 350 }}>
+      <DialogContent sx={{ paddingTop: '10px', minWidth: '350px' }}>
         <FormControl fullWidth={true}>
           <TsSelect
             label={t('core:chooseTagGroup')}
             value={tagGroup}
             onChange={handleTagGroupChange}
           >
-            {getTagLibrary().map((tg) => (
+            {tagGroups.map((tg) => (
               <MenuItem value={tg.uuid}>{tg.title}</MenuItem>
             ))}
           </TsSelect>

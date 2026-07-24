@@ -15,15 +15,34 @@ import {
 } from '@tagspaces/tagspaces-common/paths';
 import { getUuid, loadJSONString } from '@tagspaces/tagspaces-common/utils-io';
 //import * as objectStoreAPI from '@tagspaces/tagspaces-common-aws';
+import { isResolvedWebViewUrl } from '-/services/capacitor-io-utils';
 import { getFulfilledResults, getMimeType } from '-/services/utils-io';
 import { TS } from '-/tagspaces.namespace';
-import * as cordovaIO from '@tagspaces/tagspaces-common-cordova';
-import { Pro } from '-/pro';
+import { offlineRejectionIfRemote } from '-/utils/OfflineError';
+import * as capacitorIO from '-/services/io-capacitor';
+
+/**
+ * Shallow-clone `obj` dropping any function-valued properties.
+ * Structured cloning (used by Electron's ipcRenderer.invoke) cannot transfer
+ * functions — callers must strip them before IPC to avoid
+ *   "An object could not be cloned".
+ */
+function stripFunctions(obj: any): any {
+  if (!obj || typeof obj !== 'object') return obj;
+  const out: any = {};
+  for (const key of Object.keys(obj)) {
+    if (typeof obj[key] !== 'function') {
+      out[key] = obj[key];
+    }
+  }
+  return out;
+}
 
 export class CommonLocation implements TS.Location {
   uuid: string;
   newuuid?: string;
   name: string;
+  workSpaceId?: string;
   type: string; // 0 - local; 1 - S3; 2 - amplify; 3 - webdav
   authType?: string; // none,password,digest,token
   username?: string;
@@ -42,6 +61,7 @@ export class CommonLocation implements TS.Location {
   reloadOnFocus?: boolean;
   disableThumbnailGeneration?: boolean;
   fullTextIndex?: boolean;
+  extractLinks?: boolean;
   maxIndexAge?: number;
   maxLoops?: number;
   persistTagsInSidecarFile?: boolean;
@@ -59,6 +79,7 @@ export class CommonLocation implements TS.Location {
 
   constructor(location: TS.Location) {
     this.uuid = location.uuid;
+    this.workSpaceId = location.workSpaceId;
     this.newuuid = location.newuuid;
     this.name = location.name;
     this.type = location.type; // 0 - local; 1 - S3; 2 - amplify; 3 - webdav
@@ -80,7 +101,8 @@ export class CommonLocation implements TS.Location {
     this.disableIndexing = location.disableIndexing;
     this.reloadOnFocus = location.reloadOnFocus;
     this.disableThumbnailGeneration = location.disableThumbnailGeneration;
-    this.fullTextIndex = Pro && location.fullTextIndex;
+    this.fullTextIndex = location.fullTextIndex;
+    this.extractLinks = location.extractLinks;
     this.maxIndexAge = location.maxIndexAge;
     this.maxLoops = location.maxLoops;
     this.persistTagsInSidecarFile = location.persistTagsInSidecarFile;
@@ -97,8 +119,8 @@ export class CommonLocation implements TS.Location {
       this.ioAPI = require('@tagspaces/tagspaces-common-aws3'); //objectStoreAPI.getS3Api(location);
     } else if (location.type === locationType.TYPE_WEBDAV) {
       // TODO impl
-    } else if (AppConfig.isCordova) {
-      this.ioAPI = cordovaIO;
+    } else if (AppConfig.isCapacitor) {
+      this.ioAPI = capacitorIO;
     }
   }
 
@@ -151,19 +173,67 @@ export class CommonLocation implements TS.Location {
     return '';
   };
   /**
-   *  normalize path for URL is always '/'
+   * normalize path for URL: always use '/'
+   *  – preserves UNC paths (\\HOST\share → //HOST/share)
    */
   normalizeUrl = (url: string) => {
-    let normalizedUrl = url;
-    if (this.getDirSeparator() !== '/') {
-      if (url) {
-        normalizedUrl = url.replaceAll(this.getDirSeparator(), '/');
+    if (!url) return '';
+
+    // 1) swap out Windows separators for '/'
+    const sep = this.getDirSeparator();
+    let normalized = sep !== '/' ? url.replaceAll(sep, '/') : url;
+
+    // 2) detect UNC (\\ → //) before collapsing anything
+    const isUnc = normalized.startsWith('//');
+
+    // 3) pull off any leading protocol so we don't touch its "://"
+    const protocolMatch = normalized.match(/^[a-z]+:\/\//i);
+    const protocol = protocolMatch?.[0] || '';
+    let rest = protocol ? normalized.slice(protocol.length) : normalized;
+
+    // 4) collapse any run of 2+ slashes into one
+    rest = rest.replace(/\/{2,}/g, '/');
+
+    // 5) restore UNC prefix if needed
+    if (isUnc) {
+      rest = rest.replace(/^\/+/, '//');
+    }
+
+    // 6) ensure a leading slash for non‑HTTP URLs on non‑Windows
+    if (!protocol && !AppConfig.isWin && !rest.startsWith('/')) {
+      rest = '/' + rest;
+    }
+
+    // 7) In Electron, local paths without a protocol must use tsfile:// so they
+    //    load correctly regardless of the page origin (file:// in prod,
+    //    http://localhost in dev). Without this, bare paths like /Users/…
+    //    resolve to http://localhost:1212/Users/… in dev and fail.
+    //    Windows drive paths (C:/…) need a leading slash: tsfile:///C:/…
+    //    UNC paths (\\server\share\…) encode the server as the URL authority:
+    //    tsfile://server/share/… — the protocol handler then recovers the UNC
+    //    path via fileURLToPath('file://server/share/…') on Windows. Producing
+    //    tsfile:////server/… (empty authority + //-prefixed path) breaks that.
+    if (!protocol && AppConfig.isElectron) {
+      if (isUnc) {
+        return AppConfig.mediaProtocol + '://' + rest.replace(/^\/+/, '');
+      }
+      const localRest = rest.startsWith('/') ? rest : '/' + rest;
+      return AppConfig.mediaProtocol + '://' + localRest;
+    }
+
+    // 8) In Capacitor, native file paths must be converted to WebView-accessible
+    //    URLs using Capacitor.convertFileSrc(). This maps file:///... paths to
+    //    https://localhost/_capacitor_file_/... (Android) or
+    //    capacitor://localhost/_capacitor_file_/... (iOS).
+    if (!protocol && AppConfig.isCapacitor) {
+      const Capacitor = (window as any).Capacitor;
+      if (Capacitor && Capacitor.convertFileSrc) {
+        const filePath = rest.startsWith('/') ? rest : '/' + rest;
+        return Capacitor.convertFileSrc('file://' + filePath);
       }
     }
-    if (!normalizedUrl.startsWith('http') && !normalizedUrl.startsWith('/')) {
-      normalizedUrl = '/' + normalizedUrl;
-    }
-    return normalizedUrl;
+
+    return protocol + rest;
   };
 
   haveObjectStoreSupport = (): boolean => this.type === locationType.TYPE_CLOUD;
@@ -176,7 +246,7 @@ export class CommonLocation implements TS.Location {
 
   getEntryThumbPath = (
     entry: TS.FileSystemEntry,
-    dt = undefined,
+    dt?: number,
   ): Promise<string | undefined> => {
     if (entry) {
       return this.getThumbPath(this.getThumbEntryPath(entry), dt);
@@ -191,9 +261,19 @@ export class CommonLocation implements TS.Location {
     if (!entry || !entry.path) {
       return undefined;
     }
-    return entry.isFile
+    const rawPath = entry.isFile
       ? getThumbFileLocationForFile(entry.path, this.getDirSeparator(), encoded)
       : getThumbFileLocationForDirectory(entry.path, this.getDirSeparator());
+    // In Electron, prefix bare paths with tsfile:// so they load correctly from
+    // any page origin (file:// in prod, http://localhost in dev).
+    // Skip for S3 — those need signed URLs via getURLforPathInt, not tsfile://.
+    if (rawPath && AppConfig.isElectron && !this.haveObjectStoreSupport()) {
+      // Route through normalizeUrl so UNC paths (\\server\share\…) become
+      // tsfile://server/share/… (server as URL authority) — the protocol
+      // handler then recovers the UNC path via fileURLToPath on Windows.
+      return this.normalizeUrl(rawPath);
+    }
+    return rawPath;
   };
   /**
    * @param path
@@ -201,7 +281,7 @@ export class CommonLocation implements TS.Location {
    */
   getFolderThumbPath = (
     path: string,
-    dt = undefined,
+    dt?: number,
   ): Promise<string | undefined> => {
     if (path) {
       return this.getThumbPath(
@@ -216,10 +296,12 @@ export class CommonLocation implements TS.Location {
    * @param thumbPath
    * @param dt
    * // isLocalFile - force to generate local URL
+   * @param expirationInSeconds
    */
   getThumbPath = (
     thumbPath: string,
-    dt = undefined,
+    dt?: number,
+    expirationInSeconds = 900,
   ): Promise<string | undefined> => {
     if (!thumbPath) {
       return Promise.resolve(undefined);
@@ -230,7 +312,30 @@ export class CommonLocation implements TS.Location {
         return Promise.resolve(thumbPath);
       }
 
-      return this.getURLforPathInt(thumbPath);
+      return this.getURLforPathInt(thumbPath, expirationInSeconds);
+    }
+
+    // Capacitor: resolve the thumbnail's real native uri (Filesystem.getUri)
+    // rather than string-building a file:// URL. The iOS App Documents location
+    // stores path "/", so a naive file:///.ts/<name>.jpg points at the device
+    // root and the thumb never loads.
+    if (AppConfig.isCapacitor) {
+      // Idempotency guard. meta.thumbPath is a raw native path for files but an
+      // already-resolved WebView URL for folders (getDirMeta pre-resolves it),
+      // and callers re-resolve it. Re-converting a converted URL makes
+      // resolveCapacitorPath treat it as a *relative* path, yielding
+      // file:///…/https:/localhost/_capacitor_file_/… → folder thumbs 404 on
+      // mobile. The S3 (isSignedURL) and Electron (normalizeUrl protocol check)
+      // branches are already idempotent; Capacitor was the only one that wasn't.
+      if (isResolvedWebViewUrl(thumbPath)) {
+        return Promise.resolve(thumbPath);
+      }
+      const ioAPI = require('-/services/io-capacitor');
+      if (ioAPI.getNativeFileUrlAsync) {
+        return ioAPI
+          .getNativeFileUrlAsync(thumbPath)
+          .then((u: string) => (u ? u + (dt ? '?' + dt : '') : undefined));
+      }
     }
 
     const normalizedUrl = this.normalizeUrl(thumbPath) + (dt ? '?' + dt : '');
@@ -247,7 +352,7 @@ export class CommonLocation implements TS.Location {
 
   getFolderBgndPath = (
     path: string,
-    dt = undefined,
+    dt?: number,
   ): Promise<string | undefined> => {
     if (path !== undefined) {
       return this.getBgndPath(
@@ -260,7 +365,8 @@ export class CommonLocation implements TS.Location {
 
   getBgndPath = (
     bgndPath: string,
-    dt = undefined,
+    dt?: number,
+    expirationInSeconds = 900,
   ): Promise<string | undefined> => {
     if (!bgndPath) {
       return Promise.resolve(undefined);
@@ -271,11 +377,17 @@ export class CommonLocation implements TS.Location {
         return Promise.resolve(bgndPath);
       }
 
-      return this.getURLforPathInt(bgndPath);
+      return this.getURLforPathInt(bgndPath, expirationInSeconds);
     }
 
-    const normalizedUrl = this.normalizeUrl(bgndPath) + (dt ? '?' + dt : '');
-    return Promise.resolve(normalizedUrl);
+    // For local files load as blob URL to bypass browser cache
+    return this.getFileContentPromise(bgndPath, 'arraybuffer')
+      .then((content) => {
+        if (!content) return undefined;
+        const blob = new Blob([content as BlobPart], { type: 'image/jpeg' });
+        return URL.createObjectURL(blob);
+      })
+      .catch(() => undefined);
   };
 
   listDirectoryPromise = (
@@ -284,6 +396,8 @@ export class CommonLocation implements TS.Location {
     ignorePatterns: Array<string> = [],
     resultsLimit: any = {},
   ): Promise<Array<any>> => {
+    const offlineReject = offlineRejectionIfRemote(this, 'list directory');
+    if (offlineReject) return offlineReject;
     if (this.ioAPI) {
       if (this.haveObjectStoreSupport()) {
         return this.ioAPI.listDirectoryPromise(
@@ -304,18 +418,23 @@ export class CommonLocation implements TS.Location {
         resultsLimit,
       );
     } else if (AppConfig.isElectron) {
+      // Structured-clone through IPC can't transfer functions. Strip any
+      // function-valued entries (e.g. extractPDFcontent injected by the
+      // indexer for the non-worker path) to avoid
+      //   "An object could not be cloned"
       return window.electronIO.ipcRenderer.invoke(
         'listDirectoryPromise',
-        param,
+        stripFunctions(param),
         mode,
         ignorePatterns,
-        resultsLimit,
       );
     }
     return Promise.reject(new Error('listDirectoryPromise not implemented!'));
   };
 
   listMetaDirectoryPromise = (param: any): Promise<Array<any>> => {
+    const offlineReject = offlineRejectionIfRemote(this, 'list metadata');
+    if (offlineReject) return offlineReject;
     if (this.ioAPI) {
       if (this.haveObjectStoreSupport()) {
         return this.ioAPI.listMetaDirectoryPromise({
@@ -328,7 +447,7 @@ export class CommonLocation implements TS.Location {
     } else if (AppConfig.isElectron) {
       return window.electronIO.ipcRenderer.invoke(
         'listMetaDirectoryPromise',
-        param,
+        stripFunctions(param),
       );
     }
     return Promise.reject(
@@ -337,6 +456,8 @@ export class CommonLocation implements TS.Location {
   };
 
   checkFileEncryptedPromise = (path: string): Promise<boolean> => {
+    const offlineReject = offlineRejectionIfRemote(this, 'check encryption');
+    if (offlineReject) return offlineReject;
     if (this.ioAPI) {
       if (this.haveObjectStoreSupport() && this.encryptionKey) {
         return this.ioAPI
@@ -360,6 +481,8 @@ export class CommonLocation implements TS.Location {
     useEncryption: boolean = true,
     extractLinks: boolean = false,
   ): Promise<any> => {
+    const offlineReject = offlineRejectionIfRemote(this, 'get properties');
+    if (offlineReject) return offlineReject;
     if (this.ioAPI) {
       if (this.haveObjectStoreSupport()) {
         return this.ioAPI.getPropertiesPromise({
@@ -385,6 +508,8 @@ export class CommonLocation implements TS.Location {
     if (file === undefined) {
       return Promise.resolve(false);
     }
+    const offlineReject = offlineRejectionIfRemote(this, 'check file');
+    if (offlineReject) return offlineReject;
     if (this.ioAPI) {
       if (this.haveObjectStoreSupport()) {
         return this.ioAPI.isFileExist({
@@ -394,7 +519,7 @@ export class CommonLocation implements TS.Location {
           ...(this.encryptionKey &&
             useEncryption && { encryptionKey: this.encryptionKey }),
         });
-      } else if (AppConfig.isCordova) {
+      } else if (AppConfig.isNativeMobile) {
         return this.ioAPI.checkFileExist(file);
       }
       return this.ioAPI
@@ -407,6 +532,8 @@ export class CommonLocation implements TS.Location {
   };
 
   checkDirExist = (dir: string): Promise<boolean> => {
+    const offlineReject = offlineRejectionIfRemote(this, 'check directory');
+    if (offlineReject) return offlineReject;
     if (this.ioAPI) {
       if (this.haveObjectStoreSupport()) {
         return this.ioAPI
@@ -416,7 +543,7 @@ export class CommonLocation implements TS.Location {
             location: this,
           })
           .then((stats) => stats && !stats.isFile);
-      } else if (AppConfig.isCordova) {
+      } else if (AppConfig.isNativeMobile) {
         return this.ioAPI.checkDirExist(dir);
       }
       return this.ioAPI
@@ -426,6 +553,10 @@ export class CommonLocation implements TS.Location {
       return window.electronIO.ipcRenderer.invoke('checkDirExist', dir);
     }
     return Promise.reject(new Error('checkDirExist: not implemented'));
+  };
+
+  delUrlCache = (path) => {
+    delete this.urlCache[path];
   };
 
   getURLforPathInt = async (
@@ -448,6 +579,8 @@ export class CommonLocation implements TS.Location {
   };
 
   generateURLforPath = async (path, expirationInSeconds) => {
+    const offlineReject = offlineRejectionIfRemote(this, 'sign URL');
+    if (offlineReject) return offlineReject;
     let url;
     if (this.ioAPI) {
       if (this.haveObjectStoreSupport()) {
@@ -462,7 +595,7 @@ export class CommonLocation implements TS.Location {
         url = this.ioAPI.getURLforPath(path);
       }
     }
-    if (url) {
+    if (url && expirationInSeconds > 0) {
       this.urlCache[path] = {
         url: url,
         expirationTime: new Date().getTime() + expirationInSeconds * 1000,
@@ -471,25 +604,34 @@ export class CommonLocation implements TS.Location {
     return url;
   };
 
-  toFsEntry = (path: string, isFile: boolean): TS.FileSystemEntry => {
+  toFsEntry = (
+    path: string,
+    isFile: boolean,
+    tagDelimiter?: string,
+  ): TS.FileSystemEntry => {
     const name = isFile
       ? extractFileName(path, this.getDirSeparator())
       : extractDirectoryName(path, this.getDirSeparator());
-    const tags = extractTagsAsObjects(
-      name,
-      AppConfig.tagDelimiter,
-      this.getDirSeparator(),
-    );
+    let tags = [];
+    if (tagDelimiter) {
+      tags = extractTagsAsObjects(name, tagDelimiter, this.getDirSeparator());
+    }
+    let entryPath = path;
+    if (!isFile && !path.endsWith(this.getDirSeparator())) {
+      entryPath = path + this.getDirSeparator();
+    }
     return {
       uuid: getUuid(),
       name,
       isFile,
       locationID: this.uuid,
-      extension: extractFileExtension(path, this.getDirSeparator()),
+      ...(isFile && {
+        extension: extractFileExtension(path, this.getDirSeparator()),
+      }),
       tags,
       size: 0,
       lmdt: new Date().getTime(),
-      path,
+      path: entryPath,
     };
   };
 
@@ -497,6 +639,8 @@ export class CommonLocation implements TS.Location {
     if (this.isReadOnly) {
       return Promise.reject(new Error('read only Location'));
     }
+    const offlineReject = offlineRejectionIfRemote(this, 'create directory');
+    if (offlineReject) return offlineReject;
     if (this.ioAPI) {
       if (this.haveObjectStoreSupport()) {
         return this.ioAPI.createDirectoryPromise({
@@ -521,6 +665,10 @@ export class CommonLocation implements TS.Location {
   ): Promise<any> => {
     if (this.isReadOnly) {
       return Promise.reject(new Error('read only Location'));
+    }
+    const offlineReject = offlineRejectionIfRemote(this, 'copy file');
+    if (offlineReject) {
+      return offlineReject;
     }
     if (this.ioAPI) {
       if (this.haveObjectStoreSupport()) {
@@ -556,6 +704,10 @@ export class CommonLocation implements TS.Location {
     if (this.isReadOnly) {
       return Promise.reject(new Error('read only Location'));
     }
+    const offlineReject = offlineRejectionIfRemote(this, 'rename file');
+    if (offlineReject) {
+      return offlineReject;
+    }
     if (this.ioAPI) {
       if (this.haveObjectStoreSupport()) {
         return this.ioAPI.renameFilePromise(
@@ -589,6 +741,8 @@ export class CommonLocation implements TS.Location {
     if (this.isReadOnly) {
       return Promise.reject(new Error('read only Location'));
     }
+    const offlineReject = offlineRejectionIfRemote(this, 'rename directory');
+    if (offlineReject) return offlineReject;
     if (this.ioAPI) {
       if (this.haveObjectStoreSupport()) {
         return this.ioAPI.renameDirectoryPromise(
@@ -620,6 +774,8 @@ export class CommonLocation implements TS.Location {
     if (this.isReadOnly) {
       return Promise.reject(new Error('read only Location'));
     }
+    const offlineReject = offlineRejectionIfRemote(this, 'copy directory');
+    if (offlineReject) return offlineReject;
     if (this.ioAPI) {
       if (this.haveObjectStoreSupport()) {
         return this.ioAPI.copyDirectoryPromise(
@@ -653,6 +809,8 @@ export class CommonLocation implements TS.Location {
     if (this.isReadOnly) {
       return Promise.reject(new Error('read only Location'));
     }
+    const offlineReject = offlineRejectionIfRemote(this, 'move directory');
+    if (offlineReject) return offlineReject;
     if (this.ioAPI) {
       if (this.haveObjectStoreSupport()) {
         return this.ioAPI.moveDirectoryPromise(
@@ -686,6 +844,8 @@ export class CommonLocation implements TS.Location {
     if (this.isReadOnly) {
       return Promise.reject(new Error('read only Location'));
     }
+    const offlineReject = offlineRejectionIfRemote(this, 'save file');
+    if (offlineReject) return offlineReject;
     if (this.ioAPI) {
       if (this.haveObjectStoreSupport()) {
         return this.ioAPI.saveFilePromise(
@@ -719,6 +879,8 @@ export class CommonLocation implements TS.Location {
     if (this.isReadOnly) {
       return Promise.reject(new Error('read only Location'));
     }
+    const offlineReject = offlineRejectionIfRemote(this, 'save file');
+    if (offlineReject) return offlineReject;
     if (this.ioAPI) {
       if (this.haveObjectStoreSupport()) {
         return this.ioAPI.saveTextFilePromise(
@@ -736,7 +898,7 @@ export class CommonLocation implements TS.Location {
     } else if (AppConfig.isElectron) {
       return window.electronIO.ipcRenderer.invoke(
         'saveTextFilePromise',
-        param,
+        stripFunctions(param),
         content,
         overwrite,
       );
@@ -756,6 +918,8 @@ export class CommonLocation implements TS.Location {
     if (this.isReadOnly) {
       return Promise.reject(new Error('read only Location'));
     }
+    const offlineReject = offlineRejectionIfRemote(this, 'save file');
+    if (offlineReject) return offlineReject;
     if (this.ioAPI) {
       if (this.haveObjectStoreSupport()) {
         return this.ioAPI.saveBinaryFilePromise(
@@ -769,7 +933,7 @@ export class CommonLocation implements TS.Location {
           overwrite,
           onUploadProgress,
         );
-      } else if (AppConfig.isCordova) {
+      } else if (AppConfig.isNativeMobile) {
         return this.ioAPI
           .saveBinaryFilePromise(param, content, overwrite)
           .then((succeeded) => {
@@ -804,6 +968,8 @@ export class CommonLocation implements TS.Location {
     if (this.isReadOnly) {
       return Promise.reject(new Error('read only Location'));
     }
+    const offlineReject = offlineRejectionIfRemote(this, 'delete file');
+    if (offlineReject) return offlineReject;
     if (this.ioAPI) {
       if (this.haveObjectStoreSupport()) {
         return this.ioAPI.deleteFilePromise({
@@ -827,6 +993,8 @@ export class CommonLocation implements TS.Location {
     if (this.isReadOnly) {
       return Promise.reject(new Error('read only Location'));
     }
+    const offlineReject = offlineRejectionIfRemote(this, 'delete directory');
+    if (offlineReject) return offlineReject;
     if (this.ioAPI) {
       if (this.haveObjectStoreSupport()) {
         return this.ioAPI.deleteDirectoryPromise({
@@ -847,10 +1015,10 @@ export class CommonLocation implements TS.Location {
   };
 
   shareFiles = (files: Array<string>): void => {
-    if (AppConfig.isCordova) {
-      cordovaIO.shareFiles(files);
+    if (AppConfig.isCapacitor) {
+      capacitorIO.shareFiles(files);
     } else {
-      console.log('shareFiles is implemented in Cordova only.');
+      console.log('shareFiles is implemented in Capacitor only.');
     }
   };
 
@@ -870,6 +1038,8 @@ export class CommonLocation implements TS.Location {
     isPreview?: boolean,
     useEncryption: boolean = true,
   ): Promise<string> => {
+    const offlineReject = offlineRejectionIfRemote(this, 'load file');
+    if (offlineReject) return offlineReject;
     let filePath = this.getPath(param);
     try {
       filePath = decodeURIComponent(filePath);
@@ -916,6 +1086,8 @@ export class CommonLocation implements TS.Location {
   };
 
   getFileContentPromise = (param: any, type?: string): Promise<any> => {
+    const offlineReject = offlineRejectionIfRemote(this, 'load file content');
+    if (offlineReject) return offlineReject;
     const filePath = this.getPath(param);
     if (this.ioAPI) {
       if (this.haveObjectStoreSupport()) {
@@ -943,7 +1115,11 @@ export class CommonLocation implements TS.Location {
   createDirectoryIndexInWorker = (
     directoryPath: string,
     extractText: boolean,
+    extractLinks: boolean,
     ignorePatterns: Array<string>,
+    requestId: string,
+    forceFullReindex: boolean = false,
+    extendedExtraction: boolean = false,
   ): Promise<any> => {
     /*if (this.isReadOnly) {
       return Promise.reject(new Error('read only Location'));
@@ -956,12 +1132,16 @@ export class CommonLocation implements TS.Location {
       const payload = JSON.stringify({
         directoryPath,
         extractText,
+        extractLinks,
         ignorePatterns,
+        forceFullReindex,
+        extendedExtraction,
       });
       return window.electronIO.ipcRenderer.invoke(
         'postRequest',
         payload,
         '/indexer',
+        requestId,
       );
     }
     return Promise.reject(
@@ -1105,7 +1285,7 @@ export class CommonLocation implements TS.Location {
   };
 
   openFile = (file: TS.FileSystemEntry): void => {
-    if (AppConfig.isCordova) {
+    if (AppConfig.isNativeMobile) {
       this.ioAPI.openFile(file.path, getMimeType(file.extension));
     }
   };

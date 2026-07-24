@@ -94,10 +94,11 @@ function OpenLinkDialog(props: Props) {
       onClick={onConfirm}
       data-tid="confirmOpenLink"
       variant="contained"
-      style={{
-        // @ts-ignore
-        WebkitAppRegion: 'no-drag',
-      }}
+      sx={
+        {
+          WebkitAppRegion: 'no-drag',
+        } as React.CSSProperties & { WebkitAppRegion?: string }
+      }
     >
       {t('core:openLink')}
     </TsButton>
@@ -123,7 +124,7 @@ function OpenLinkDialog(props: Props) {
         onClose={onClose}
         actionSlot={okButton}
       />
-      <DialogContent style={{ minWidth: smallScreen ? 100 : 400 }}>
+      <DialogContent sx={{ minWidth: smallScreen ? '100px' : '400px' }}>
         <FormControl fullWidth={true}>
           <TsTextField
             autoFocus

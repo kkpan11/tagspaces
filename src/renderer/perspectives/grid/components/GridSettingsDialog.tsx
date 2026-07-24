@@ -24,6 +24,7 @@ import TsSelect from '-/components/TsSelect';
 import ZoomComponent from '-/components/ZoomComponent';
 import TsDialogActions from '-/components/dialogs/components/TsDialogActions';
 import TsDialogTitle from '-/components/dialogs/components/TsDialogTitle';
+import TsSwitch from '-/components/TsSwitch';
 import { usePerspectiveSettingsContext } from '-/hooks/usePerspectiveSettingsContext';
 import { useSortedDirContext } from '-/perspectives/grid/hooks/useSortedDirContext';
 import { Pro } from '-/pro';
@@ -40,9 +41,9 @@ import {
   FormControl,
   FormControlLabel,
   FormGroup,
+  ListItemButton,
   MenuItem,
   Paper,
-  Switch,
   Typography,
 } from '@mui/material';
 import ListItemIcon from '@mui/material/ListItemIcon';
@@ -70,6 +71,7 @@ function GridSettingsDialog(props: Props) {
     thumbnailMode,
     singleClickAction,
     gridPageLimit,
+    maxVisibleTags,
     haveLocalSetting,
     resetLocalSetting,
     setSettings,
@@ -114,10 +116,11 @@ function GridSettingsDialog(props: Props) {
 
   const helpButton = (
     <TsButton
-      style={{
-        // @ts-ignore
-        WebkitAppRegion: 'no-drag',
-      }}
+      sx={
+        {
+          WebkitAppRegion: 'no-drag',
+        } as React.CSSProperties & { WebkitAppRegion?: string }
+      }
       data-tid="gridPerspectiveHelp"
       onClick={openHelpWebPage}
     >
@@ -144,7 +147,7 @@ function GridSettingsDialog(props: Props) {
         {haveLocalSetting() && (
           <>
             <Typography
-              style={{ color: theme.palette.text.primary }}
+              sx={{ color: theme.palette.text.primary }}
               variant="caption"
             >
               {t('core:folderWithCustomPerspectiveSetting')}
@@ -162,21 +165,29 @@ function GridSettingsDialog(props: Props) {
             </TsButton>
           </>
         )}
-        <Box style={{ display: 'flex', marginTop: 8 }}>
+        <Box sx={{ display: 'flex', marginTop: '8px' }}>
           <Typography
-            style={{ color: theme.palette.text.primary, alignSelf: 'center' }}
+            sx={{ color: theme.palette.text.primary, alignSelf: 'center' }}
             variant="body1"
           >
             {t('Size of the entries')}
           </Typography>
           <ZoomComponent preview={true} />
         </Box>
-        <Divider style={{ marginTop: 8, marginBottom: 8 }} />
-        <FormGroup>
+        <Divider sx={{ marginTop: '8px', marginBottom: '8px' }} />
+        <FormGroup
+          sx={{
+            '& .MuiFormControlLabel-root': {
+              marginLeft: 0,
+              marginRight: 0,
+              justifyContent: 'space-between',
+            },
+          }}
+        >
           <FormControlLabel
-            // labelPlacement="start"
+            labelPlacement="start"
             control={
-              <Switch
+              <TsSwitch
                 data-tid="gridPerspectiveToggleShowDirectories"
                 defaultChecked={showDirectories}
                 onChange={() => {
@@ -188,9 +199,9 @@ function GridSettingsDialog(props: Props) {
             label={t('core:showHideDirectories')}
           />
           <FormControlLabel
-            // labelPlacement="start"
+            labelPlacement="start"
             control={
-              <Switch
+              <TsSwitch
                 data-tid="gridPerspectiveToggleShowTags"
                 defaultChecked={showTags}
                 onChange={() => {
@@ -202,9 +213,9 @@ function GridSettingsDialog(props: Props) {
             label={t('core:showTags')}
           />
           <FormControlLabel
-            // labelPlacement="start"
+            labelPlacement="start"
             control={
-              <Switch
+              <TsSwitch
                 data-tid="gridPerspectiveToggleShowEntriesDescription"
                 defaultChecked={showEntriesDescription}
                 onChange={() => {
@@ -217,10 +228,11 @@ function GridSettingsDialog(props: Props) {
             }
             label={t('core:showHideEntriesDescription')}
           />
-          <Divider style={{ marginTop: 8, marginBottom: 8 }} />
+          <Divider sx={{ marginTop: '8px', marginBottom: '8px' }} />
           <FormControlLabel
+            labelPlacement="start"
             control={
-              <Switch
+              <TsSwitch
                 data-tid="gridPerspectiveToggleShowDetails"
                 defaultChecked={showDetails}
                 onChange={() => {
@@ -233,8 +245,9 @@ function GridSettingsDialog(props: Props) {
           />
           {showDescription != undefined && (
             <FormControlLabel
+              labelPlacement="start"
               control={
-                <Switch
+                <TsSwitch
                   data-tid="gridPerspectiveToggleShowDescription"
                   defaultChecked={showDescription}
                   onChange={() => {
@@ -247,8 +260,8 @@ function GridSettingsDialog(props: Props) {
             />
           )}
         </FormGroup>
-        <Divider style={{ marginTop: 8, marginBottom: 8 }} />
-        <MenuItem
+        <Divider sx={{ marginTop: '8px', marginBottom: '8px' }} />
+        <ListItemButton
           data-tid="gridPerspectiveToggleThumbnailsMode"
           title={t('core:toggleThumbnailModeTitle')}
           aria-label={t('core:toggleThumbnailMode')}
@@ -267,9 +280,9 @@ function GridSettingsDialog(props: Props) {
             )}
           </ListItemIcon>
           <ListItemText primary={t('core:toggleThumbnailMode')} />
-        </MenuItem>
-        <Divider style={{ marginTop: 8, marginBottom: 8 }} />
-        <MenuItem
+        </ListItemButton>
+        <Divider sx={{ marginTop: '8px', marginBottom: '8px' }} />
+        <ListItemButton
           data-tid="sortByMenuTID"
           title={t('core:sortBy')}
           aria-label={t('core:sortBy')}
@@ -278,7 +291,7 @@ function GridSettingsDialog(props: Props) {
           }}
         >
           <ListItemText
-            style={{ display: 'flex' }}
+            sx={{ display: 'flex' }}
             primary={
               <>
                 {t('core:sort') + ': ' + t(sortBy) + '  '}
@@ -286,9 +299,9 @@ function GridSettingsDialog(props: Props) {
               </>
             }
           />
-        </MenuItem>
+        </ListItemButton>
         <Divider />
-        <MenuItem
+        <ListItemButton
           data-tid="gridPerspectiveSingleClickOpenInternally"
           title={t('core:singleClickOpenInternally')}
           aria-label={t('core:singleClickOpenInternally')}
@@ -305,8 +318,8 @@ function GridSettingsDialog(props: Props) {
             )}
           </ListItemIcon>
           <ListItemText primary={t('core:singleClickOpenInternally')} />
-        </MenuItem>
-        <MenuItem
+        </ListItemButton>
+        <ListItemButton
           data-tid="gridPerspectiveSingleClickOpenExternally"
           title={t('core:singleClickOpenExternally')}
           aria-label={t('core:singleClickOpenExternally')}
@@ -323,8 +336,8 @@ function GridSettingsDialog(props: Props) {
             )}
           </ListItemIcon>
           <ListItemText primary={t('core:singleClickOpenExternally')} />
-        </MenuItem>
-        <MenuItem
+        </ListItemButton>
+        <ListItemButton
           data-tid="gridPerspectiveSingleClickSelects"
           title={t('core:singleClickSelects')}
           aria-label={t('core:singleClickSelects')}
@@ -341,7 +354,7 @@ function GridSettingsDialog(props: Props) {
             )}
           </ListItemIcon>
           <ListItemText primary={t('core:singleClickSelects')} />
-        </MenuItem>
+        </ListItemButton>
         <Divider />
         <FormControl fullWidth={true}>
           <TsSelect
@@ -358,8 +371,27 @@ function GridSettingsDialog(props: Props) {
           </TsSelect>
           {/* <FormHelperText>{t('core:pageLimitHelp')}</FormHelperText> */}
         </FormControl>
+        <FormControl fullWidth={true} sx={{ marginTop: 1 }}>
+          <TsSelect
+            label={t('core:maxVisibleTags')}
+            name="maxVisibleTags"
+            defaultValue={maxVisibleTags ?? 4}
+            onChange={(event: React.ChangeEvent<HTMLInputElement>) => {
+              const parsed = parseInt(event.target.value, 10);
+              setSettings({
+                maxVisibleTags: Number.isNaN(parsed) ? 0 : parsed,
+              });
+            }}
+          >
+            <MenuItem value={0}>{t('core:noLimit')}</MenuItem>
+            <MenuItem value={2}>2</MenuItem>
+            <MenuItem value={4}>4</MenuItem>
+            <MenuItem value={6}>6</MenuItem>
+            <MenuItem value={10}>10</MenuItem>
+          </TsSelect>
+        </FormControl>
       </DialogContent>
-      <TsDialogActions style={{ justifyContent: 'space-between' }}>
+      <TsDialogActions sx={{ justifyContent: 'space-between' }}>
         {smallScreen ? (
           <div style={{ width: 1 }} />
         ) : (
@@ -378,7 +410,7 @@ function GridSettingsDialog(props: Props) {
               saveSettings(true);
               onClose();
             }}
-            style={{
+            sx={{
               marginTop: AppConfig.defaultSpaceBetweenButtons,
             }}
           >
@@ -391,7 +423,7 @@ function GridSettingsDialog(props: Props) {
                 saveSettings(false);
                 onClose();
               }}
-              style={{
+              sx={{
                 marginTop: AppConfig.defaultSpaceBetweenButtons,
                 marginLeft: AppConfig.defaultSpaceBetweenButtons,
               }}

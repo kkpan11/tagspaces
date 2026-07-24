@@ -18,216 +18,295 @@
 
 import {
   AboutIcon,
+  AndroidAppIcon,
   CancelSubscriptionIcon,
   ChangeLogIcon,
   EmailIcon,
   ForumIcon,
   HelpIcon,
+  IosAppIcon,
   IssueIcon,
   KeyShortcutsIcon,
+  MastodonIcon,
   NewFeatureIcon,
   OnboardingIcon,
   ProTeaserIcon,
+  RestoreIcon,
   TranslationIcon,
   WebClipperIcon,
   XIcon,
 } from '-/components/CommonIcons';
+import AppConfig from '-/AppConfig';
 import { useAboutDialogContext } from '-/components/dialogs/hooks/useAboutDialogContext';
 import { useKeyboardDialogContext } from '-/components/dialogs/hooks/useKeyboardDialogContext';
 import { useOnboardingDialogContext } from '-/components/dialogs/hooks/useOnboardingDialogContext';
 import { useProTeaserDialogContext } from '-/components/dialogs/hooks/useProTeaserDialogContext';
+import { useMobileTeaserDialogContext } from '-/components/dialogs/hooks/useMobileTeaserDialogContext';
 import { Pro } from '-/pro';
+import { isIapAvailable, restoreProPurchase } from '-/services/iap';
+import { AppDispatch } from '-/reducers/app';
+import {
+  actions as SettingsActions,
+  isDesktopMode,
+  isHowToStartHidden,
+} from '-/reducers/settings';
 import { openURLExternally } from '-/services/utils-io';
-import { Box } from '@mui/material';
+import VisibilityIcon from '@mui/icons-material/Visibility';
+import { Box, ListItemText } from '@mui/material';
 import Divider from '@mui/material/Divider';
 import List from '@mui/material/List';
 import ListItem from '@mui/material/ListItem';
+import ListItemButton from '@mui/material/ListItemButton';
 import ListItemIcon from '@mui/material/ListItemIcon';
-import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
 import Links from 'assets/links';
 import { useTranslation } from 'react-i18next';
+import { useDispatch, useSelector } from 'react-redux';
 import SidePanelTitle from './SidePanelTitle';
 
-interface Props {
-  style?: any;
-  reduceHeightBy?: number;
-}
-
-function HelpFeedbackPanel(props: Props) {
+function HelpFeedbackPanel() {
   const { t } = useTranslation();
   const theme = useTheme();
+  const desktopMode = useSelector(isDesktopMode);
+  const howToStartHidden = useSelector(isHowToStartHidden);
+  const dispatch: AppDispatch = useDispatch();
   const { openAboutDialog } = useAboutDialogContext();
   const { openOnboardingDialog } = useOnboardingDialogContext();
   const { openKeyboardDialog } = useKeyboardDialogContext();
   const { openProTeaserDialog } = useProTeaserDialogContext();
-  const { reduceHeightBy } = props;
+  const { openMobileTeaserDialog } = useMobileTeaserDialogContext();
 
   return (
     <Box
-      style={{
+      sx={{
         display: 'flex',
         flexDirection: 'column',
-        //marginLeft: 5,
-        paddingLeft: 5,
-        paddingRight: 0,
-        height: '100%',
+        paddingLeft: '5px',
+        paddingRight: '5px',
+        flex: 1,
+        minHeight: 0,
       }}
     >
       <SidePanelTitle title={t('core:helpFeedback')} />
       <List
-        dense={false}
+        dense={desktopMode}
         component="nav"
         aria-label="main help area"
-        style={{
-          height: 'calc(100% - ' + reduceHeightBy + 'px)',
+        sx={{
+          flex: 1,
+          minHeight: 0,
           overflowY: 'auto',
-          marginRight: 5,
+          marginRight: '5px',
         }}
       >
-        <ListItem
-          onClick={() => openAboutDialog()}
-          title="Opens the about dialog"
-          data-tid="aboutDialog"
-        >
-          <ListItemIcon>
-            <AboutIcon />
-          </ListItemIcon>
-          <Typography style={{ color: theme.palette.text.primary }}>
-            {t('core:aboutTitle')}
-          </Typography>
+        <ListItem disablePadding>
+          <ListItemButton
+            data-tid="aboutDialog"
+            onClick={() => openAboutDialog()}
+          >
+            <ListItemIcon>
+              <AboutIcon />
+            </ListItemIcon>
+            <ListItemText>{t('core:aboutTagSpaces')}</ListItemText>
+          </ListItemButton>
         </ListItem>
-        <ListItem
-          onClick={() =>
-            openURLExternally(Links.documentationLinks.general, true)
-          }
-        >
-          <ListItemIcon>
-            <HelpIcon />
-          </ListItemIcon>
-          <Typography style={{ color: theme.palette.text.primary }}>
-            {t('core:documentation')}
-          </Typography>
-        </ListItem>
-        <ListItem onClick={() => openKeyboardDialog()}>
-          <ListItemIcon>
-            <KeyShortcutsIcon />
-          </ListItemIcon>
-          <Typography style={{ color: theme.palette.text.primary }}>
-            {t('core:shortcutKeys')}
-          </Typography>
-        </ListItem>
-        <ListItem
-          onClick={() => openURLExternally(Links.links.changelogURL, true)}
-          title="Opens the changelog of the app"
-        >
-          <ListItemIcon>
-            <ChangeLogIcon />
-          </ListItemIcon>
-          <Typography style={{ color: theme.palette.text.primary }}>
-            {t('core:whatsNew')}
-          </Typography>
-        </ListItem>
-        <ListItem onClick={() => openOnboardingDialog()}>
-          <ListItemIcon>
-            <OnboardingIcon />
-          </ListItemIcon>
-          <Typography style={{ color: theme.palette.text.primary }}>
-            {t('core:onboardingWizard')}
-          </Typography>
-        </ListItem>
-        <ListItem
-          onClick={() => openURLExternally(Links.links.webClipper, true)}
-        >
-          <ListItemIcon>
-            <WebClipperIcon />
-          </ListItemIcon>
-          <Typography style={{ color: theme.palette.text.primary }}>
-            {t('core:webClipper')}
-          </Typography>
-        </ListItem>
-        <Divider />
-        <ListItem
-          onClick={() => openURLExternally(Links.links.suggestFeature, true)}
-        >
-          <ListItemIcon>
-            <NewFeatureIcon />
-          </ListItemIcon>
-          <Typography style={{ color: theme.palette.text.primary }}>
-            {t('core:suggestNewFeatures')}
-          </Typography>
-        </ListItem>
-        <ListItem
-          onClick={() => openURLExternally(Links.links.forumsUrl, true)}
-        >
-          <ListItemIcon>
-            <ForumIcon />
-          </ListItemIcon>
-          <Typography style={{ color: theme.palette.text.primary }}>
-            {t('core:forums')}
-          </Typography>
-        </ListItem>
-        <ListItem
-          onClick={() => openURLExternally(Links.links.reportIssue, true)}
-        >
-          <ListItemIcon>
-            <IssueIcon />
-          </ListItemIcon>
-          <Typography style={{ color: theme.palette.text.primary }}>
-            {t('core:reportIssues')}
-          </Typography>
-        </ListItem>
-        <ListItem
-          onClick={() => openURLExternally(Links.links.helpTranslating, true)}
-        >
-          <ListItemIcon>
-            <TranslationIcon />
-          </ListItemIcon>
-          <Typography style={{ color: theme.palette.text.primary }}>
-            {t('core:helpWithTranslation')}
-          </Typography>
-        </ListItem>
-        <Divider />
-        <ListItem
-          onClick={() => openURLExternally(Links.links.emailContact, true)}
-        >
-          <ListItemIcon>
-            <EmailIcon />
-          </ListItemIcon>
-          <Typography style={{ color: theme.palette.text.primary }}>
-            {t('core:emailContact')}
-          </Typography>
-        </ListItem>
-        {Pro && (
-          <ListItem
+        <ListItem disablePadding>
+          <ListItemButton
             onClick={() =>
-              openURLExternally(Links.links.cancelSubscription, true)
+              openURLExternally(Links.documentationLinks.general, true)
             }
           >
             <ListItemIcon>
-              <CancelSubscriptionIcon />
+              <HelpIcon />
             </ListItemIcon>
-            <Typography style={{ color: theme.palette.text.primary }}>
-              {t('core:cancelSubscription')}
-            </Typography>
+            <ListItemText>{t('core:documentation')}</ListItemText>
+          </ListItemButton>
+        </ListItem>
+        <ListItem disablePadding>
+          <ListItemButton onClick={openKeyboardDialog}>
+            <ListItemIcon>
+              <KeyShortcutsIcon />
+            </ListItemIcon>
+            <ListItemText>{t('core:shortcutKeys')}</ListItemText>
+          </ListItemButton>
+        </ListItem>
+        <ListItem disablePadding>
+          <ListItemButton
+            onClick={() => openURLExternally(Links.links.changelogURL, true)}
+          >
+            <ListItemIcon>
+              <ChangeLogIcon />
+            </ListItemIcon>
+            <ListItemText>{t('core:whatsNew')}</ListItemText>
+          </ListItemButton>
+        </ListItem>
+        <ListItem disablePadding>
+          <ListItemButton onClick={openOnboardingDialog}>
+            <ListItemIcon>
+              <OnboardingIcon />
+            </ListItemIcon>
+            <ListItemText>{t('core:onboardingWizard')}</ListItemText>
+          </ListItemButton>
+        </ListItem>
+        {howToStartHidden && (
+          <ListItem disablePadding>
+            <ListItemButton
+              data-tid="showHowToStartTID"
+              onClick={() => dispatch(SettingsActions.setHideHowToStart(false))}
+            >
+              <ListItemIcon>
+                <VisibilityIcon />
+              </ListItemIcon>
+              <ListItemText>{t('peri:htsShowGuide')}</ListItemText>
+            </ListItemButton>
           </ListItem>
         )}
-        <ListItem onClick={() => openURLExternally(Links.links.twitter, true)}>
-          <ListItemIcon>
-            <XIcon />
-          </ListItemIcon>
-          <Typography style={{ color: theme.palette.text.primary }}>
-            {t('core:followOnX')}
-          </Typography>
+        <ListItem disablePadding>
+          <ListItemButton
+            onClick={() => openURLExternally(Links.links.webClipper, true)}
+          >
+            <ListItemIcon>
+              <WebClipperIcon />
+            </ListItemIcon>
+            <ListItemText>{t('core:webClipper')}</ListItemText>
+          </ListItemButton>
+        </ListItem>
+        {!AppConfig.isNativeMobile && (
+          <>
+            <ListItem disablePadding>
+              <ListItemButton
+                data-tid="getIosAppTID"
+                onClick={() => openMobileTeaserDialog('ios')}
+              >
+                <ListItemIcon>
+                  <IosAppIcon />
+                </ListItemIcon>
+                <ListItemText>{t('core:getIosApp')}</ListItemText>
+              </ListItemButton>
+            </ListItem>
+            <ListItem disablePadding>
+              <ListItemButton
+                data-tid="getAndroidAppTID"
+                onClick={() => openMobileTeaserDialog('android')}
+              >
+                <ListItemIcon>
+                  <AndroidAppIcon />
+                </ListItemIcon>
+                <ListItemText>{t('core:getAndroidApp')}</ListItemText>
+              </ListItemButton>
+            </ListItem>
+          </>
+        )}
+        <Divider />
+        <ListItem disablePadding>
+          <ListItemButton
+            onClick={() => openURLExternally(Links.links.suggestFeature, true)}
+          >
+            <ListItemIcon>
+              <NewFeatureIcon />
+            </ListItemIcon>
+            <ListItemText>{t('core:suggestNewFeatures')}</ListItemText>
+          </ListItemButton>
+        </ListItem>
+        <ListItem disablePadding>
+          <ListItemButton
+            onClick={() => openURLExternally(Links.links.forumsUrl, true)}
+          >
+            <ListItemIcon>
+              <ForumIcon />
+            </ListItemIcon>
+            <ListItemText>{t('core:forums')}</ListItemText>
+          </ListItemButton>
+        </ListItem>
+        <ListItem disablePadding>
+          <ListItemButton
+            onClick={() => openURLExternally(Links.links.reportIssue, true)}
+          >
+            <ListItemIcon>
+              <IssueIcon />
+            </ListItemIcon>
+            <ListItemText>{t('core:reportIssues')}</ListItemText>
+          </ListItemButton>
+        </ListItem>
+        <ListItem disablePadding>
+          <ListItemButton
+            onClick={() => openURLExternally(Links.links.helpTranslating, true)}
+          >
+            <ListItemIcon>
+              <TranslationIcon />
+            </ListItemIcon>
+            <ListItemText>{t('core:helpWithTranslation')}</ListItemText>
+          </ListItemButton>
         </ListItem>
         <Divider />
-        <ListItem onClick={() => openProTeaserDialog()}>
-          <ListItemIcon>
-            <ProTeaserIcon />
-          </ListItemIcon>
-          <Typography style={{ color: theme.palette.text.primary }}>
-            {t('achieveMore') + ' TagSpaces Pro'}
-          </Typography>
+        <ListItem disablePadding>
+          <ListItemButton
+            onClick={() => openURLExternally(Links.links.emailContact, true)}
+          >
+            <ListItemIcon>
+              <EmailIcon />
+            </ListItemIcon>
+            <ListItemText>{t('core:emailContact')}</ListItemText>
+          </ListItemButton>
+        </ListItem>
+        {isIapAvailable() ? (
+          // Mobile Pro is a one-time non-consumable IAP — there is no
+          // subscription to cancel. Offer Restore Purchases instead, gated
+          // on IAP availability (not on Pro) so a reinstalled user can restore
+          // before the entitlement has been re-applied. The billing-free Lite
+          // APK reports IAP unavailable, so the button is hidden there.
+          <ListItem disablePadding>
+            <ListItemButton onClick={() => restoreProPurchase()}>
+              <ListItemIcon>
+                <RestoreIcon />
+              </ListItemIcon>
+              <ListItemText>{t('peri:restorePurchases')}</ListItemText>
+            </ListItemButton>
+          </ListItem>
+        ) : (
+          Pro && (
+            <ListItem disablePadding>
+              <ListItemButton
+                onClick={() =>
+                  openURLExternally(Links.links.cancelSubscription, true)
+                }
+              >
+                <ListItemIcon>
+                  <CancelSubscriptionIcon />
+                </ListItemIcon>
+                <ListItemText>{t('core:cancelSubscription')}</ListItemText>
+              </ListItemButton>
+            </ListItem>
+          )
+        )}
+        <ListItem disablePadding>
+          <ListItemButton
+            onClick={() => openURLExternally(Links.links.mastodon, true)}
+          >
+            <ListItemIcon>
+              <MastodonIcon color="action" />
+            </ListItemIcon>
+            <ListItemText primary={t('core:followOnMastodon')} />
+          </ListItemButton>
+        </ListItem>
+        <ListItem disablePadding>
+          <ListItemButton
+            onClick={() => openURLExternally(Links.links.twitter, true)}
+          >
+            <ListItemIcon>
+              <XIcon />
+            </ListItemIcon>
+            <ListItemText>{t('core:followOnX')}</ListItemText>
+          </ListItemButton>
+        </ListItem>
+        <Divider />
+        <ListItem disablePadding>
+          <ListItemButton onClick={() => openProTeaserDialog()}>
+            <ListItemIcon>
+              <ProTeaserIcon />
+            </ListItemIcon>
+            <ListItemText>{t('achieveMore') + ' TagSpaces Pro'}</ListItemText>
+          </ListItemButton>
         </ListItem>
       </List>
     </Box>

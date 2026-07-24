@@ -20,26 +20,25 @@ import AppConfig from '-/AppConfig';
 import {
   AIIcon,
   DescriptionIcon,
-  EditDescriptionIcon,
   EntryPropertiesIcon,
+  LinkIcon,
   RevisionIcon,
 } from '-/components/CommonIcons';
 import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
 import { Pro } from '-/pro';
-import { AppDispatch } from '-/reducers/app';
 import { isDevMode } from '-/reducers/settings';
 import { TS } from '-/tagspaces.namespace';
 import { CommonLocation } from '-/utils/CommonLocation';
-import LinkIcon from '@mui/icons-material/Link';
-import { getBackupFileDir } from '@tagspaces/tagspaces-common/paths';
+import { getBackupDir } from '@tagspaces/tagspaces-common/paths';
 import React, { createContext, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useDispatch, useSelector } from 'react-redux';
+import { useSelector } from 'react-redux';
 
 export type TabItem = {
-  //dataTid: string;
   icon: React.ReactNode;
   title: string;
+  showBadge: boolean;
+  badgeTooltip?: string;
   name: (typeof TabNames)[keyof typeof TabNames];
 };
 
@@ -49,27 +48,17 @@ export const TabNames = {
   revisionsTab: 'revisionsTab',
   aiTab: 'aiTab',
   linksTab: 'linksTab',
+  closedTabs: 'closedTabs',
 };
 
 type EntryPropsTabsContextData = {
   getTabsArray: (openedEntry: TS.OpenedEntry) => Promise<TabItem[]>;
   isEditable: (openedEntry: TS.OpenedEntry) => boolean;
-  /*setOpenedTab: (
-    tabName: (typeof TabNames)[keyof typeof TabNames],
-    openedEntry: TS.OpenedEntry,
-  ) => Promise<number>;*/
-  /*isTabOpened: (
-    tabName: (typeof TabNames)[keyof typeof TabNames],
-    openedEntry: TS.OpenedEntry,
-    selectedTabIndex: number,
-  ) => Promise<boolean>;*/
 };
 
 export const EntryPropsTabsContext = createContext<EntryPropsTabsContextData>({
   getTabsArray: undefined,
   isEditable: undefined,
-  //setOpenedTab: undefined,
-  //isTabOpened: undefined,
 });
 
 export type EntryPropsTabsContextProviderProps = {
@@ -82,32 +71,33 @@ export const EntryPropsTabsContextProvider = ({
   const { t } = useTranslation();
 
   const { findLocation } = useCurrentLocationContext();
-  // const dispatch: AppDispatch = useDispatch();
   const devMode: boolean = useSelector(isDevMode);
 
-  //const haveRevisions = useRef<boolean>(isEditable());
-  //const tabsArray = useRef<TabItem[]>(getTabsArray(openedEntry));
-  //const [ignored, forceUpdate] = React.useReducer((x) => x + 1, 0, undefined);
-
   function haveRevisions(openedEntry: TS.OpenedEntry): Promise<boolean> {
-    if (isEditable(openedEntry)) {
-      const location: CommonLocation = findLocation(openedEntry.locationID);
-      const backupFilePath = getBackupFileDir(
-        openedEntry.path,
-        openedEntry.uuid,
-        location?.getDirSeparator(),
-      );
-      return location?.checkDirExist(backupFilePath);
+    const location: CommonLocation = findLocation(openedEntry.locationID);
+    const backupPath = getBackupDir(openedEntry);
+    return location?.checkDirExist(backupPath);
+  }
+
+  function haveAIChat(openedEntry: TS.OpenedEntry): Promise<boolean> {
+    if (openedEntry.isFile) {
+      return Promise.resolve(false);
     }
-    return Promise.resolve(false);
+    const location: CommonLocation = findLocation(openedEntry.locationID);
+    const dirSeparator = location
+      ? location.getDirSeparator()
+      : AppConfig.dirSeparator;
+    const aiChatPath =
+      openedEntry.path +
+      dirSeparator +
+      AppConfig.metaFolder +
+      dirSeparator +
+      AppConfig.aiFolder;
+    return location?.checkDirExist(aiChatPath);
   }
 
   function isEditable(openedEntry: TS.OpenedEntry): boolean {
     if (openedEntry) {
-      /* const fileExtension = extractFileExtension(
-        openedEntry.path,
-        currentLocation?.getDirSeparator(),
-      );*/
       const location: CommonLocation = findLocation(openedEntry.locationID);
       return (
         !location.isReadOnly &&
@@ -122,16 +112,20 @@ export const EntryPropsTabsContextProvider = ({
     const openedLocation: CommonLocation = findLocation(oEntry.locationID);
     const tab1: TabItem = {
       icon: <EntryPropertiesIcon />,
+      showBadge: false,
       title: t('core:details'),
       name: TabNames.propertiesTab,
     };
     const tab2: TabItem = {
-      icon:
-        oEntry && oEntry.meta && oEntry.meta.description ? (
-          <EditDescriptionIcon />
-        ) : (
-          <DescriptionIcon />
-        ),
+      // icon:
+      //   oEntry && oEntry.meta && oEntry.meta.description ? (
+      //     <EditDescriptionIcon />
+      //   ) : (
+      //     <DescriptionIcon />
+      //   ),
+      icon: <DescriptionIcon />,
+      showBadge: Boolean(oEntry && oEntry.meta && oEntry.meta.description),
+      badgeTooltip: t('core:descriptionAvailable'),
       title: t('core:filePropertiesDescription'),
       name: TabNames.descriptionTab,
     };
@@ -141,24 +135,27 @@ export const EntryPropsTabsContextProvider = ({
     if (revisions) {
       const tab3: TabItem = {
         icon: <RevisionIcon />,
+        showBadge: false,
         title: t('core:revisions'),
         name: TabNames.revisionsTab,
       };
       tabsArray.push(tab3);
     }
 
-    if ((oEntry && !oEntry.isFile) || (devMode && Pro)) {
-      if (!openedLocation.isReadOnly) {
-        const tab4: TabItem = {
-          icon: <AIIcon />,
-          title: oEntry.isFile ? t('core:aiSettingsTab') : t('core:aiChatTab'),
-          name: TabNames.aiTab,
-        };
-        tabsArray.push(tab4);
-      }
+    if (!oEntry?.isFile || (devMode && oEntry?.isFile && Pro)) {
+      const aiChatAvailable = await haveAIChat(oEntry);
+      const tab4: TabItem = {
+        showBadge: aiChatAvailable,
+        icon: <AIIcon />,
+        title: t('core:aiChatTab'),
+        badgeTooltip: t('core:aiChatAvailable'),
+        name: TabNames.aiTab,
+      };
+      tabsArray.push(tab4);
     }
     const tab5: TabItem = {
       icon: <LinkIcon />,
+      showBadge: false,
       title: t('core:links'),
       name: TabNames.linksTab,
     };
@@ -166,44 +163,10 @@ export const EntryPropsTabsContextProvider = ({
     return tabsArray;
   }
 
-  /**
-   * @param tabName
-   * @param openedEntry
-   * return tabIndex or -1 if not tab exist with tabName
-   */
-  /*async function setOpenedTab(
-    tabName: (typeof TabNames)[keyof typeof TabNames],
-    openedEntry: TS.OpenedEntry,
-  ): Promise<number> {
-    const allTabs = await getTabsArray(openedEntry);
-    const tabIndex = allTabs.findIndex((tab) => tab.name === tabName);
-    if (tabIndex > -1) {
-      dispatch(SettingsActions.setEntryContainerTab(tabIndex));
-    } else {
-      console.log('no tab with name:' + tabName + ' exist!');
-    }
-    return tabIndex;
-  }*/
-
-  /*async function isTabOpened(
-    tabName: (typeof TabNames)[keyof typeof TabNames],
-    openedEntry: TS.OpenedEntry,
-    selectedTabIndex: number,
-  ): Promise<boolean> {
-    const allTabs = await getTabsArray(openedEntry);
-    const tabIndex = allTabs.findIndex((tab) => tab.name === tabName);
-    const maxTabIndex = allTabs.length - 1;
-    const currentOpenedTab =
-      selectedTabIndex > maxTabIndex ? maxTabIndex : selectedTabIndex;
-    return tabIndex !== -1 && tabIndex === currentOpenedTab;
-  }*/
-
   const context = useMemo(() => {
     return {
       getTabsArray,
       isEditable,
-      //setOpenedTab,
-      //isTabOpened,
     };
   }, []);
 

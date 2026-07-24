@@ -18,41 +18,48 @@
 
 import AppConfig from '-/AppConfig';
 import {
+  AIIcon,
   CreateFileIcon,
   ExpandIcon,
+  OllamaIcon,
   ReloadIcon,
   RemoveIcon,
 } from '-/components/CommonIcons';
-import { default as TooltipTS } from '-/components/Tooltip';
 import TsButton from '-/components/TsButton';
 import TsIconButton from '-/components/TsIconButton';
 import TsMenuList from '-/components/TsMenuList';
 import TsSelect from '-/components/TsSelect';
+import TsSwitch from '-/components/TsSwitch';
 import TsTextField from '-/components/TsTextField';
-import { AIProvider, AIProviders } from '-/components/chat/ChatTypes';
+import TsTooltip from '-/components/TsTooltip';
+import { AIProvider } from '-/components/chat/ChatTypes';
 import SelectChatModel from '-/components/chat/SelectChatModel';
-import { OllamaIcon } from '-/components/dialogs/components/Ollama';
+import {
+  AiPreset,
+  aiPresets,
+  presetIconForEngine,
+} from '-/components/chat/aiPresets';
 import { useChatContext } from '-/hooks/useChatContext';
+import { Pro } from '-/pro';
 import { AppDispatch } from '-/reducers/app';
 import {
   actions as SettingsActions,
   getAIProviders,
   getDefaultAIProvider,
 } from '-/reducers/settings';
-import { openURLExternally } from '-/services/utils-io';
-import { ClickAwayListener } from '@mui/base/ClickAwayListener';
+import { TS } from '-/tagspaces.namespace';
 import FiberManualRecordIcon from '@mui/icons-material/FiberManualRecord';
 import {
   Accordion,
   AccordionDetails,
   AccordionSummary,
   CircularProgress,
+  ClickAwayListener,
   FormControl,
   Grow,
   MenuItem,
   Paper,
   Popper,
-  Switch,
 } from '@mui/material';
 import Box from '@mui/material/Box';
 import FormControlLabel from '@mui/material/FormControlLabel';
@@ -62,7 +69,7 @@ import ListItemIcon from '@mui/material/ListItemIcon';
 import ListItemText from '@mui/material/ListItemText';
 import Typography from '@mui/material/Typography';
 import { getUuid } from '@tagspaces/tagspaces-common/utils-io';
-import React, { ChangeEvent, useEffect } from 'react';
+import React, { ChangeEvent, useContext, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useDispatch, useSelector } from 'react-redux';
 
@@ -71,7 +78,7 @@ interface Props {
 }
 
 function SettingsAI(props: Props) {
-  const { i18n, t } = useTranslation();
+  const { t } = useTranslation();
   const { closeSettings } = props;
   const { changeCurrentModel, checkProviderAlive } = useChatContext();
   const aiDefaultProvider: AIProvider = useSelector(getDefaultAIProvider);
@@ -81,7 +88,16 @@ function SettingsAI(props: Props) {
   const dispatch: AppDispatch = useDispatch();
   const anchorRef = React.useRef<HTMLDivElement>(null);
   const providersAlive = React.useRef({});
+  const aiTemplates = React.useRef({});
+  const [focusedTemplate, setFocusedTemplate] =
+    React.useState<string>(undefined);
   const [openedNewAIMenu, setOpenedNewAIMenu] = React.useState(false);
+
+  const aiTemplatesContext = Pro?.contextProviders?.AiTemplatesContext
+    ? useContext<TS.AiTemplatesContextData>(
+        Pro.contextProviders.AiTemplatesContext,
+      )
+    : undefined;
 
   useEffect(() => {
     checkOllamaAlive();
@@ -102,9 +118,17 @@ function SettingsAI(props: Props) {
     setOpenedNewAIMenu(false);
   };
 
+  function engineIcon(engine: AIProvider['engine'], sx?: any) {
+    return presetIconForEngine(engine) === 'ollama' ? (
+      <OllamaIcon sx={sx} />
+    ) : (
+      <AIIcon sx={sx} />
+    );
+  }
+
   function checkOllamaAlive() {
     aiProviders.map((provider) =>
-      checkProviderAlive(provider.url).then((alive) => {
+      checkProviderAlive(provider).then((alive) => {
         providersAlive.current = {
           ...providersAlive.current,
           [provider.id]: alive,
@@ -134,73 +158,134 @@ function SettingsAI(props: Props) {
     dispatch(SettingsActions.setAiProvider(providerId));
   };
 
-  const addAiProvider = (provider: AIProviders) => {
-    //event: ChangeEvent<HTMLInputElement>) => {
-    //const provider: AIProviders = event.target.value as AIProviders;
-    const providerUrl = provider === 'ollama' ? 'http://localhost:11434' : '';
-    checkProviderAlive(providerUrl).then((isAlive) => {
-      const providerId = getUuid();
+  const addAiProvider = (preset: AiPreset) => {
+    const providerId = getUuid();
+    const aiProvider: AIProvider = {
+      id: providerId,
+      engine: preset.engine,
+      name: preset.label,
+      url: preset.defaultUrl,
+      enable: true,
+    };
+    checkProviderAlive(aiProvider).then((isAlive) => {
       providersAlive.current = {
         ...providersAlive.current,
         [providerId]: isAlive,
-      };
-      const aiProvider: AIProvider = {
-        id: providerId,
-        engine: provider,
-        name: provider,
-        url: providerUrl,
-        enable: true,
       };
       dispatch(SettingsActions.addAiProvider(aiProvider));
     });
   };
 
-  const externalConfig = typeof window.ExtAI !== 'undefined';
+  function saveTemplate(key: string) {
+    const template = aiTemplates.current[key];
+    if (template) {
+      aiTemplatesContext.setTemplate(key, template);
+      aiTemplates.current[key] = undefined;
+    }
+  }
+
+  function resetTemplate(key: string) {
+    const template = aiTemplatesContext.getDefaultTemplate(key);
+    if (template) {
+      aiTemplatesContext.setTemplate(key, template);
+      aiTemplates.current[key] = undefined;
+    }
+  }
+
+  function cancelSavingTemplate(key: string) {
+    aiTemplates.current[key] = undefined;
+    forceUpdate();
+  }
+
+  // Keep Save/Reset/Cancel visible whenever the field is focused, there is a
+  // pending edit (even one that cleared the field to empty), OR the effective
+  // prompt is empty/missing — so the buttons show as soon as the user starts
+  // interacting and an accidentally-cleared or lost prompt can always be reset
+  // to default. The previous truthiness guard hid the buttons the moment a
+  // prompt became empty, stranding the user with a blank prompt and no recovery.
+  function showTemplateActions(key: string): boolean {
+    if (focusedTemplate === key) {
+      return true;
+    }
+    const pendingEdit = aiTemplates.current[key];
+    if (pendingEdit !== undefined) {
+      return true;
+    }
+    return !aiTemplatesContext?.getTemplate(key);
+  }
+
+  const handleTemplateFocus = (key: string) => () => setFocusedTemplate(key);
+
+  const handleTemplateBlur = (key: string) => () =>
+    setFocusedTemplate((prev) => (prev === key ? undefined : prev));
+
+  const externalConfig = typeof AppConfig.ExtAI !== 'undefined';
+
+  const actionButtons = (key) => {
+    const pendingEdit = aiTemplates.current[key];
+    // Only a non-empty pending edit is worth saving; an empty field or no edit
+    // leaves Save disabled while Reset/Cancel stay available for recovery.
+    const canSave = typeof pendingEdit === 'string' && pendingEdit.length > 0;
+    return (
+      <InputAdornment
+        position="end"
+        sx={{ flexDirection: 'column', marginTop: '-70px' }}
+        // Keep the field focused when a button is clicked: without this, the
+        // input blurs on mousedown, showTemplateActions() flips to false and the
+        // buttons unmount before the click lands (so Reset/Cancel never fire).
+        onMouseDown={(event) => event.preventDefault()}
+      >
+        <TsButton
+          variant="text"
+          disabled={!canSave}
+          data-tid={'save' + key + 'TID'}
+          onClick={() => saveTemplate(key)}
+        >
+          {t('core:save')}
+        </TsButton>
+        <TsButton
+          variant="text"
+          tooltip={t('peri:resetsToDefaultPrompt')}
+          data-tid={'reset' + key + 'TID'}
+          onClick={() => resetTemplate(key)}
+        >
+          {t('core:resetBtn')}
+        </TsButton>
+        <TsButton
+          variant="text"
+          data-tid={'cancel' + key + 'TID'}
+          onClick={() => cancelSavingTemplate(key)}
+        >
+          {t('core:cancel')}
+        </TsButton>
+      </InputAdornment>
+    );
+  };
 
   return (
-    <div
-      style={{
+    <Box
+      sx={{
         overflowX: 'hidden',
         overflowY: 'auto',
         height: '100%',
-        padding: 10,
+        padding: '10px',
       }}
     >
       <Accordion defaultExpanded>
         <AccordionSummary
-          //expandIcon={<ExpandIcon />}
           aria-controls="ai-general"
           id="ai-general-header"
           data-tid="aiGeneralTID"
         >
-          <Box style={{ display: 'block' }}>
-            <Typography>{t('core:aiSettings')}</Typography>
-            <br />
-            <Typography variant="caption">
-              TagSpaces do not have its own AI engine or models, but relays
-              entirely on external software like Ollama. If you don't have
-              Ollama, you can download it for free from
-              <TsButton
-                style={{
-                  fontSize: 13,
-                  textTransform: 'unset',
-                  fontWeight: 'normal',
-                  paddingTop: 0,
-                  paddingBottom: 0,
-                }}
-                variant="text"
-                onClick={() => {
-                  openURLExternally('https://ollama.com/download', true);
-                }}
-              >
-                ollama.com
-              </TsButton>{' '}
-              and follow the installation instructions to get it set up on your
-              computer.
-            </Typography>
-          </Box>
+          <Typography>{t('core:aiSettings')}</Typography>
         </AccordionSummary>
         <AccordionDetails>
+          <Typography
+            variant="caption"
+            sx={{ display: 'block', marginBottom: 1 }}
+          >
+            {t('peri:aiClarification')}{' '}
+          </Typography>
           <ClickAwayListener onClickAway={handleClose}>
             <Box
               ref={anchorRef}
@@ -211,7 +296,6 @@ function SettingsAI(props: Props) {
               }}
             >
               <TsButton
-                //tooltip={t('core:createNew')}
                 disabled={externalConfig}
                 aria-controls={
                   openedNewAIMenu ? 'split-button-menu' : undefined
@@ -221,10 +305,10 @@ function SettingsAI(props: Props) {
                 data-tid="createNewAIButtonTID"
                 onClick={handleToggle}
                 startIcon={<CreateFileIcon />}
-                style={{ marginBottom: AppConfig.defaultSpaceBetweenButtons }}
+                sx={{ marginBottom: AppConfig.defaultSpaceBetweenButtons }}
               >
                 <Box
-                  style={{
+                  sx={{
                     textOverflow: 'ellipsis',
                     whiteSpace: 'nowrap',
                     overflow: 'hidden',
@@ -254,19 +338,25 @@ function SettingsAI(props: Props) {
                   >
                     <Paper>
                       <TsMenuList id="split-button-menu" autoFocusItem>
-                        <MenuItem
-                          key="createNewTextFileTID"
-                          data-tid="aiCreateNewTextFileTID"
-                          onClick={() => {
-                            addAiProvider('ollama');
-                            setOpenedNewAIMenu(false);
-                          }}
-                        >
-                          <ListItemIcon>
-                            <OllamaIcon height={30} />
-                          </ListItemIcon>
-                          <ListItemText primary="Ollama" />
-                        </MenuItem>
+                        {aiPresets.map((preset) => (
+                          <MenuItem
+                            key={preset.key}
+                            data-tid={'aiAddProvider_' + preset.key + 'TID'}
+                            onClick={() => {
+                              addAiProvider(preset);
+                              setOpenedNewAIMenu(false);
+                            }}
+                          >
+                            <ListItemIcon>
+                              {preset.icon === 'ollama' ? (
+                                <OllamaIcon />
+                              ) : (
+                                <AIIcon />
+                              )}
+                            </ListItemIcon>
+                            <ListItemText primary={preset.label} />
+                          </MenuItem>
+                        ))}
                       </TsMenuList>
                     </Paper>
                   </Grow>
@@ -285,8 +375,10 @@ function SettingsAI(props: Props) {
                 .filter((p) => p.enable)
                 .map((provider) => (
                   <MenuItem key={provider.id} value={provider.id}>
-                    <OllamaIcon width={10} style={{ marginRight: 5 }} />
-                    {provider.name}
+                    {engineIcon(provider.engine)}
+                    <Box sx={{ display: 'inline-block', marginLeft: '5px' }}>
+                      {provider.name}
+                    </Box>
                   </MenuItem>
                 ))}
             </TsSelect>
@@ -297,8 +389,7 @@ function SettingsAI(props: Props) {
         <Accordion defaultExpanded>
           <AccordionSummary>
             <Typography variant="caption">
-              All AI-functionality is currently disabled. Please add and
-              configure an AI-engine in order to use external AIs in TagSpaces.
+              {t('peri:aiFunctionalityDisabled')}
             </Typography>
           </AccordionSummary>
         </Accordion>
@@ -313,11 +404,9 @@ function SettingsAI(props: Props) {
               '& .MuiAccordionSummary-content': { alignItems: 'center' },
             }}
           >
-            <Typography>
-              <OllamaIcon width={15} style={{ marginRight: 5 }} />
-              {provider.name}
-            </Typography>
-            <TooltipTS
+            {engineIcon(provider.engine)}
+            <Typography sx={{ marginLeft: '5px' }}>{provider.name}</Typography>
+            <TsTooltip
               title={
                 t('core:serviceStatus') +
                 ': ' +
@@ -339,14 +428,14 @@ function SettingsAI(props: Props) {
                   }}
                 />
               )}
-            </TooltipTS>
+            </TsTooltip>
             <TsIconButton
               aria-label="removeAIProvider"
               tooltip={t('core:remove')}
               onClick={(e) => {
                 e.stopPropagation();
                 const result = confirm(
-                  'Do you want to remove "' + provider.name + '" AI config?',
+                  t('peri:confirmRemoveAiConfig', { name: provider.name }),
                 );
                 if (result) {
                   dispatch(SettingsActions.removeAiProvider(provider.id));
@@ -395,7 +484,7 @@ function SettingsAI(props: Props) {
                   slotProps={{
                     input: {
                       endAdornment: (
-                        <InputAdornment position="end" style={{ height: 32 }}>
+                        <InputAdornment position="end" sx={{ height: 32 }}>
                           <TsIconButton
                             tooltip={t('core:refreshServiceStatus')}
                             onClick={() => {
@@ -411,6 +500,7 @@ function SettingsAI(props: Props) {
                 />
               </FormControl>
               <SelectChatModel
+                disabled={!providersAlive.current[provider.id]}
                 label={t('core:defaultAImodelText') + ' *'}
                 handleChangeModel={(modelName: string) => {
                   handleChangeProvider(
@@ -418,12 +508,13 @@ function SettingsAI(props: Props) {
                     'defaultTextModel',
                     modelName,
                   );
-                  changeCurrentModel(modelName, closeSettings);
+                  changeCurrentModel(modelName, closeSettings, provider);
                 }}
                 aiProvider={provider}
                 chosenModel={provider.defaultTextModel}
               />
               <SelectChatModel
+                disabled={!providersAlive.current[provider.id]}
                 label={t('core:defaultAImodelImages')}
                 handleChangeModel={(modelName: string) => {
                   handleChangeProvider(
@@ -431,16 +522,16 @@ function SettingsAI(props: Props) {
                     'defaultImageModel',
                     modelName,
                   );
-                  changeCurrentModel(modelName, closeSettings);
+                  changeCurrentModel(modelName, closeSettings, provider);
                 }}
                 aiProvider={provider}
                 chosenModel={provider.defaultImageModel}
               />
               <FormControlLabel
                 labelPlacement="start"
-                style={{ justifyContent: 'space-between', marginLeft: 0 }}
+                sx={{ justifyContent: 'space-between', marginLeft: 0 }}
                 control={
-                  <Switch
+                  <TsSwitch
                     data-tid="locationIsDefault"
                     name="isDefault"
                     checked={provider.enable}
@@ -464,7 +555,241 @@ function SettingsAI(props: Props) {
           </AccordionDetails>
         </Accordion>
       ))}
-    </div>
+      {Pro && aiTemplatesContext && (
+        <Accordion>
+          <AccordionSummary
+            expandIcon={<ExpandIcon />}
+            aria-controls={'AdvancedContent'}
+            data-tid={'AdvancedTID'}
+            sx={{
+              '& .MuiAccordionSummary-content': { alignItems: 'center' },
+            }}
+          >
+            <Typography>{'Advanced'}</Typography>
+          </AccordionSummary>
+          <AccordionDetails>
+            <TsTextField
+              fullWidth
+              multiline
+              rows={5}
+              disabled={
+                !(typeof AppConfig.ExtDefaultQuestionPrompt === 'undefined')
+              }
+              label={t('defaultQuestionPrompt')}
+              value={
+                aiTemplates.current['DEFAULT_QUESTION_PROMPT'] ??
+                aiTemplatesContext.getTemplate('DEFAULT_QUESTION_PROMPT')
+              }
+              onChange={(e) => {
+                aiTemplates.current['DEFAULT_QUESTION_PROMPT'] = e.target.value;
+                forceUpdate();
+              }}
+              onFocus={handleTemplateFocus('DEFAULT_QUESTION_PROMPT')}
+              onBlur={handleTemplateBlur('DEFAULT_QUESTION_PROMPT')}
+              slotProps={{
+                input: {
+                  endAdornment:
+                    showTemplateActions('DEFAULT_QUESTION_PROMPT') &&
+                    actionButtons('DEFAULT_QUESTION_PROMPT'),
+                },
+              }}
+            />
+            <TsTextField
+              fullWidth
+              multiline
+              rows={5}
+              disabled={
+                !(typeof AppConfig.ExtDefaultSystemPrompt === 'undefined')
+              }
+              label={t('defaultSystemPrompt')}
+              value={
+                aiTemplates.current['DEFAULT_SYSTEM_PROMPT'] ??
+                aiTemplatesContext.getTemplate('DEFAULT_SYSTEM_PROMPT')
+              }
+              onChange={(e) => {
+                aiTemplates.current['DEFAULT_SYSTEM_PROMPT'] = e.target.value;
+                forceUpdate();
+              }}
+              onFocus={handleTemplateFocus('DEFAULT_SYSTEM_PROMPT')}
+              onBlur={handleTemplateBlur('DEFAULT_SYSTEM_PROMPT')}
+              slotProps={{
+                input: {
+                  endAdornment:
+                    showTemplateActions('DEFAULT_SYSTEM_PROMPT') &&
+                    actionButtons('DEFAULT_SYSTEM_PROMPT'),
+                },
+              }}
+            />
+            <TsTextField
+              fullWidth
+              multiline
+              rows={5}
+              disabled={!(typeof AppConfig.ExtSummarizePrompt === 'undefined')}
+              label={t('summarizePrompt')}
+              value={
+                aiTemplates.current['SUMMARIZE_PROMPT'] ??
+                aiTemplatesContext.getTemplate('SUMMARIZE_PROMPT')
+              }
+              onChange={(e) => {
+                aiTemplates.current['SUMMARIZE_PROMPT'] = e.target.value;
+                forceUpdate();
+              }}
+              onFocus={handleTemplateFocus('SUMMARIZE_PROMPT')}
+              onBlur={handleTemplateBlur('SUMMARIZE_PROMPT')}
+              slotProps={{
+                input: {
+                  endAdornment:
+                    showTemplateActions('SUMMARIZE_PROMPT') &&
+                    actionButtons('SUMMARIZE_PROMPT'),
+                },
+              }}
+            />
+            <TsTextField
+              fullWidth
+              multiline
+              rows={5}
+              disabled={
+                !(
+                  typeof AppConfig.ExtDescriptionFromImagePrompt === 'undefined'
+                )
+              }
+              label={t('imageDescription')}
+              value={
+                aiTemplates.current['IMAGE_DESCRIPTION_PROMPT'] ??
+                aiTemplatesContext.getTemplate('IMAGE_DESCRIPTION_PROMPT')
+              }
+              onChange={(e) => {
+                aiTemplates.current['IMAGE_DESCRIPTION_PROMPT'] =
+                  e.target.value;
+                forceUpdate();
+              }}
+              onFocus={handleTemplateFocus('IMAGE_DESCRIPTION_PROMPT')}
+              onBlur={handleTemplateBlur('IMAGE_DESCRIPTION_PROMPT')}
+              slotProps={{
+                input: {
+                  endAdornment:
+                    showTemplateActions('IMAGE_DESCRIPTION_PROMPT') &&
+                    actionButtons('IMAGE_DESCRIPTION_PROMPT'),
+                },
+              }}
+            />
+            <TsTextField
+              fullWidth
+              multiline
+              rows={5}
+              disabled={
+                !(
+                  typeof AppConfig.ExtDescriptionFromImageStructuredPrompt ===
+                  'undefined'
+                )
+              }
+              label={t('imageDescriptionStructured')}
+              value={
+                aiTemplates.current['IMAGE_DESCRIPTION_STRUCTURED_PROMPT'] ??
+                aiTemplatesContext.getTemplate(
+                  'IMAGE_DESCRIPTION_STRUCTURED_PROMPT',
+                )
+              }
+              onChange={(e) => {
+                aiTemplates.current['IMAGE_DESCRIPTION_STRUCTURED_PROMPT'] =
+                  e.target.value;
+                forceUpdate();
+              }}
+              onFocus={handleTemplateFocus(
+                'IMAGE_DESCRIPTION_STRUCTURED_PROMPT',
+              )}
+              onBlur={handleTemplateBlur('IMAGE_DESCRIPTION_STRUCTURED_PROMPT')}
+              slotProps={{
+                input: {
+                  endAdornment:
+                    showTemplateActions(
+                      'IMAGE_DESCRIPTION_STRUCTURED_PROMPT',
+                    ) && actionButtons('IMAGE_DESCRIPTION_STRUCTURED_PROMPT'),
+                },
+              }}
+            />
+            <TsTextField
+              fullWidth
+              multiline
+              rows={5}
+              disabled={
+                !(typeof AppConfig.ExtDescriptionFromTextPrompt === 'undefined')
+              }
+              label={t('textDescription')}
+              value={
+                aiTemplates.current['TEXT_DESCRIPTION_PROMPT'] ??
+                aiTemplatesContext.getTemplate('TEXT_DESCRIPTION_PROMPT')
+              }
+              onChange={(e) => {
+                aiTemplates.current['TEXT_DESCRIPTION_PROMPT'] = e.target.value;
+                forceUpdate();
+              }}
+              onFocus={handleTemplateFocus('TEXT_DESCRIPTION_PROMPT')}
+              onBlur={handleTemplateBlur('TEXT_DESCRIPTION_PROMPT')}
+              slotProps={{
+                input: {
+                  endAdornment:
+                    showTemplateActions('TEXT_DESCRIPTION_PROMPT') &&
+                    actionButtons('TEXT_DESCRIPTION_PROMPT'),
+                },
+              }}
+            />
+            <TsTextField
+              fullWidth
+              multiline
+              rows={5}
+              disabled={
+                !(typeof AppConfig.ExtTagsFromImagePrompt === 'undefined')
+              }
+              label={t('generateImageTags')}
+              value={
+                aiTemplates.current['IMAGE_TAGS_PROMPT'] ??
+                aiTemplatesContext.getTemplate('IMAGE_TAGS_PROMPT')
+              }
+              onChange={(e) => {
+                aiTemplates.current['IMAGE_TAGS_PROMPT'] = e.target.value;
+                forceUpdate();
+              }}
+              onFocus={handleTemplateFocus('IMAGE_TAGS_PROMPT')}
+              onBlur={handleTemplateBlur('IMAGE_TAGS_PROMPT')}
+              slotProps={{
+                input: {
+                  endAdornment:
+                    showTemplateActions('IMAGE_TAGS_PROMPT') &&
+                    actionButtons('IMAGE_TAGS_PROMPT'),
+                },
+              }}
+            />
+            <TsTextField
+              fullWidth
+              multiline
+              rows={5}
+              disabled={
+                !(typeof AppConfig.ExtTagsFromTextPrompt === 'undefined')
+              }
+              label={t('generateTags')}
+              value={
+                aiTemplates.current['TEXT_TAGS_PROMPT'] ??
+                aiTemplatesContext.getTemplate('TEXT_TAGS_PROMPT')
+              }
+              onChange={(e) => {
+                aiTemplates.current['TEXT_TAGS_PROMPT'] = e.target.value;
+                forceUpdate();
+              }}
+              onFocus={handleTemplateFocus('TEXT_TAGS_PROMPT')}
+              onBlur={handleTemplateBlur('TEXT_TAGS_PROMPT')}
+              slotProps={{
+                input: {
+                  endAdornment:
+                    showTemplateActions('TEXT_TAGS_PROMPT') &&
+                    actionButtons('TEXT_TAGS_PROMPT'),
+                },
+              }}
+            />
+          </AccordionDetails>
+        </Accordion>
+      )}
+    </Box>
   );
 }
 

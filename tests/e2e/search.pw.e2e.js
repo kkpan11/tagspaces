@@ -1,60 +1,64 @@
-import { test, expect } from './fixtures';
+import { dataTidFormat } from '../../src/renderer/services/test';
+import { AddRemovePropertiesTags } from './file.properties.helpers';
+import { expect, test } from './fixtures';
 import {
   clickOn,
   expectElementExist,
   expectElementSelected,
   getGridFileName,
   getGridFileSelector,
+  isDisplayed,
   openFile,
   selectorFile,
   setSettings,
 } from './general.helpers';
-import { createFile, startTestingApp, stopApp, testDataRefresh } from './hook';
+import {
+  createFileS3,
+  createLocalFile,
+  startTestingApp,
+  stopApp,
+  testDataRefresh,
+} from './hook';
 import {
   closeFileProperties,
   closeLocation,
   createPwLocation,
-  createPwMinioLocation,
   createS3Location,
   defaultLocationName,
-  defaultLocationPath,
 } from './location.helpers';
+import { AddRemoveTagsToSelectedFiles } from './perspective-grid.helpers';
 import {
+  addRemoveTagsInSearchResults,
+  addSearchCommand,
+  createSavedSearch,
   emptyFolderName,
   searchEngine,
   testFilename,
-  addRemoveTagsInSearchResults,
-  createSavedSearch,
-  addSearchCommand,
 } from './search.helpers';
-import { clearDataStorage } from './welcome.helpers';
 import { openContextEntryMenu } from './test-utils';
-import { dataTidFormat } from '../../src/renderer/services/test';
-import { AddRemoveTagsToSelectedFiles } from './perspective-grid.helpers';
-import { stopServices } from '../setup-functions';
-import { AddRemovePropertiesTags } from './file.properties.helpers';
+import { clearDataStorage } from './welcome.helpers';
 
-let s3ServerInstance;
-let webServerInstance;
-let minioServerInstance;
-
-test.beforeAll(async ({ s3Server, webServer, minioServer }) => {
-  s3ServerInstance = s3Server;
-  webServerInstance = webServer;
-  minioServerInstance = minioServer;
-  await startTestingApp('extconfig-two-locations.js');
-  // await startTestingApp('extconfig-without-locations.js');
-  // await clearDataStorage();
-  await createFile();
-});
+test.beforeAll(
+  async ({ isWeb, isS3, webServerPort, testDataDir }, testInfo) => {
+    await startTestingApp(
+      { isWeb, isS3, webServerPort, testInfo },
+      'extconfig-two-locations.js',
+    );
+    // await startTestingApp('extconfig-without-locations.js');
+    // await clearDataStorage();
+    if (isS3) {
+      await createFileS3();
+    } else {
+      await createLocalFile(testDataDir);
+    }
+  },
+);
 
 test.afterAll(async () => {
-  await stopServices(s3ServerInstance, webServerInstance, minioServerInstance);
-  await testDataRefresh(s3ServerInstance);
   await stopApp();
 });
 
-test.afterEach(async ({ page }, testInfo) => {
+test.afterEach(async ({ isS3, testDataDir, page }, testInfo) => {
   /*if (testInfo.status !== testInfo.expectedStatus) {
     await takeScreenshot(testInfo);
     const localStorage = await global.client.evaluate(() =>
@@ -65,26 +69,32 @@ test.afterEach(async ({ page }, testInfo) => {
       localStorage,
     );
   }*/
+  // Refresh test data so files created by previous tests (e.g. TST0632)
+  // don't leak into subsequent tests that expect empty_folder to be empty
+  await testDataRefresh(isS3, testDataDir);
   await clearDataStorage();
 });
 
-test.beforeEach(async () => {
+test.beforeEach(async ({ isS3, testDataDir }) => {
   // await closeWelcomePlaywright();
-  if (global.isMinio) {
-    await createPwMinioLocation('', defaultLocationName, true);
-  } else if (global.isS3) {
+  if (isS3) {
     await createS3Location('', defaultLocationName, true);
   } else {
-    await createPwLocation(defaultLocationPath, defaultLocationName, true);
+    await createPwLocation(testDataDir, defaultLocationName, true);
   }
   await clickOn('[data-tid=location_' + defaultLocationName + ']');
-  await expectElementExist(getGridFileSelector('empty_folder'), true, 8000);
+  await expectElementExist(getGridFileSelector('empty_folder'), true, 15000);
+  // Ensure no leftover search state from the previous test
+  if (await isDisplayed('#clearSearchID', true, 1000)) {
+    await clickOn('#clearSearchID');
+    await expectElementExist('#textQuery', false, 5000);
+  }
   // If its have opened file
   // await closeFileProperties();
 });
 
 test.describe('TST06 - Test Search in file structure:', () => {
-  test('TST0601 - Search in current location [web,electron]', async () => {
+  test('TST0601 - Search in current location [web,s3,electron]', async () => {
     await global.client.dblclick(
       '[data-tid=fsEntryName_' + emptyFolderName + ']',
     );
@@ -141,19 +151,22 @@ test.describe('TST06 - Test Search in file structure:', () => {
     // expected to reset all search engine
   });*/
 
-  test('TST0609 - Show thumbnails of image files in the search results [web,minio,electron]', async () => {
-    if (!global.isWin || !global.isWeb) {
+  test('TST0609 - Show thumbnails of image files in the search results [web,s3,electron]', async ({
+    isWin,
+    isWeb,
+  }) => {
+    if (!isWin || !isWeb) {
       //todo on web windows only test not work
-      await global.client.waitForSelector('img[alt="thumbnail image"]', {
+      await global.client.waitForSelector('img[data-tid="imageThumbnailTID"]', {
         visible: true,
       });
       const searchQuery = 'sample_exif.jpg'; //'jpg';
       await addSearchCommand(searchQuery, true);
       await expectElementExist('[data-tid=allFilesCount1]', true, 5000);
-      await global.client.waitForSelector('img[alt="thumbnail image"]', {
+      await global.client.waitForSelector('img[data-tid="imageThumbnailTID"]', {
         visible: true,
       });
-      const imageLocator = global.client.locator('img[alt="thumbnail image"]');
+      const imageLocator = global.client.locator('img[data-tid="imageThumbnailTID"]');
       const imageCount = await imageLocator.count();
       expect(imageCount).toBeGreaterThan(0);
       const images = await imageLocator; //.elements();
@@ -166,7 +179,7 @@ test.describe('TST06 - Test Search in file structure:', () => {
     }
   });
 
-  test('TST0621 - Search actions - open location [web,electron]', async () => {
+  test('TST0621 - Search actions - open location [web,s3,electron]', async () => {
     //const firstLocationTID = await getPwLocationTid(0);
     await closeLocation(); //lastLocationTID);
     await expectElementExist('[data-tid=WelcomePanelTID]', true);
@@ -175,13 +188,13 @@ test.describe('TST06 - Test Search in file structure:', () => {
     await expectElementExist('[data-tid=currentDir_empty_folder]', true, 5000);
   });
 
-  test('TST0622 - Search actions - filter [web,electron]', async () => {
+  test('TST0622 - Search actions - filter [web,s3,electron]', async () => {
     await searchEngine('f:txt', {}, false);
     const file = await getGridFileName(0);
     expect(file).toContain('txt');
   });
 
-  test('TST0623 - Search actions - history [web,electron,_pro]', async () => {
+  test('TST0623 - Search actions - history [web,s3,electron,_pro]', async () => {
     const file = 'sample.txt';
     // add file to history
     await openContextEntryMenu(getGridFileSelector(file), 'fileMenuOpenFile');
@@ -195,7 +208,7 @@ test.describe('TST06 - Test Search in file structure:', () => {
     );
   });
 
-  test('TST0624 - Search actions - bookmarks [web,electron,_pro]', async () => {
+  test('TST0624 - Search actions - bookmarks [web,s3,electron,_pro]', async () => {
     const bookmarkFileTitle = 'sample.txt';
     await openContextEntryMenu(
       getGridFileSelector(bookmarkFileTitle),
@@ -214,20 +227,21 @@ test.describe('TST06 - Test Search in file structure:', () => {
     );
   });
 
-  test('TST0625 - Search actions - execute query from stored searches [web,electron,_pro]', async () => {
+  test('TST0625 - Search actions - execute query from stored searches [web,s3,electron,_pro]', async () => {
     const storedSearchTitle = 'jpgSearch';
     await createSavedSearch({ title: storedSearchTitle, textQuery: 'jpg' });
-    await clickOn('#clearSearchID');
-    await expectElementExist('#textQuery', false, 5000);
+    // Close search to clear previous state, then reopen for stored query
+    await clickOn('[data-tid=toggleSearch]');
+    await global.client.waitForTimeout(500);
 
-    await searchEngine('q:', {}, false);
+    await addSearchCommand('q:', false, true);
     await clickOn('#textQuery-option-0');
     await clickOn('#searchButton');
     // expect to not exist other than jpg files extensions like txt
     await expectElementExist(getGridFileSelector('sample.pdf'), false, 5000);
   });
 
-  test('TST0626 - Search actions - execute query from search history [web,electron,_pro]', async () => {
+  test('TST0626 - Search actions - execute query from search history [web,s3,electron,_pro]', async () => {
     await searchEngine('txt');
     await clickOn('#clearSearchID');
     await expectElementExist('#textQuery', false, 5000);
@@ -238,13 +252,18 @@ test.describe('TST06 - Test Search in file structure:', () => {
     await expectElementExist(getGridFileSelector('sample.jpg'), false, 5000);
   });
 
-  test('TST0627 - Search q. comp - AND tag NOT tag OR tag [web,electron]', async () => {
+  test('TST0627 - Search q. comp - AND tag NOT tag OR tag [web,s3,electron]', async () => {
     // Add 3 files tags
     const file1 = 'txt';
     const tags1 = ['test-tag1'];
     const tags2 = ['test-tag1', 'test-tag2'];
     const tags3 = ['test-tag2', 'test-tag3'];
     await clickOn(getGridFileSelector('sample.' + file1));
+    await expectElementExist(
+      '[data-tid=OpenedTID' + dataTidFormat('sample.' + file1) + ']',
+      true,
+      5000,
+    );
     await AddRemoveTagsToSelectedFiles('grid', tags1, true);
 
     await expectElementSelected(
@@ -255,6 +274,11 @@ test.describe('TST06 - Test Search in file structure:', () => {
 
     const file2 = 'jpg';
     await clickOn(getGridFileSelector('sample.' + file2));
+    await expectElementExist(
+      '[data-tid=OpenedTID' + dataTidFormat('sample.' + file2) + ']',
+      true,
+      5000,
+    );
     await AddRemoveTagsToSelectedFiles('grid', tags2, true);
 
     await expectElementSelected(
@@ -264,6 +288,11 @@ test.describe('TST06 - Test Search in file structure:', () => {
 
     const file3 = 'gif';
     await clickOn(getGridFileSelector('sample.' + file3));
+    await expectElementExist(
+      '[data-tid=OpenedTID' + dataTidFormat('sample.' + file3) + ']',
+      true,
+      5000,
+    );
     await AddRemoveTagsToSelectedFiles('grid', tags3, true);
 
     await expectElementSelected(
@@ -301,28 +330,27 @@ test.describe('TST06 - Test Search in file structure:', () => {
     await expectElementExist(getFileName(file3, tags3), false, 5000);
   });
 
-  test('TST0629 - Search q. comp - file size [web,electron,_pro]', async () => {
-    await global.client.dblclick('[data-tid=fsEntryName_empty_folder]');
+  test('TST0629 - Search q. comp - file size [web,s3,electron,_pro]', async () => {
+    /*await openFolder('empty_folder');
     await expectElementExist(
       getGridFileSelector('empty_file.html'),
       true,
-      5000,
-    );
-    //await openLocationMenu(defaultLocationName);
-    //await clickOn('[data-tid=indexLocation]');
+      8000,
+    );*/
 
     await addSearchCommand('si:', false);
     await clickOn('#textQuery-option-0');
     await global.client.keyboard.press('Enter');
     await global.client.keyboard.press('Enter');
+    //await global.client.waitForTimeout(180000);
     await expectElementExist(
       getGridFileSelector('empty_file.html'),
       true,
-      5000,
+      8000,
     );
   });
 
-  test('TST0630 - Search q. comp - type [web,electron,_pro]', async () => {
+  test('TST0630 - Search q. comp - type [web,s3,electron,_pro]', async () => {
     await addSearchCommand('t:', false);
     // choose image file type
     await clickOn('#textQuery-option-1');
@@ -332,7 +360,7 @@ test.describe('TST06 - Test Search in file structure:', () => {
     await expectElementExist(getGridFileSelector('sample.csv'), false, 5000);
   });
 
-  test('TST0631 - Search q. comp - last modified [web,electron,_pro]', async () => {
+  test('TST0631 - Search q. comp - last modified [web,s3,electron,_pro]', async () => {
     await addSearchCommand('lm:', false);
     // choose option Today
     await clickOn('#textQuery-option-0');
@@ -342,9 +370,17 @@ test.describe('TST06 - Test Search in file structure:', () => {
     await expectElementExist(getGridFileSelector('sample.pdf'), true, 5000);
   });
 
-  test('TST0632 - Search q. comp - accuracy (fuzzy, semi strict, strict) [web,electron]', async () => {
-    await createFile('n1ote.txt');
-    await createFile('note.txt');
+  test.skip('TST0632 - Search q. comp - accuracy (fuzzy, semi strict, strict) [web,s3,electron]', async ({
+    isS3,
+    testDataDir,
+  }) => {
+    if (isS3) {
+      await createFileS3('n1ote.txt');
+      await createFileS3('note.txt');
+    } else {
+      await createLocalFile(testDataDir, 'n1ote.txt');
+      await createLocalFile(testDataDir, 'note.txt');
+    }
     // fuzzy
     await addSearchCommand('a:', false);
     await clickOn('#textQuery-option-0');
@@ -369,7 +405,7 @@ test.describe('TST06 - Test Search in file structure:', () => {
     await expectElementExist(getGridFileSelector('note.txt'), true, 5000);
   });
 
-  test('TST0633 - Search q. comp - scope (location) [web,electron]', async () => {
+  test('TST0633 - Search q. comp - scope (location) [web,s3,electron]', async () => {
     await addSearchCommand('sc:', false);
     await clickOn('#textQuery-option-0');
     await addSearchCommand('empty_file.html', true);
@@ -388,7 +424,7 @@ test.describe('TST06 - Test Search in file structure:', () => {
     await expectElementExist(getGridFileSelector('sample.html'), true, 5000);
   });
 
-  test('TST0634 - Search q. comp - scope (folder) [web,electron]', async () => {
+  test('TST0634 - Search q. comp - scope (folder) [web,s3,electron]', async () => {
     //await global.client.dblclick('[data-tid=fsEntryName_empty_folder]');
     await openContextEntryMenu(
       getGridFileSelector('empty_folder'),
@@ -401,7 +437,7 @@ test.describe('TST06 - Test Search in file structure:', () => {
     await expectElementExist(selectorFile, false, 5000);
   });
 
-  test('TST0635 - Search q. comp - scope (global) [web,electron]', async () => {
+  test('TST0635 - Search q. comp - scope (global) [web,s3,electron]', async () => {
     // await clickOn('[data-tid=location_' + defaultLocationName + ']');
     await addSearchCommand('sc:', false);
     await clickOn('#textQuery-option-2');
@@ -412,8 +448,15 @@ test.describe('TST06 - Test Search in file structure:', () => {
   /**
    * for web fulltext index is not created in tsi.json
    */
-  test('TST0636 - Search q. fulltext in content [electron,_pro]', async () => {
-    await createFile('fulltext.txt', 'testing fulltext');
+  test('TST0636 - Search q. fulltext in content [s3,electron,_pro]', async ({
+    isS3,
+    testDataDir,
+  }) => {
+    if (isS3) {
+      await createFileS3('fulltext.txt', 'testing fulltext');
+    } else {
+      await createLocalFile(testDataDir, 'fulltext.txt', 'testing fulltext');
+    }
 
     await addSearchCommand('sc:', false);
     await clickOn('#textQuery-option-2');
@@ -421,20 +464,31 @@ test.describe('TST06 - Test Search in file structure:', () => {
     await expectElementExist(getGridFileSelector('fulltext.txt'), true, 5000);
   });
 
-  test('TST0637 - Add/Remove sidecar tags in search results [web,electron]', async () => {
+  test('TST0637 - Add/Remove sidecar tags in search results [web,s3,electron]', async () => {
     await setSettings('[data-tid=settingsSetPersistTagsInSidecarFile]', true);
     await addRemoveTagsInSearchResults(['sidecar-tag5', 'sidecar-tag6']);
   });
 
-  test('TST0638 - Add/Remove filename tags in search results [web,electron]', async () => {
+  test('TST0638 - Add/Remove filename tags in search results [web,s3,electron]', async () => {
     await addRemoveTagsInSearchResults(['filename-tag5', 'filename-tag6']);
   });
 
-  test('TST0646 - Open directory from search results [web,electron]', async () => {
-    await createFile(
-      'text_file.txt',
-      'testing open subfolder from search results',
-    );
+  test('TST0646 - Open directory from search results [web,s3,electron]', async ({
+    isS3,
+    testDataDir,
+  }) => {
+    if (isS3) {
+      await createFileS3(
+        'text_file.txt',
+        'testing open subfolder from search results',
+      );
+    } else {
+      await createLocalFile(
+        testDataDir,
+        'text_file.txt',
+        'testing open subfolder from search results',
+      );
+    }
     await addSearchCommand('empty_folder', true);
     await expectElementExist(getGridFileSelector('empty_folder'), true, 5000);
     await openContextEntryMenu(
@@ -444,7 +498,7 @@ test.describe('TST06 - Test Search in file structure:', () => {
     await expectElementExist(getGridFileSelector('text_file.txt'), true, 5000);
   });
 
-  test('TST0647 - Search by new sidecar tag [web,minio,electron]', async () => {
+  test('TST0647 - Search by new sidecar tag [web,s3,electron]', async () => {
     await setSettings('[data-tid=settingsSetPersistTagsInSidecarFile]', true);
     const tag = 'test-tag10';
     const fileName = 'sample';

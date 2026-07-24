@@ -16,6 +16,14 @@
  *
  */
 
+import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
+import { useDirectoryContentContext } from '-/hooks/useDirectoryContentContext';
+import { useEditedEntryMetaContext } from '-/hooks/useEditedEntryMetaContext';
+import { useIOActionsContext } from '-/hooks/useIOActionsContext';
+import { Pro } from '-/pro';
+import { mergeFsEntryMeta } from '-/services/utils-io';
+import { TS } from '-/tagspaces.namespace';
+import useFirstRender from '-/utils/useFirstRender';
 import React, {
   createContext,
   useEffect,
@@ -23,14 +31,6 @@ import React, {
   useReducer,
   useRef,
 } from 'react';
-import { useDirectoryContentContext } from '-/hooks/useDirectoryContentContext';
-import { TS } from '-/tagspaces.namespace';
-import { Pro } from '-/pro';
-import { useIOActionsContext } from '-/hooks/useIOActionsContext';
-import { mergeFsEntryMeta } from '-/services/utils-io';
-import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
-import { useEditedEntryMetaContext } from '-/hooks/useEditedEntryMetaContext';
-import useFirstRender from '-/utils/useFirstRender';
 
 type PerspectiveSettingsContextData = {
   settings: TS.FolderSettings;
@@ -45,6 +45,13 @@ type PerspectiveSettingsContextData = {
   showEntriesDescription: boolean;
   showTags: boolean;
   gridPageLimit: number;
+  maxVisibleTags: number;
+  folderVizType: TS.FolderVizType;
+  calendarType?: TS.CalendarType;
+  calendarGroupByDateTags?: boolean;
+  calendarGroupByFolderName?: boolean;
+  calendarGroupByLastModifiedDate?: boolean;
+  calendarGroupByCreationDate?: boolean;
   showFolderContent: boolean; //KanBan
   layoutType: string; //KanBan
   showSubFolderDetails: boolean; // KanBan
@@ -69,8 +76,15 @@ export const PerspectiveSettingsContext =
     showEntriesDescription: true,
     showTags: true,
     gridPageLimit: 100,
+    maxVisibleTags: 4,
     showFolderContent: false,
     layoutType: 'grid',
+    folderVizType: 'tree',
+    calendarType: 'year',
+    calendarGroupByDateTags: true,
+    calendarGroupByFolderName: true,
+    calendarGroupByLastModifiedDate: false,
+    calendarGroupByCreationDate: false,
     showSubFolderDetails: false,
     filesLimit: 15,
     haveLocalSetting: undefined,
@@ -92,29 +106,32 @@ export const PerspectiveSettingsContextProvider = ({
     directoryMeta,
     setDirectoryMeta,
     getDefaultPerspectiveSettings,
-    getPerspective,
+    currentPerspective,
   } = useDirectoryContentContext();
   const { metaActions } = useEditedEntryMetaContext();
   const { removeFolderCustomSettings, saveCurrentLocationMetaData } =
     useIOActionsContext();
   const [ignored, forceUpdate] = useReducer((x) => x + 1, 0, undefined);
   const settings = useRef<TS.FolderSettings>(
-    getSettings(getPerspective(), directoryMeta),
+    getSettings(currentPerspective, directoryMeta),
   );
   const firstRender = useFirstRender();
 
   useEffect(() => {
     if (!firstRender) {
-      settings.current = getSettings(getPerspective(), directoryMeta);
+      settings.current = getSettings(currentPerspective, directoryMeta);
       forceUpdate();
     }
-  }, [currentDirectoryPath, directoryMeta]);
+    // currentPerspective is in deps so per-perspective settings reload on
+    // perspective switch directly, instead of relying on the outer
+    // RenderPerspective forceUpdate/remount cascade we removed.
+  }, [currentDirectoryPath, directoryMeta, currentPerspective]);
 
   useEffect(() => {
     if (!firstRender && metaActions && metaActions.length > 0) {
       for (const action of metaActions) {
         if (action.action === 'perspectiveChange') {
-          settings.current = getSettings(getPerspective(), directoryMeta);
+          settings.current = getSettings(currentPerspective, directoryMeta);
           forceUpdate();
         }
       }
@@ -160,7 +177,7 @@ export const PerspectiveSettingsContextProvider = ({
     return (
       directoryMeta &&
       directoryMeta.perspectiveSettings &&
-      directoryMeta.perspectiveSettings[getPerspective()]
+      directoryMeta.perspectiveSettings[currentPerspective]
     );
   }
 
@@ -168,10 +185,10 @@ export const PerspectiveSettingsContextProvider = ({
    * remove custom folder settings
    */
   function resetLocalSetting() {
-    removeFolderCustomSettings(currentDirectoryPath, getPerspective()).then(
+    removeFolderCustomSettings(currentDirectoryPath, currentPerspective).then(
       (fsEntryMeta: TS.FileSystemEntryMeta) => {
         setDirectoryMeta(fsEntryMeta);
-        settings.current = getSettings(getPerspective(), fsEntryMeta);
+        settings.current = getSettings(currentPerspective, fsEntryMeta);
         forceUpdate();
       },
     );
@@ -184,20 +201,82 @@ export const PerspectiveSettingsContextProvider = ({
     if (isDefaultSetting === undefined) {
       isDefaultSetting = !haveLocalSetting();
     }
+    // Read-only locations can't persist perspective settings — any write
+    // would surface as an "Error: read only Location" toast from
+    // saveFsEntryMeta's error handler. Keep the in-memory settings (already
+    // applied by setSettings) and skip the disk write.
+    const loc = findLocation();
+    if (loc?.isReadOnly) {
+      return;
+    }
+    const { settingsKey, ...cleanSettings } = settings.current;
     if (Pro && !isDefaultSetting) {
       setPerspectiveSettings(
         currentDirectoryPath,
-        getPerspective(),
-        settings.current,
-      ).then((updatedFsEntryMeta: TS.FileSystemEntryMeta) => {
-        saveCurrentLocationMetaData(currentDirectoryPath, updatedFsEntryMeta);
-        setDirectoryMeta(updatedFsEntryMeta);
-      });
+        currentPerspective,
+        cleanSettings,
+      )
+        .then((updatedFsEntryMeta: TS.FileSystemEntryMeta) => {
+          saveCurrentLocationMetaData(
+            currentDirectoryPath,
+            updatedFsEntryMeta,
+          ).catch((err) => {
+            console.log(
+              'saveCurrentLocationMetaData failed for ' +
+                currentDirectoryPath +
+                ': ' +
+                err,
+            );
+          });
+          setDirectoryMeta(updatedFsEntryMeta);
+        })
+        .catch((err) => {
+          console.log(
+            'setPerspectiveSettings failed for ' +
+              currentDirectoryPath +
+              ': ' +
+              err,
+          );
+        });
     } else {
-      const defaultSettings = getDefaultPerspectiveSettings(getPerspective());
+      if (
+        Pro &&
+        directoryMeta &&
+        directoryMeta.perspectiveSettings &&
+        directoryMeta.perspectiveSettings[currentPerspective]
+      ) {
+        // clean custom settings for currentPerspective
+        setPerspectiveSettings(
+          currentDirectoryPath,
+          currentPerspective,
+          undefined,
+        )
+          .then((updatedFsEntryMeta: TS.FileSystemEntryMeta) =>
+            saveCurrentLocationMetaData(
+              currentDirectoryPath,
+              updatedFsEntryMeta,
+            ).catch((err) => {
+              console.log(
+                'saveCurrentLocationMetaData failed for ' +
+                  currentDirectoryPath +
+                  ': ' +
+                  err,
+              );
+            }),
+          )
+          .catch((err) => {
+            console.log(
+              'setPerspectiveSettings cleanup failed for ' +
+                currentDirectoryPath +
+                ': ' +
+                err,
+            );
+          });
+      }
+      const defaultSettings = getDefaultPerspectiveSettings(currentPerspective);
       localStorage.setItem(
         defaultSettings.settingsKey,
-        JSON.stringify(settings.current),
+        JSON.stringify(cleanSettings),
       );
     }
   }
@@ -244,6 +323,14 @@ export const PerspectiveSettingsContextProvider = ({
       entrySize: settings.current.entrySize,
       thumbnailMode: settings.current.thumbnailMode,
       gridPageLimit: settings.current.gridPageLimit,
+      maxVisibleTags: settings.current.maxVisibleTags,
+      folderVizType: settings.current.folderVizType,
+      calendarType: settings.current.calendarType,
+      calendarGroupByDateTags: settings.current.calendarGroupByDateTags,
+      calendarGroupByFolderName: settings.current.calendarGroupByFolderName,
+      calendarGroupByLastModifiedDate:
+        settings.current.calendarGroupByLastModifiedDate,
+      calendarGroupByCreationDate: settings.current.calendarGroupByCreationDate,
       showFolderContent: settings.current.showFolderContent,
       layoutType: settings.current.layoutType,
       showSubFolderDetails: settings.current.showSubFolderDetails,

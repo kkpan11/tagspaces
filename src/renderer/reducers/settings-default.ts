@@ -18,27 +18,37 @@
 
 import AppConfig from '-/AppConfig';
 import { extensionsFound, supportedFileTypes } from '-/extension-config';
-import { PerspectiveIDs } from '-/perspectives';
+import { DefaultEnabledPerspectives, PerspectiveIDs } from '-/perspectives';
 import keyBindings from '-/reducers/keybindings-default';
-import { getUuid } from '@tagspaces/tagspaces-common/utils-io';
 
 let desktopMode = !AppConfig.isMobile;
-if (window.ExtDisplayMode && window.ExtDisplayMode === 'mobile') {
+if (AppConfig.ExtDisplayMode === 'mobile') {
   desktopMode = false;
-} else if (window.ExtDisplayMode && window.ExtDisplayMode === 'desktop') {
+} else if (AppConfig.ExtDisplayMode === 'desktop') {
   desktopMode = true;
 }
 let checkForUpdates = true;
-if (window.ExtCheckForUpdatesOnStartup !== undefined) {
-  checkForUpdates = window.ExtCheckForUpdatesOnStartup;
+if (AppConfig.ExtCheckForUpdatesOnStartup !== undefined) {
+  checkForUpdates = AppConfig.ExtCheckForUpdatesOnStartup;
 }
 let filenameTagPlacedAtEnd = true;
-if (window.ExtFilenameTagPlacedAtEnd !== undefined) {
-  filenameTagPlacedAtEnd = window.ExtFilenameTagPlacedAtEnd;
+if (AppConfig.ExtFilenameTagPlacedAtEnd !== undefined) {
+  filenameTagPlacedAtEnd = AppConfig.ExtFilenameTagPlacedAtEnd;
 }
 let useOnlyTagsFromTagLibrary = false;
-if (window.ExtUseOnlyTagsFromTagLibrary !== undefined) {
-  useOnlyTagsFromTagLibrary = window.ExtUseOnlyTagsFromTagLibrary;
+if (AppConfig.ExtUseOnlyTagsFromTagLibrary !== undefined) {
+  useOnlyTagsFromTagLibrary = AppConfig.ExtUseOnlyTagsFromTagLibrary;
+}
+
+let author = '';
+if (AppConfig.ExtAuthor !== undefined) {
+  author = AppConfig.ExtAuthor;
+} else if (AppConfig.isElectron) {
+  try {
+    author = window.electronIO.ipcRenderer.getSync('getAuthor');
+  } catch (err) {
+    console.error('Error retrieving author:', err);
+  }
 }
 
 export default {
@@ -53,14 +63,20 @@ export default {
   isUpdateAvailable: false,
   enableWS: AppConfig.isElectron,
   warningOpeningFilesExternally: true,
-  tagDelimiter: ' ',
+  tagDelimiter: AppConfig.tagDelimiter,
   maxSearchResult: 1000,
   desktopMode,
-  devMode: window.ExtDevMode ? window.ExtDevMode : false,
-  saveTagInLocation: false,
+  devMode: AppConfig.ExtDevMode ? AppConfig.ExtDevMode : false,
+  hideProFeatures: false,
+  autoSaveDescription: false,
+  saveTagInLocation:
+    typeof AppConfig.ExtUseLocationTags === 'undefined'
+      ? false
+      : AppConfig.ExtUseLocationTags,
   newHTMLFileContent:
     '<!DOCTYPE html><html><head><meta http-equiv="Content-Type" content="text/html; charset=utf-8"></head><body></body></html>',
   showUnixHiddenEntries: false,
+  showSymbolicLinks: true,
   entryContainerTab: 0,
   checkForUpdates,
   reorderTags: false,
@@ -69,6 +85,10 @@ export default {
   searchInSubfolders: true,
   watchCurrentDirectory: false,
   firstRun: true,
+  onboardingCompleted: false,
+  hideHowToStart: false,
+  hideMobileTeaser: false,
+  onboardingVersion: 0,
   lastOpenedDirectory: '',
   showWarningRecursiveScan: true,
   calculateTags: false,
@@ -81,45 +101,51 @@ export default {
   addTagsToLibrary: true,
   interfaceLanguage: 'en',
   useTrashCan: true,
+  encryptCredentialsAtRest: false,
+  encryptCredentialsKeySource: 'off',
   useOCR: false,
   useTextExtraction: false,
   useGenerateThumbnails: true,
   useOnlyTagsFromTagLibrary,
   tagTextColor: 'white',
   tagBackgroundColor: '#61DD61',
+  defaultFolderColor: '#a466aa',
   currentTheme: 'light',
-  currentLightTheme: 'legacy',
+  currentRegularTheme: 'legacy',
   currentDarkTheme: 'darklegacy',
   geoTaggingFormat: 'pluscodes',
   defaultPerspective: PerspectiveIDs.GRID,
   enableGlobalKeyboardShortcuts: false,
   zoomFactor: 1,
   lastPublishedVersion: '',
-  entrySplitSize: '45%', // AppConfig.isElectron ? '560px' : '360px',
+  entrySplitSize: 200, // px — height of the title+tabs pane inside EntryContainer
   mainVSplitSize: '50%',
+  leftPanelWidth: 320, // px — desktop drawer width (bounds 250–600)
   supportedGeoTagging: ['pluscodes', 'mgrs'],
   supportedThemes: ['light', 'dark', 'system'],
-  supportedRegularThemes: ['legacy', 'newlight'],
-  supportedDarkThemes: ['darklegacy', 'darkblue', 'dracula'],
   tsLastOpenedFilesHistory: 10,
   tsLastOpenedFoldersHistory: 10,
   tsLastEditedFilesHistory: 10,
   tsSearchHistory: 10,
+  tsRecentMoveCopyDestinations: 5,
+  lastMoveCopyMode: 'move' as 'move' | 'copy',
+  lastLinkType: 'relative' as 'ts' | 'relative',
   storedSearchesVisible: true,
   showBookmarks: true,
   fileOpenHistory: false,
   folderOpenHistory: false,
   fileEditHistory: false,
   isRevisionsEnabled:
-    typeof window.ExtRevisionsEnabled === 'undefined'
+    typeof AppConfig.ExtRevisionsEnabled === 'undefined'
       ? true
-      : window.ExtRevisionsEnabled,
+      : AppConfig.ExtRevisionsEnabled,
   prefixTagContainer: AppConfig.prefixTagContainer,
+  author: author,
   aiProviders: [],
   isAutoSaveEnabled:
-    typeof window.ExtAutoSaveEnabled === 'undefined'
+    typeof AppConfig.ExtAutoSaveEnabled === 'undefined'
       ? false
-      : window.ExtAutoSaveEnabled,
+      : AppConfig.ExtAutoSaveEnabled,
   supportedLanguages: [
     {
       iso: 'en',
@@ -237,29 +263,29 @@ export default {
       iso: 'es_CL',
       title: 'Español chileno (Chilean Spanish)',
     },
+    {
+      iso: 'da_DK',
+      title: 'dansk (Danish Denmark)',
+    },
+    {
+      iso: 'pl',
+      title: 'polski (Polish)',
+    },
+    {
+      iso: 'zh_Hant',
+      title: '繁體中文 (Traditional Chinese)',
+    },
   ],
   keyBindings: keyBindings(AppConfig.isMacLike),
-  supportedFileTypes: window.ExtSupportedFileTypes
-    ? [...supportedFileTypes, ...window.ExtSupportedFileTypes]
+  supportedFileTypes: AppConfig.ExtSupportedFileTypes
+    ? [...supportedFileTypes, ...AppConfig.ExtSupportedFileTypes]
     : supportedFileTypes,
-  extensionsFound: window.ExtExtensionsFound
-    ? [...extensionsFound, ...window.ExtExtensionsFound]
+  explicitlyDeletedFileTypes: [],
+  extensionsFound: AppConfig.ExtExtensionsFound
+    ? [...extensionsFound, ...AppConfig.ExtExtensionsFound]
     : extensionsFound,
   enabledExtensions: [],
-  mapTileServers: [
-    {
-      uuid: getUuid(),
-      name: 'Standard',
-      serverURL: 'https://{s}.tile.osm.org/{z}/{x}/{y}.png',
-      serverInfo:
-        '<b>Leaflet</b> | Map data: &copy; <b>https://openstreetmap.org/copyright</b> contributors, <b>CC-BY-SA</b>, Imagery © <b>Mapbox</b>',
-    },
-    {
-      uuid: getUuid(),
-      name: 'Topographic',
-      serverURL: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
-      serverInfo:
-        '<b>Leaflet</b> | Map data: &copy; <b>https://openstreetmap.org/copyright</b> contributors, SRTM | Map style: &copy; <b>https://opentopomap.org</b> - OpenTopoMap (<b>https://creativecommons.org/licenses/by-sa/3.0/</b> - CC-BY-SA',
-    },
-  ],
+  enabledPerspectives: DefaultEnabledPerspectives,
+  seenPerspectiveOnboardings: {} as Record<string, boolean>,
+  mapTileServers: [],
 };

@@ -3,40 +3,31 @@
  */
 import { test, expect } from './fixtures';
 import {
-  defaultLocationPath,
   defaultLocationName,
-  createPwMinioLocation,
   createPwLocation,
   createS3Location,
 } from './location.helpers';
 import {
   clickOn,
   expectElementExist,
+  expectFileContain,
   frameLocator,
   getGridFileSelector,
   isDisplayed,
   takeScreenshot,
+  writeTextInIframeInput,
 } from './general.helpers';
-import { startTestingApp, stopApp, testDataRefresh } from './hook';
+import { startTestingApp, stopApp } from './hook';
 import { openContextEntryMenu, toContainTID } from './test-utils';
 import { clearDataStorage, closeWelcomePlaywright } from './welcome.helpers';
-import { stopServices } from '../setup-functions';
+import { dataTidFormat } from '../../src/renderer/services/test';
 
-let s3ServerInstance;
-let webServerInstance;
-let minioServerInstance;
-
-test.beforeAll(async ({ s3Server, webServer, minioServer }) => {
-  s3ServerInstance = s3Server;
-  webServerInstance = webServer;
-  minioServerInstance = minioServer;
-  await startTestingApp();
+test.beforeAll(async ({ isWeb, isS3, webServerPort }, testInfo) => {
+  await startTestingApp({ isWeb, isS3, webServerPort, testInfo });
   // await clearDataStorage();
 });
 
 test.afterAll(async () => {
-  await stopServices(s3ServerInstance, webServerInstance, minioServerInstance);
-  await testDataRefresh(s3ServerInstance);
   await stopApp();
 });
 
@@ -47,23 +38,21 @@ test.afterEach(async ({ page }, testInfo) => {
   await clearDataStorage();
 });
 
-test.beforeEach(async () => {
+test.beforeEach(async ({ isS3, testDataDir }) => {
   await closeWelcomePlaywright();
-  if (global.isMinio) {
-    await createPwMinioLocation('', defaultLocationName, true);
-  } else if (global.isS3) {
+  if (isS3) {
     await createS3Location('', defaultLocationName, true);
   } else {
-    await createPwLocation(defaultLocationPath, defaultLocationName, true);
+    await createPwLocation(testDataDir, defaultLocationName, true);
   }
   await clickOn('[data-tid=location_' + defaultLocationName + ']');
-  await expectElementExist(getGridFileSelector('empty_folder'), true, 8000);
+  await expectElementExist(getGridFileSelector('empty_folder'), true, 15000);
   // If its have opened file
   // await closeFileProperties();
 });
 
 test.describe('TST69 - Markdown editor', () => {
-  test('TST6901 - Open and render md file [web,minio,electron]', async () => {
+  test('TST6901 - Open and render md file [web,s3,electron]', async () => {
     await openContextEntryMenu(
       getGridFileSelector('sample.md'),
       'fileMenuOpenFile',
@@ -84,7 +73,7 @@ test.describe('TST69 - Markdown editor', () => {
       .toBe(true);
   });
 
-  test('TST6902 - Open settings [web,minio,electron]', async () => {
+  test('TST6902 - Open settings [web,s3,electron]', async () => {
     await openContextEntryMenu(
       getGridFileSelector('sample.md'),
       'fileMenuOpenFile',
@@ -94,8 +83,8 @@ test.describe('TST69 - Markdown editor', () => {
     const iframeElement = await global.client.waitForSelector('iframe');
     const frame = await iframeElement.contentFrame();
 
-    await frame.click('[data-tid=mdEditorMenuTID]');
-    await frame.click('[data-tid=settingsTID]');
+    await frame.click('[data-tid=mainMenuTID]');
+    await frame.click('[data-tid=settingsIDTID]');
 
     let settingsExists = await isDisplayed(
       '#md-editor-settings-title',
@@ -114,5 +103,29 @@ test.describe('TST69 - Markdown editor', () => {
       frame,
     );
     expect(settingsExists).toBeTruthy();
+  });
+
+  test('TST6903 - Save text [web,s3,electron]', async () => {
+    // open fileProperties
+    const fileName = 'sample.md';
+    const newFileContent = 'etete&5435_new_text_saved';
+    await clickOn(getGridFileSelector(fileName));
+    await expectElementExist(
+      '[data-tid=OpenedTID' + dataTidFormat(fileName) + ']',
+      true,
+      8000,
+    );
+    await clickOn('[data-tid=fileContainerEditFile]');
+    await writeTextInIframeInput(
+      newFileContent,
+      '.milkdown div[contenteditable=true]',
+    );
+    await clickOn('[data-tid=fileContainerSaveFile]');
+    // Wait for S3 write to complete before reloading
+    await global.client.waitForTimeout(1500);
+    await clickOn('[data-tid=cancelEditingTID]');
+    await clickOn('[data-tid=propsActionsMenuTID]');
+    await clickOn('[data-tid=reloadPropertiesTID]');
+    await expectFileContain(newFileContent, 15000);
   });
 });

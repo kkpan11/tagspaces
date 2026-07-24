@@ -16,48 +16,47 @@
  *
  */
 
+import AppConfig from '-/AppConfig';
 import DraggablePaper from '-/components/DraggablePaper';
+import TagContainer from '-/components/TagContainer';
 import TsButton from '-/components/TsButton';
+import SelectedItemsSummary from '-/components/dialogs/components/SelectedItemsSummary';
 import TsDialogActions from '-/components/dialogs/components/TsDialogActions';
 import TsDialogTitle from '-/components/dialogs/components/TsDialogTitle';
-import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
+import { useSelectedEntriesContext } from '-/hooks/useSelectedEntriesContext';
 import { useTaggingActionsContext } from '-/hooks/useTaggingActionsContext';
+import { isDesktopMode } from '-/reducers/settings';
+import SmartTags from '-/reducers/smart-tags';
 import { TS } from '-/tagspaces.namespace';
-import FolderIcon from '@mui/icons-material/FolderOpen';
-import FileIcon from '@mui/icons-material/InsertDriveFileOutlined';
+import Box from '@mui/material/Box';
 import Dialog from '@mui/material/Dialog';
 import DialogContent from '@mui/material/DialogContent';
-import List from '@mui/material/List';
-import ListItem from '@mui/material/ListItem';
-import ListItemIcon from '@mui/material/ListItemIcon';
 import Paper from '@mui/material/Paper';
 import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
 import useMediaQuery from '@mui/material/useMediaQuery';
-import {
-  extractDirectoryName,
-  extractFileName,
-} from '@tagspaces/tagspaces-common/paths';
 import { useReducer, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useSelector } from 'react-redux';
 import TagsSelect from '../TagsSelect';
 
 interface Props {
   open: boolean;
   onClose: (clearSelection?: boolean) => void;
-  selected: TS.FileSystemEntry[];
+  selected?: TS.FileSystemEntry[];
 }
 
 function AddRemoveTagsDialog(props: Props) {
   const { t } = useTranslation();
   const { open, selected } = props;
-
-  const { findLocation } = useCurrentLocationContext();
-  const { addTagsToFsEntries, removeTags } = useTaggingActionsContext();
+  const desktopMode = useSelector(isDesktopMode);
+  const { addTagsToFsEntries, removeTags, addTags } =
+    useTaggingActionsContext();
+  const { selectedEntries } = useSelectedEntriesContext();
   const [newlyAddedTags, setNewlyAddedTags] = useState<TS.Tag[]>([]);
   const inputTags = useRef<TS.Tag[]>([]);
   const [ignored, forceUpdate] = useReducer((x) => x + 1, 0, undefined);
-  const currentLocation = findLocation();
+  const currentEntries = selected || selectedEntries;
 
   const handleChange = (name: string, value: Array<TS.Tag>, action: string) => {
     if (action === 'remove-value') {
@@ -92,9 +91,9 @@ function AddRemoveTagsDialog(props: Props) {
     }, []);
   }
 
-  const onClose = () => {
+  /*const onClose = () => {
     onCloseDialog();
-  };
+  };*/
 
   const onCloseDialog = (clearSelection?: boolean) => {
     setNewlyAddedTags([]);
@@ -102,9 +101,9 @@ function AddRemoveTagsDialog(props: Props) {
   };
 
   const addTagsAction = () => {
-    if (selected && selected.length > 0) {
+    if (currentEntries && currentEntries.length > 0) {
       addTagsToFsEntries(
-        selected,
+        currentEntries,
         uniqueTags([...newlyAddedTags, ...inputTags.current]),
       );
     }
@@ -112,15 +111,15 @@ function AddRemoveTagsDialog(props: Props) {
   };
 
   const removeTagsAction = () => {
-    if (selected && selected.length > 0) {
-      removeTags(selected, [...newlyAddedTags, ...inputTags.current]);
+    if (currentEntries && currentEntries.length > 0) {
+      removeTags(currentEntries, [...newlyAddedTags, ...inputTags.current]);
     }
     onCloseDialog(true);
   };
 
   const removeAllTagsAction = () => {
-    if (selected && selected.length > 0) {
-      removeTags(selected);
+    if (currentEntries && currentEntries.length > 0) {
+      removeTags(currentEntries);
     }
     onCloseDialog(true);
   };
@@ -128,7 +127,7 @@ function AddRemoveTagsDialog(props: Props) {
   const disabledButtons =
     (!newlyAddedTags && !inputTags.current) ||
     (newlyAddedTags.length < 1 && inputTags.current.length < 1) ||
-    selected.length < 1;
+    currentEntries.length < 1;
 
   const theme = useTheme();
   const smallScreen = useMediaQuery(theme.breakpoints.down('md'));
@@ -136,21 +135,23 @@ function AddRemoveTagsDialog(props: Props) {
     <Dialog
       open={open}
       fullScreen={smallScreen}
-      onClose={onClose}
+      onClose={onCloseDialog}
       keepMounted
       scroll="paper"
       PaperComponent={smallScreen ? Paper : DraggablePaper}
       aria-labelledby="draggable-dialog-title"
+      fullWidth
+      maxWidth="sm"
     >
       <TsDialogTitle
         dialogTitle={t('core:tagOperationTitle')}
         closeButtonTestId="closeAddRemoveTagsTID"
-        onClose={onClose}
+        onClose={onCloseDialog}
       />
       <DialogContent
-        style={{
-          minHeight: 330,
-          paddingTop: 10,
+        sx={{
+          minHeight: '330px',
+          paddingTop: '10px',
           overflowY: 'auto',
           overflowX: 'hidden',
         }}
@@ -165,30 +166,54 @@ function AddRemoveTagsDialog(props: Props) {
           tagMode="remove"
           autoFocus={true}
         />
-        <Typography style={{ marginTop: 10 }} variant="subtitle2">
-          {t('selectedFilesAndFolders')}
-        </Typography>
-        <List dense style={{ width: 550, marginLeft: -15 }}>
-          {selected.length > 0 &&
-            selected.map((entry) => (
-              <ListItem key={entry.path} title={entry.path}>
-                <ListItemIcon>
-                  {entry.isFile ? <FileIcon /> : <FolderIcon />}
-                </ListItemIcon>
-                <Typography variant="inherit" noWrap>
-                  {entry.isFile
-                    ? extractFileName(
-                        entry.path || '',
-                        currentLocation?.getDirSeparator(),
-                      )
-                    : extractDirectoryName(
-                        entry.path || '',
-                        currentLocation?.getDirSeparator(),
-                      )}
-                </Typography>
-              </ListItem>
-            ))}
-        </List>
+        {!desktopMode && AppConfig.ExtShowSmartTags && (
+          <Box sx={{ marginTop: 1.5 }}>
+            <Typography variant="caption" color="textSecondary">
+              {t('core:smartTags')}
+            </Typography>
+            <Box
+              sx={{
+                display: 'flex',
+                flexWrap: 'wrap',
+                gap: '2px',
+                marginTop: '4px',
+              }}
+            >
+              {/* Render exactly like the tag library (TagContainer in display
+                  mode → date/place icons + library colors). In display mode the
+                  menu slot is just a spacer, so a tap fires handleTagMenu, which
+                  we repurpose to apply the tag. Date-based tags apply
+                  immediately; the geo/date tags open their own picker (via
+                  addTags → openEditEntryTagDialog). Either way close this
+                  dialog: it confirms the action and keeps the picker from
+                  stacking. */}
+              {SmartTags(t)[0].children.map((tag) => (
+                <TagContainer
+                  key={tag.id}
+                  tag={tag as TS.Tag}
+                  tagMode="display"
+                  handleTagMenu={(event, clickedTag) => {
+                    const needsPicker =
+                      clickedTag.functionality === 'geoTagging' ||
+                      clickedTag.functionality === 'dateTagging';
+                    if (currentEntries && currentEntries.length > 0) {
+                      addTags(currentEntries, [clickedTag]);
+                    }
+                    // Clear selection only for the immediate-apply tags; the
+                    // picker flow keeps the entries it was opened with.
+                    onCloseDialog(!needsPicker);
+                  }}
+                />
+              ))}
+            </Box>
+          </Box>
+        )}
+        <Box sx={{ marginTop: 1.5 }}>
+          <SelectedItemsSummary
+            entries={currentEntries}
+            defaultCollapsed={smallScreen || currentEntries.length >= 5}
+          />
+        </Box>
       </DialogContent>
       <TsDialogActions>
         <TsButton
@@ -197,15 +222,9 @@ function AddRemoveTagsDialog(props: Props) {
         >
           {t('core:cancel')}
         </TsButton>
-        {/* <AiGenTagsButton
-          disabled={!Pro}
-          entries={selected}
-          variant="outlined"
-          generationCompleted={() => onCloseDialog()}
-        /> */}
         <TsButton
           data-tid="cleanTagsMultipleEntries"
-          disabled={selected.length < 1}
+          disabled={currentEntries.length < 1}
           onClick={removeAllTagsAction}
         >
           {t('core:tagOperationCleanTags')}

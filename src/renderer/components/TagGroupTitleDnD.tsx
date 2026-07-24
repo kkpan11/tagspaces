@@ -23,27 +23,31 @@ import {
   SmallArrowRightIcon,
 } from '-/components/CommonIcons';
 import DragItemTypes from '-/components/DragItemTypes';
+import TsTooltip from '-/components/TsTooltip';
 import TsIconButton from '-/components/TsIconButton';
 import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
+import { Pro } from '-/pro';
 import { TS } from '-/tagspaces.namespace';
 import { CommonLocation } from '-/utils/CommonLocation';
-import { Box } from '@mui/material';
-import Grid from '@mui/material/Grid2';
+import { Box, useTheme } from '@mui/material';
+import Grid from '@mui/material/Grid';
 import Typography from '@mui/material/Typography';
-import React, { useRef } from 'react';
+import { useContext, useEffect, useRef, useState } from 'react';
 import { useDrag, useDrop } from 'react-dnd';
+import { useTranslation } from 'react-i18next';
 
 interface Props {
   index: number;
   tagGroup: TS.TagGroup;
   handleTagGroupMenu: (
-    event: React.ChangeEvent<HTMLInputElement>,
+    event: React.MouseEvent<HTMLElement>,
     tagGroup: TS.TagGroup,
   ) => void;
   toggleTagGroup: (uuid: string) => void;
   moveTagGroup: (tagGroupUuid: TS.Uuid, position: number) => void;
   tagGroupCollapsed: Array<string>;
   isReadOnly: boolean;
+  dndDisabled?: boolean;
 }
 
 function TagGroupTitleDnD(props: Props) {
@@ -53,63 +57,81 @@ function TagGroupTitleDnD(props: Props) {
     handleTagGroupMenu,
     moveTagGroup,
     toggleTagGroup,
+    tagGroupCollapsed,
     isReadOnly,
+    dndDisabled,
   } = props;
   const { findLocation } = useCurrentLocationContext();
   const tagGroupRef = useRef<HTMLSpanElement>(null);
+  const theme = useTheme();
+  const { t } = useTranslation();
+  const workSpacesContext = Pro?.contextProviders?.WorkSpacesContext
+    ? useContext<TS.WorkSpacesContextData>(
+        Pro.contextProviders.WorkSpacesContext,
+      )
+    : undefined;
 
+  // Determine expanded state from tagGroupCollapsed prop
+  const expanded = !(
+    tagGroupCollapsed && tagGroupCollapsed.includes(tagGroup.uuid)
+  );
+
+  // Track if this item is a valid drop target during drag
+  const [isDropTarget, setIsDropTarget] = useState(false);
+
+  // Drag and drop logic for tag group reordering
   const [, drag] = useDrag({
     type: DragItemTypes.TAG_GROUP,
     item: { tagGroup: tagGroup, index: index },
+    canDrag: () => !dndDisabled,
   });
-  const dropHover = (dragItem, monitor) => {
-    // const dragItem = monitor.getItem();
+
+  const dropHandler = (dragItem, monitor) => {
     const dragIndex = dragItem.index;
     const hoverIndex = index;
-    // Don't replace items with themselves
     if (dragIndex === hoverIndex) {
       return;
     }
-    // Determine rectangle on screen
     const hoverBoundingRect =
       tagGroupRef && tagGroupRef.current
         ? tagGroupRef.current.getBoundingClientRect()
-        : undefined; // findDOMNode(component).getBoundingClientRect(); // tagContainerRef.current.getBoundingClientRect();
+        : undefined;
 
-    // Get vertical middle (bottom = right; top = left)
-    const hoverMiddleY = (hoverBoundingRect.bottom - hoverBoundingRect.top) / 2;
+    const hoverMiddleY = hoverBoundingRect
+      ? (hoverBoundingRect.bottom - hoverBoundingRect.top) / 2
+      : 0;
 
-    // Determine mouse position
     const clientOffset = monitor.getClientOffset();
-
-    // Get pixels to the top
-    const hoverClientY = clientOffset.y - hoverBoundingRect.top;
-
-    // Only perform the move when the mouse has crossed half of the items height
-    // When dragging downwards, only move when the cursor is below 50%
-    // When dragging upwards, only move when the cursor is above 50%
+    const hoverClientY =
+      clientOffset && hoverBoundingRect
+        ? clientOffset.y - hoverBoundingRect.top
+        : 0;
 
     // Dragging downwards
     if (dragIndex < hoverIndex && hoverClientY < hoverMiddleY) {
       return;
     }
-
     // Dragging upwards
     if (dragIndex > hoverIndex && hoverClientY > hoverMiddleY) {
       return;
     }
     moveTagGroup(dragItem.tagGroup.uuid, hoverIndex);
-    // Note: we're mutating the monitor item here!
-    // Generally it's better to avoid mutations,
-    // but it's good here for the sake of performance
-    // to avoid expensive index searches.
     dragItem.index = hoverIndex;
   };
 
-  const [, drop] = useDrop({
+  const [{ isOver }, drop] = useDrop({
     accept: DragItemTypes.TAG_GROUP,
-    hover: dropHover,
+    canDrop: () => !dndDisabled,
+    drop: dropHandler,
+    collect: (monitor) => ({
+      isOver: monitor.isOver(),
+    }),
   });
+
+  // Update visual feedback when hovering over drop target
+  useEffect(() => {
+    setIsDropTarget(isOver && !isReadOnly);
+  }, [isOver, isReadOnly]);
 
   const handleTagGroupTitleClick = (event: Object, tagGroup) => {
     toggleTagGroup(tagGroup.uuid);
@@ -127,82 +149,108 @@ function TagGroupTitleDnD(props: Props) {
 
   const readOnly = tagGroup.readOnly ? 'read-only ' : '';
 
+  const currentWorkspace = workSpacesContext?.getWorkSpace(
+    tagGroup.workSpaceId,
+  );
+  const taggroupWorkspace = tagGroup.workSpaceId ? (
+    <TsTooltip title={t('core:workspace') + ': ' + currentWorkspace?.fullName}>
+      <span> - {currentWorkspace?.shortName}</span>
+    </TsTooltip>
+  ) : (
+    ''
+  );
+
   const tagGroupTitle = (
     <Box
       data-tid={'tagLibraryTagGroupTitle_' + tagGroup.title}
-      style={{
+      sx={{
         padding: 0,
         height: '100%',
         borderRadius: AppConfig.defaultCSSRadius,
+        backgroundColor: isDropTarget
+          ? theme.palette.action.selected
+          : 'transparent',
+        border: isDropTarget
+          ? `2px solid ${theme.palette.primary.main}`
+          : '2px solid transparent',
+        transition: 'all 0.2s ease-in-out',
+        '&:hover, &:focus': {
+          backgroundColor: isDropTarget
+            ? theme.palette.action.selected
+            : theme.palette.action.hover,
+        },
       }}
-      title={
-        'Number of tags in this ' +
-        readOnly +
-        'tag group: ' +
-        tagGroup.children.length
-      }
     >
       <Grid
         container
         direction="row"
-        alignItems="stretch"
-        alignContent="center"
-        style={{ flexWrap: 'nowrap' }}
+        sx={{
+          alignItems: 'stretch',
+          alignContent: 'center',
+          flexWrap: 'nowrap',
+          cursor: 'grab',
+        }}
       >
-        <Grid size={2} style={{ maxWidth: 40 }}>
+        <Grid size={2} sx={{ maxWidth: 40 }}>
           <TsIconButton
-            style={{ minWidth: 'auto', padding: 7 }}
+            sx={{ minWidth: 'auto', padding: '7px' }}
             onClick={(event: any) => handleTagGroupTitleClick(event, tagGroup)}
             size="large"
           >
-            {tagGroup.expanded ? (
-              <SmallArrowDownIcon />
-            ) : (
-              <SmallArrowRightIcon />
-            )}
+            {expanded ? <SmallArrowDownIcon /> : <SmallArrowRightIcon />}
           </TsIconButton>
         </Grid>
-        <Grid size={9} style={{ alignSelf: 'center' }}>
+        <Grid size={9} sx={{ alignSelf: 'center' }}>
           <Typography
-            variant="inherit"
-            style={{ paddingLeft: 0 }}
+            sx={{ paddingLeft: 0 }}
             data-tid="locationTitleElement"
             noWrap
             onClick={(event: any) => handleTagGroupTitleClick(event, tagGroup)}
           >
-            {tagGroup.title + getLocationName(tagGroup.locationId)}
-            {!tagGroup.expanded && (
-              <span
-                style={{
+            <TsTooltip
+              title={
+                'Number of tags in this ' +
+                readOnly +
+                'tag group: ' +
+                tagGroup.children.length
+              }
+            >
+              <span>
+                {tagGroup.title + getLocationName(tagGroup.locationId)}
+              </span>
+            </TsTooltip>
+            {taggroupWorkspace}
+            {!expanded && (
+              <Box
+                sx={{
                   display: 'inline-block',
                   minWidth: 10,
                   padding: '3px 7px',
-                  fontSize: 10,
+                  fontSize: '10px',
                   fontWeight: 'normal',
-                  marginLeft: 4,
+                  marginLeft: '4px',
                   color: '#ffffff',
                   lineHeight: 1,
                   verticalAlign: 'middle',
                   whiteSpace: 'nowrap',
                   textAlign: 'center',
                   backgroundColor: '#bbbbbb',
-                  borderRadius: 10,
+                  borderRadius: '10px',
                 }}
               >
                 {tagGroup.children.length}
-              </span>
+              </Box>
             )}
           </Typography>
         </Grid>
-        <Grid size={1} style={{ textAlign: 'end' }}>
+        <Grid size={1} sx={{ textAlign: 'end' }}>
           {!isReadOnly && (
             <TsIconButton
-              style={{ minWidth: 'auto', padding: 7 }}
+              sx={{ minWidth: 'auto', padding: '7px' }}
               data-tid={
                 'tagLibraryMoreButton_' + tagGroup.title.replace(/ /g, '_')
               }
               onClick={(event: any) => handleTagGroupMenu(event, tagGroup)}
-              size="large"
             >
               <MoreMenuIcon />
             </TsIconButton>
@@ -211,6 +259,7 @@ function TagGroupTitleDnD(props: Props) {
       </Grid>
     </Box>
   );
+
   if (tagGroup.readOnly) {
     return tagGroupTitle;
   }

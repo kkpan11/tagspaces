@@ -20,7 +20,8 @@ import AppConfig from '-/AppConfig';
 import EntryIcon from '-/components/EntryIcon';
 import TagContainer from '-/components/TagContainer';
 import TagsPreview from '-/components/TagsPreview';
-import TooltipTS from '-/components/Tooltip';
+import TsTooltip from '-/components/TsTooltip';
+import { useMenuContext } from '-/components/dialogs/hooks/useMenuContext';
 import { SelectionArea } from '-/components/drag/SelectionArea';
 import SelectionDragLayer from '-/components/drag/SelectionDragLayer';
 import LightMdEditor from '-/components/md/LigthMdEditor';
@@ -30,7 +31,9 @@ import { useDirectoryContentContext } from '-/hooks/useDirectoryContentContext';
 import { useOpenedEntryContext } from '-/hooks/useOpenedEntryContext';
 import { usePaginationContext } from '-/hooks/usePaginationContext';
 import { usePerspectiveSettingsContext } from '-/hooks/usePerspectiveSettingsContext';
+import { useSelectedEntriesContext } from '-/hooks/useSelectedEntriesContext';
 import CellView from '-/perspectives/common/CellView';
+import { CellVisibilityProvider } from '-/perspectives/grid/hooks/CellVisibilityContext';
 import { useSortedDirContext } from '-/perspectives/grid/hooks/useSortedDirContext';
 import { Pro } from '-/pro';
 import { dataTidFormat } from '-/services/test';
@@ -39,44 +42,55 @@ import { TS } from '-/tagspaces.namespace';
 import { MilkdownProvider } from '@milkdown/react';
 import Box from '@mui/material/Box';
 import ButtonBase from '@mui/material/ButtonBase';
-import Grid from '@mui/material/Grid2';
+import Grid from '@mui/material/Grid';
 import Pagination from '@mui/material/Pagination';
 import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
 import { extractDirectoryName } from '@tagspaces/tagspaces-common/paths';
-import React, { useContext, useEffect, useReducer, useRef } from 'react';
+import React, {
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { useTranslation } from 'react-i18next';
 import GridCellsContainer from './GridCellsContainer';
-import { useMenuContext } from '-/components/dialogs/hooks/useMenuContext';
+
+// Utility: Check if Two Rectangles Intersect
+function rectIntersects(r1: DOMRect, r2: DOMRect): boolean {
+  return !(
+    r2.left > r1.right ||
+    r2.right < r1.left ||
+    r2.top > r1.bottom ||
+    r2.bottom < r1.top
+  );
+}
 
 interface Props {
   desktopMode: boolean;
   getCellContent: (
     fsEntry: TS.FileSystemEntry,
-    selectedEntries: Array<TS.FileSystemEntry>,
+    selected: boolean,
+    selectionMode: boolean,
     index: number,
     handleGridContextMenu,
     handleGridCellClick,
     handleGridCellDblClick,
     isLast?: boolean,
-  ) => void;
+  ) => any;
   currentDirectoryPath: string;
-  //onContextMenu: (event: React.MouseEvent<HTMLDivElement>) => void;
   onClick: (event: React.MouseEvent<HTMLDivElement>) => void;
-  // eslint-disable-next-line react/no-unused-prop-types
-  selectedEntries; // cache only
   setSelectedEntries: (selectedEntries: Array<TS.FileSystemEntry>) => void;
   clearSelection: () => void;
 }
 
 function GridPagination(props: Props) {
   const { t } = useTranslation();
-  const {
-    getCellContent,
-    currentDirectoryPath,
-    selectedEntries,
-    setSelectedEntries,
-  } = props;
+  const { getCellContent, currentDirectoryPath, setSelectedEntries, onClick } =
+    props;
+  const { selectedEntries } = useSelectedEntriesContext();
   const { openDirectoryMenu, openRenameEntryDialog } = useMenuContext();
   const {
     showDetails,
@@ -89,25 +103,42 @@ function GridPagination(props: Props) {
   const { directoryMeta, getAllPropertiesPromise } =
     useDirectoryContentContext();
   const { sortedDirContent } = useSortedDirContext();
-  const { page, getResentPageFiles, setCurrentPage } = usePaginationContext();
-  const { openEntry } = useOpenedEntryContext();
+  const { page, pageFiles, setCurrentPage } = usePaginationContext();
+  const { openEntry, openedEntry } = useOpenedEntryContext();
   const thumbDialogContext = Pro?.contextProviders?.ThumbDialogContext
     ? useContext<TS.ThumbDialogContextData>(
         Pro.contextProviders.ThumbDialogContext,
       )
     : undefined;
-  const [ignored, forceUpdate] = useReducer((x) => x + 1, 0, undefined);
+
   const currentLocation = findLocation();
-
   const theme = useTheme();
-  const pageFiles = getResentPageFiles();
-  const showPagination = sortedDirContent.length !== pageFiles.length;
-  const paginationCount = showPagination
-    ? Math.ceil(sortedDirContent.length / gridPageLimit)
-    : 10;
 
-  const backgroundImage = useRef<string>('none');
-  const thumbImage = useRef<string>('none');
+  // O(1) per-cell selection lookup. CellViews are memoised on the `selected`
+  // boolean alone, so swapping a Set in here means a single click only
+  // re-renders the previously-selected and the newly-selected cells.
+  const selectedUuidSet = useMemo(() => {
+    const s = new Set<string>();
+    if (selectedEntries) {
+      for (const e of selectedEntries) s.add(e.uuid);
+    }
+    return s;
+  }, [selectedEntries]);
+  const selectionMode = (selectedEntries?.length ?? 0) > 1;
+
+  // Memoize derived values for performance
+  const showPagination = useMemo(
+    () => sortedDirContent.length !== pageFiles.length,
+    [sortedDirContent.length, pageFiles.length],
+  );
+  const paginationCount = useMemo(
+    () =>
+      showPagination ? Math.ceil(sortedDirContent.length / gridPageLimit) : 10,
+    [showPagination, sortedDirContent.length, gridPageLimit],
+  );
+
+  const [backgroundImage, setBackgroundImage] = useState<string>('none');
+  const [thumbImage, setThumbImage] = useState<string>('none');
   const containerEl = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -118,404 +149,412 @@ function GridPagination(props: Props) {
       currentLocation
         .getFolderBgndPath(currentDirectoryPath, directoryMeta?.lastUpdated)
         .then((bgPath) => {
-          const bgImage = 'url("' + bgPath + '")';
-          if (bgImage !== backgroundImage.current) {
-            backgroundImage.current = bgImage;
-            forceUpdate();
-          }
+          setBackgroundImage(bgPath ? `url("${bgPath}")` : 'none');
         });
       currentLocation
         .getFolderThumbPath(currentDirectoryPath, directoryMeta?.lastUpdated)
         .then((thumbPath) => {
-          const thbImage = 'url("' + thumbPath + '")';
-          if (thbImage !== thumbImage.current) {
-            thumbImage.current = thbImage;
-            forceUpdate();
-          }
+          setThumbImage(thumbPath ? `url("${thumbPath}")` : 'none');
         });
     }
-  }, [currentDirectoryPath, containerEl.current, directoryMeta]);
+  }, [currentDirectoryPath, directoryMeta?.lastUpdated, currentLocation]);
 
-  const handleChange = (event, value) => {
-    setCurrentPage(value);
-    if (containerEl && containerEl.current) {
-      containerEl.current.scrollTop = 0;
+  // When a file is opened the perspective pane shrinks (the file viewer takes
+  // part of the width), which can reflow the opened entry's cell off-screen.
+  // Keep it within the visible area — including while the pane width animates.
+  useEffect(() => {
+    const container = containerEl.current;
+    const openedPath = openedEntry?.path;
+    if (!container || !openedPath) return;
+
+    const entry = pageFiles.find((e) => e.path === openedPath);
+    if (!entry) return; // opened file is on another page / not listed
+
+    let raf = 0;
+    const scrollOpenedIntoView = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        const cell = container.querySelector(`[data-entry-id="${entry.uuid}"]`);
+        cell?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      });
+    };
+
+    scrollOpenedIntoView();
+
+    let ro: ResizeObserver | undefined;
+    if (typeof ResizeObserver !== 'undefined') {
+      ro = new ResizeObserver(scrollOpenedIntoView);
+      ro.observe(container);
     }
-  };
 
-  const folderName = extractDirectoryName(
-    props.currentDirectoryPath,
-    currentLocation?.getDirSeparator(),
+    return () => {
+      cancelAnimationFrame(raf);
+      ro?.disconnect();
+    };
+  }, [openedEntry?.path, pageFiles]);
+
+  const handleChange = useCallback(
+    (event: React.ChangeEvent<unknown>, value: number) => {
+      setCurrentPage(value);
+      if (containerEl.current) {
+        containerEl.current.scrollTop = 0;
+      }
+    },
+    [setCurrentPage],
   );
 
-  const dirColor =
-    directoryMeta && directoryMeta.color ? directoryMeta.color : 'transparent';
+  const folderName = useMemo(
+    () => extractDirectoryName(currentDirectoryPath),
+    [currentDirectoryPath],
+  );
 
-  const files: TS.FileSystemEntry[] = [];
-  const dirs: TS.FileSystemEntry[] = [];
+  const dirColor = useMemo(
+    () => directoryMeta?.color || 'transparent',
+    [directoryMeta?.color],
+  );
 
-  for (const entry of sortedDirContent) {
-    if (entry.isFile) {
-      files.push(entry);
-    } else {
-      dirs.push(entry);
+  // Count files and directories without allocating arrays
+  const { fileCount, dirCount } = useMemo(() => {
+    let fileCount = 0;
+    let dirCount = 0;
+    for (const entry of sortedDirContent) {
+      if (entry.isFile) fileCount++;
+      else dirCount++;
     }
-  }
+    return { fileCount, dirCount };
+  }, [sortedDirContent]);
 
-  let folderSummary =
-    (dirs.length > 0 ? dirs.length + ' folder(s) and ' : '') +
-    files.length +
-    ' file(s) found';
-  if (selectedEntries && selectedEntries.length > 0) {
-    folderSummary = selectedEntries.length + ' entries selected';
-  }
-
-  // **********************************************************************
-  // Utility: Check if Two Rectangles Intersect
-  // **********************************************************************
-  const rectIntersects = (r1: DOMRect, r2: DOMRect): boolean => {
-    return !(
-      r2.left > r1.right ||
-      r2.right < r1.left ||
-      r2.top > r1.bottom ||
-      r2.bottom < r1.top
-    );
-  };
+  const folderSummary = useMemo(() => {
+    if (selectedEntries && selectedEntries.length > 0) {
+      return t('core:entriesSelected', { count: selectedEntries.length });
+    }
+    return dirCount > 0
+      ? t('core:foldersAndFilesFound', { folders: dirCount, files: fileCount })
+      : t('core:filesFound', { files: fileCount });
+  }, [selectedEntries, dirCount, fileCount, t]);
 
   // Called when a selection drag ends. We look for any item elements whose
   // bounding rectangle intersects the drag rectangle.
-  const handleSelect = (selectionRect: DOMRect) => {
-    const container = containerEl.current;
-    if (!container) return;
+  const handleSelect = useCallback(
+    (selectionRect: DOMRect) => {
+      const container = containerEl.current;
+      if (!container) return;
 
-    const newlySelected: string[] = [];
-    // Find all elements that represent items (we use the data-item attribute)
-    const itemElements = container.querySelectorAll('[data-entry-id]');
-    itemElements.forEach((el) => {
-      const itemRect = el.getBoundingClientRect();
-      if (rectIntersects(selectionRect, itemRect)) {
-        const id = el.getAttribute('data-entry-id');
-        newlySelected.push(id);
+      const newlySelected: string[] = [];
+      const itemElements = container.querySelectorAll('[data-entry-id]');
+      itemElements.forEach((el) => {
+        const itemRect = el.getBoundingClientRect();
+        if (rectIntersects(selectionRect, itemRect)) {
+          const id = el.getAttribute('data-entry-id');
+          if (id) newlySelected.push(id);
+        }
+      });
+      if (newlySelected.length > 0) {
+        setSelectedEntries(
+          pageFiles.filter((e) => newlySelected.includes(e.uuid)),
+        );
       }
-    });
-    if (newlySelected.length > 0) {
-      setSelectedEntries(
-        pageFiles.filter((e) => newlySelected.includes(e.uuid)),
-      );
-    }
-  };
+    },
+    [pageFiles, setSelectedEntries],
+  );
+
+  // Memoized folder details
+  const folderDetails = useMemo(
+    () => (
+      <Grid size={12} sx={{ position: 'relative', overflowY: 'auto' }}>
+        <Box
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            overflow: 'auto',
+            padding: '10px',
+            marginRight: '160px',
+            width: 'fit-content',
+            borderRadius: 8,
+            color: theme.palette.text.primary,
+          }}
+        >
+          <TsTooltip title={t('core:renameDirectory')}>
+            <ButtonBase
+              data-tid={`currentDir_${dataTidFormat(folderName)}`}
+              sx={{
+                fontSize: '1.5rem',
+                filter: `drop-shadow(0px 0px 4px ${theme.palette.background.default})`,
+              }}
+              onClick={() => {
+                setSelectedEntries([]);
+                openRenameEntryDialog();
+              }}
+            >
+              {folderName}
+            </ButtonBase>
+          </TsTooltip>
+          {showTags ? (
+            <Box sx={{ paddingLeft: '5px' }}>
+              {directoryMeta?.tags?.map((tag) => (
+                <TagContainer key={tag.title} tag={tag} tagMode="display" />
+              ))}
+            </Box>
+          ) : (
+            <TagsPreview showFirstTag tags={directoryMeta?.tags} />
+          )}
+        </Box>
+        <Box
+          data-tid={`allFilesCount${fileCount}`}
+          sx={{
+            paddingBottom: '5px',
+            marginTop: '10px',
+            marginRight: '160px',
+            padding: '10px',
+            borderRadius: '10px',
+            width: 'fit-content',
+            color: theme.palette.text.primary,
+          }}
+        >
+          <Typography
+            sx={{
+              fontSize: '0.9rem',
+              filter: `drop-shadow(0px 0px 4px ${theme.palette.background.default})`,
+            }}
+          >
+            {folderSummary}
+          </Typography>
+          {!showDescription && directoryMeta?.description && (
+            <Typography
+              sx={{
+                fontSize: '0.8rem',
+                wordBreak: 'break-all',
+                filter: `drop-shadow(0px 0px 2px ${theme.palette.background.default})`,
+                height: 45,
+                overflowY: 'auto',
+              }}
+            >
+              {getDescriptionPreview(directoryMeta.description, 200)}
+            </Typography>
+          )}
+        </Box>
+        <TsTooltip title={t('core:changeThumbnail')} placement="bottom">
+          <Box
+            sx={{
+              ':hover': { border: '1px dashed gray !important' },
+              backgroundImage: thumbImage,
+              borderRadius: AppConfig.defaultCSSRadius,
+              border: '1px solid transparent',
+              height: 100,
+              width: 100,
+              backgroundSize: 'cover',
+              backgroundRepeat: 'no-repeat',
+              backgroundPosition: 'center center',
+              position: 'absolute',
+              top: 0,
+              right: 7,
+              cursor: 'pointer',
+            }}
+            data-tid="folderThumbTID"
+            onClick={() => {
+              if (Pro) {
+                getAllPropertiesPromise(currentDirectoryPath).then(
+                  (fsEntry: TS.FileSystemEntry) =>
+                    thumbDialogContext.openThumbsDialog(fsEntry),
+                );
+              }
+            }}
+          />
+        </TsTooltip>
+      </Grid>
+    ),
+    [
+      folderName,
+      folderSummary,
+      showTags,
+      showDescription,
+      directoryMeta?.tags,
+      directoryMeta?.description,
+      thumbImage,
+      fileCount,
+      theme.palette.text.primary,
+      theme.palette.background.default,
+      currentDirectoryPath,
+    ],
+  );
+
+  // Memoized folder description (MilkdownProvider is expensive to mount)
+  const folderDescription = useMemo(
+    () =>
+      showDescription &&
+      directoryMeta?.description && (
+        <Grid
+          title={`${t('core:folderDescription')} - ${t('core:doubleClickToEdit')}`}
+          size={12}
+          className="gridPagination"
+          sx={{
+            backgroundColor: theme.palette.background.default,
+            borderBottom: `1px solid ${theme.palette.divider}`,
+            marginTop: '10px',
+            marginLeft: '8px',
+            marginRight: '8px',
+            marginBottom: '5px',
+            borderRadius: AppConfig.defaultCSSRadius,
+          }}
+          onDoubleClick={() =>
+            openEntry(currentDirectoryPath, TabNames.descriptionTab)
+          }
+        >
+          <style>
+            {`
+              .gridPagination .milkdown .ProseMirror h1 { margin-top: 10px; }
+              .gridPagination .milkdown { border-radius: ${AppConfig.defaultCSSRadius}; }
+              .gridPagination .milkdown .ProseMirror a { color: ${theme.palette.primary.main}; }
+            `}
+          </style>
+          <MilkdownProvider>
+            <LightMdEditor
+              defaultContent={directoryMeta.description}
+              placeholder=""
+            />
+          </MilkdownProvider>
+        </Grid>
+      ),
+    [
+      showDescription,
+      directoryMeta?.description,
+      currentDirectoryPath,
+      theme.palette.background.default,
+      theme.palette.divider,
+      theme.palette.primary.main,
+    ],
+  );
+
+  // Render empty state
+  const renderEmptyState = useCallback(
+    (message: string) => (
+      <Box sx={{ textAlign: 'center' }}>
+        {!showDescription && directoryMeta?.description && (
+          <Box sx={{ position: 'relative', mx: 'auto', maxWidth: 150 }}>
+            <EntryIcon isFile={false} />
+          </Box>
+        )}
+        <Typography
+          sx={{ padding: '15px', color: theme.palette.text.secondary }}
+        >
+          {message}
+        </Typography>
+        {!AppConfig.isNativeMobile && (
+          <Typography sx={{ color: theme.palette.text.secondary }}>
+            {t('core:dragAndDropToImport')}
+          </Typography>
+        )}
+      </Box>
+    ),
+    [showDescription, directoryMeta?.description, theme.palette.text.secondary],
+  );
 
   return (
-    <div
+    <Box
       data-tid="backgroundTID"
-      style={{
+      sx={{
         height: '100%',
-        background: `${dirColor}`,
+        background: dirColor,
       }}
     >
-      <div
-        ref={containerEl}
+      <Box
         onContextMenu={(event: React.MouseEvent<HTMLDivElement>) =>
           openDirectoryMenu(event, currentDirectoryPath)
         }
-        onClick={(event: React.MouseEvent<HTMLDivElement>) =>
-          props.onClick(event)
-        }
-        style={{
+        onClick={onClick}
+        sx={{
+          backgroundImage: backgroundImage,
           height: '100%',
-          overflowY: 'auto',
+          display: 'flex',
+          flexDirection: 'column',
           overflowX: 'hidden',
-          backgroundImage: backgroundImage.current,
           backgroundSize: 'cover',
           backgroundRepeat: 'no-repeat',
         }}
       >
-        <Grid container spacing={0}>
-          <Grid size={12} style={{ height: 60 }} />
-          {showDetails && (
-            <Grid size={12}>
-              <div
-                style={{
-                  marginLeft: 8,
-                  marginRight: 8,
-                  marginTop: 0,
-                  marginBottom: 0,
-                  height:
-                    !showDescription &&
-                    directoryMeta &&
-                    directoryMeta.description
-                      ? 150
-                      : 125,
-                  position: 'relative',
-                }}
-              >
-                {((folderName && folderName.length > 0) ||
-                  (directoryMeta &&
-                    directoryMeta.tags &&
-                    directoryMeta.tags.length > 0)) && (
-                  <Box
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      overflow: 'auto',
-                      padding: 10,
-                      marginRight: 160,
-                      width: 'fit-content',
-                      borderRadius: 8,
-                      color: theme.palette.text.primary,
-                    }}
-                  >
-                    <TooltipTS title={t('core:renameDirectory')}>
-                      <ButtonBase
-                        data-tid={'currentDir_' + dataTidFormat(folderName)}
-                        style={{
-                          fontSize: '1.5rem',
-                          filter: `drop-shadow(0px 0px 4px ${theme.palette.background.default})`,
-                        }}
-                        onClick={() => {
-                          setSelectedEntries([]);
-                          openRenameEntryDialog();
-                        }}
-                      >
-                        {folderName}
-                      </ButtonBase>
-                    </TooltipTS>
-                    {showTags ? (
-                      <span style={{ paddingLeft: 5 }}>
-                        {directoryMeta?.tags?.map((tag: TS.Tag) => {
-                          return <TagContainer tag={tag} tagMode="display" />;
-                        })}
-                      </span>
-                    ) : (
-                      <TagsPreview tags={directoryMeta?.tags} />
-                    )}
-                  </Box>
+        <Box sx={{ flexShrink: 0 }}>
+          <Grid container spacing={0}>
+            <Grid size={12} sx={{ height: 70 }} />
+            {showDetails && folderDetails}
+          </Grid>
+        </Box>
+        <Box
+          ref={containerEl}
+          sx={{ flexGrow: 1, overflowY: 'auto', overflowX: 'hidden' }}
+        >
+          <Grid container spacing={0}>
+            {folderDescription}
+          </Grid>
+          <SelectionDragLayer />
+          <SelectionArea onSelect={handleSelect}>
+            <CellVisibilityProvider scrollRoot={containerEl}>
+              <GridCellsContainer>
+                {pageFiles.length < 1 &&
+                  renderEmptyState(t('core:noFileFolderFound'))}
+                {fileCount < 1 &&
+                  dirCount >= 1 &&
+                  !showDirectories &&
+                  renderEmptyState(t('core:noFileButFoldersFound'))}
+                {pageFiles.map((entry, index) => (
+                  <CellView
+                    // Key on the stable path, not uuid: an entry's uuid can be
+                    // regenerated across directory reloads (e.g. thumbnail meta
+                    // merges), which would remount the cell and blank/reload its
+                    // thumbnail. Path is unique within a directory and stable.
+                    key={entry.path}
+                    fsEntry={entry}
+                    index={index}
+                    selected={selectedUuidSet.has(entry.uuid)}
+                    selectionMode={selectionMode}
+                    cellContent={getCellContent}
+                    isLast={index === pageFiles.length - 1}
+                  />
+                ))}
+                {pageFiles.length > 0 && (
+                  <>
+                    <Box sx={{ flexGrow: 1 }} />
+                    <Box sx={{ flexGrow: 1 }} />
+                  </>
                 )}
-                <Box
-                  data-tid={'allFilesCount' + files.length}
-                  style={{
-                    paddingBottom: 5,
-                    marginTop: 10,
-                    marginRight: 160,
-                    padding: 10,
-                    borderRadius: 10,
-                    width: 'fit-content',
+              </GridCellsContainer>
+            </CellVisibilityProvider>
+            {showPagination && (
+              <TsTooltip title={folderSummary}>
+                <Pagination
+                  sx={{
+                    left: 15,
+                    bottom: -35,
+                    zIndex: 1100,
+                    position: 'absolute',
+                    backgroundColor: theme.palette.background.default,
+                    border: '1px solid ' + theme.palette.divider,
+                    opacity: 0.97,
+                    padding: '2px',
+                    borderRadius: AppConfig.defaultCSSRadius,
+                  }}
+                  count={paginationCount}
+                  page={page}
+                  onChange={handleChange}
+                />
+              </TsTooltip>
+            )}
+            {!showDetails && !showPagination && pageFiles.length > 0 && (
+              <Box sx={{ padding: '15px', bottom: '10px' }}>
+                <Typography
+                  sx={{
+                    fontSize: '0.8rem',
+                    filter: `drop-shadow(0px 0px 4px ${theme.palette.background.default})`,
                     color: theme.palette.text.primary,
                   }}
                 >
-                  <Typography
-                    style={{
-                      fontSize: '0.9rem',
-                      filter: `drop-shadow(0px 0px 4px ${theme.palette.background.default})`,
-                    }}
-                  >
-                    {folderSummary}
-                  </Typography>
-                  {!showDescription &&
-                    directoryMeta &&
-                    directoryMeta.description && (
-                      <Typography
-                        style={{
-                          fontSize: '0.8rem',
-                          wordBreak: 'break-all',
-                          filter: `drop-shadow(0px 0px 2px ${theme.palette.background.default})`,
-                          height: 45,
-                          overflowY: 'auto',
-                        }}
-                      >
-                        {getDescriptionPreview(directoryMeta.description, 200)}
-                      </Typography>
-                    )}
-                </Box>
-                <TooltipTS title={t('core:changeThumbnail')} placement="bottom">
-                  <Box
-                    sx={{
-                      ':hover': {
-                        border: '1px dashed gray !important',
-                      },
-                    }}
-                    data-tid="folderThumbTID"
-                    style={{
-                      borderRadius: AppConfig.defaultCSSRadius,
-                      border: '1px solid transparent',
-                      height: 100,
-                      width: 100,
-                      backgroundImage: thumbImage.current,
-                      backgroundSize: 'cover', // cover contain
-                      backgroundRepeat: 'no-repeat',
-                      backgroundPosition: 'center center',
-                      position: 'absolute',
-                      top: 15,
-                      right: 0,
-                      cursor: 'pointer',
-                    }}
-                    onClick={() => {
-                      if (Pro) {
-                        getAllPropertiesPromise(currentDirectoryPath).then(
-                          (fsEntry: TS.FileSystemEntry) =>
-                            thumbDialogContext.openThumbsDialog(fsEntry),
-                        );
-                      }
-                    }}
-                  />
-                </TooltipTS>
-              </div>
-            </Grid>
-          )}
-          {showDescription && directoryMeta?.description && (
-            <Grid
-              title={
-                t('core:folderDescription') +
-                ' - ' +
-                t('core:doubleClickToEdit')
-              }
-              size={12}
-              className="gridPagination"
-              spacing={0}
-              style={{
-                backgroundColor: theme.palette.background.default,
-                borderBottom: '1px solid ' + theme.palette.divider,
-                marginTop: 10,
-                marginLeft: 8,
-                marginRight: 8,
-                marginBottom: 5,
-                borderRadius: AppConfig.defaultCSSRadius,
-              }}
-              onDoubleClick={() =>
-                openEntry(currentDirectoryPath, TabNames.descriptionTab)
-              }
-            >
-              <style>
-                {`
-                      .gridPagination .milkdown .ProseMirror h1 {
-                          margin-top: 10px;
-                      }
-                     .gridPagination .milkdown { 
-                          border-radius: ${AppConfig.defaultCSSRadius}px;
-                      }
-                      .gridPagination .milkdown .ProseMirror {
-                          padding: 10px;
-                      }
-                      .gridPagination .milkdown .ProseMirror a {
-                          color: ${theme.palette.primary.main};
-                      }
-                      .gridPagination .milkdown .ProseMirror img {
-                          max-width: 99%;
-                      }
-                  `}
-              </style>
-              <MilkdownProvider>
-                <LightMdEditor
-                  defaultContent={directoryMeta.description}
-                  placeholder=""
-                />
-              </MilkdownProvider>
-            </Grid>
-          )}
-        </Grid>
-        <SelectionDragLayer />
-        <SelectionArea onSelect={handleSelect}>
-          <GridCellsContainer>
-            {pageFiles.map((entry, index, dArray) => (
-              <CellView
-                key={entry.uuid + index}
-                fsEntry={entry}
-                index={index}
-                cellContent={getCellContent}
-                isLast={index === dArray.length - 1}
-              />
-            ))}
-            {pageFiles.length < 1 && (
-              <div style={{ textAlign: 'center' }}>
-                {!showDescription &&
-                  directoryMeta &&
-                  directoryMeta.description && (
-                    <div
-                      style={{
-                        position: 'relative',
-                        margin: 'auto',
-                        maxWidth: 150,
-                      }}
-                    >
-                      <EntryIcon isFile={false} />
-                    </div>
-                  )}
-                <Typography
-                  style={{ padding: 15, color: theme.palette.text.secondary }}
-                >
-                  {t('core:noFileFolderFound')}
+                  {folderSummary}
                 </Typography>
-                {!AppConfig.isCordova && (
-                  <Typography style={{ color: theme.palette.text.secondary }}>
-                    {t('core:dragAndDropToImport')}
-                  </Typography>
-                )}
-              </div>
+              </Box>
             )}
-            {files.length < 1 && dirs.length >= 1 && !showDirectories && (
-              <div style={{ textAlign: 'center' }}>
-                {!showDescription &&
-                  directoryMeta &&
-                  directoryMeta.description && (
-                    <div
-                      style={{
-                        position: 'relative',
-                        margin: 'auto',
-                        maxWidth: 150,
-                      }}
-                    >
-                      <EntryIcon isFile={false} />
-                    </div>
-                  )}
-                <Typography
-                  style={{ padding: 15, color: theme.palette.text.secondary }}
-                >
-                  {t('core:noFileButFoldersFound')}
-                </Typography>
-                {!AppConfig.isCordova && (
-                  <Typography style={{ color: theme.palette.text.secondary }}>
-                    {t('core:dragAndDropToImport')}
-                  </Typography>
-                )}
-              </div>
-            )}
-          </GridCellsContainer>
-          {showPagination && (
-            <TooltipTS title={folderSummary}>
-              <Pagination
-                style={{
-                  left: 15,
-                  bottom: -35,
-                  zIndex: 1100,
-                  position: 'absolute',
-                  backgroundColor: theme.palette.background.default,
-                  opacity: 0.97,
-                  border: '1px solid lightgray',
-                  borderRadius: 5,
-                  padding: 3,
-                }}
-                count={paginationCount}
-                page={page}
-                onChange={handleChange}
-              />
-            </TooltipTS>
-          )}
-          {!showDetails && !showPagination && pageFiles.length > 0 && (
-            <div style={{ padding: 15, bottom: 10 }}>
-              <Typography
-                style={{
-                  fontSize: '0.8rem',
-                  filter: `drop-shadow(0px 0px 4px ${theme.palette.background.default})`,
-                  color: theme.palette.text.primary,
-                }}
-              >
-                {folderSummary}
-              </Typography>
-            </div>
-          )}
-        </SelectionArea>
-      </div>
-    </div>
+          </SelectionArea>
+        </Box>
+      </Box>
+    </Box>
   );
 }
 

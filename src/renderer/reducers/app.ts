@@ -29,6 +29,8 @@ import {
   setLanguage,
 } from '-/services/utils-io';
 import { getURLParameter } from '-/utils/dom';
+import { deriveInitialOnline } from '-/utils/OfflineError';
+import { cleanFrontDirSeparator } from '@tagspaces/tagspaces-common/paths';
 import i18n from '../services/i18n';
 
 import { AnyAction } from 'redux';
@@ -56,19 +58,19 @@ export const types = {
 let showLocations = true;
 let showTagLibrary = false;
 let showSearch = false;
-if (window.ExtDefaultVerticalPanel === 'none') {
+if (AppConfig.ExtDefaultVerticalPanel === 'none') {
   showLocations = false;
   showTagLibrary = false;
   showSearch = false;
-} else if (window.ExtDefaultVerticalPanel === 'locations') {
+} else if (AppConfig.ExtDefaultVerticalPanel === 'locations') {
   showLocations = true;
   showTagLibrary = false;
   showSearch = false;
-} else if (window.ExtDefaultVerticalPanel === 'taglibrary') {
+} else if (AppConfig.ExtDefaultVerticalPanel === 'taglibrary') {
   showLocations = false;
   showTagLibrary = true;
   showSearch = false;
-} else if (window.ExtDefaultVerticalPanel === 'search') {
+} else if (AppConfig.ExtDefaultVerticalPanel === 'search') {
   showLocations = false;
   showTagLibrary = false;
   showSearch = true;
@@ -77,7 +79,7 @@ if (window.ExtDefaultVerticalPanel === 'none') {
 export const initialState = {
   error: null,
   loggedIn: false,
-  isOnline: false,
+  isOnline: deriveInitialOnline(),
   lastError: '',
   progress: [],
   isUpdateInProgress: false,
@@ -94,15 +96,6 @@ export const initialState = {
   isEntryInFullWidth: false,
   tagLibraryPanelOpened: showTagLibrary,
   searchPanelOpened: showSearch,
-  /*user: window.ExtDemoUser
-    ? {
-        attributes: window.ExtDemoUser,
-        // eslint-disable-next-line @typescript-eslint/no-empty-function
-        associateSoftwareToken: () => {},
-        // eslint-disable-next-line @typescript-eslint/no-empty-function
-        verifySoftwareToken: () => {},
-      }
-    : undefined,*/
 };
 
 // The state described here will not be persisted
@@ -116,9 +109,10 @@ export default (state: any = initialState, action: any) => {
       return { ...state, isOnline: false, error: null };
     }
     case types.PROGRESS: {
+      const path = cleanFrontDirSeparator(action.path);
       const arrProgress = [
         {
-          path: action.path,
+          path: path,
           filePath: action.filePath,
           progress: action.progress,
           abort: action.abort,
@@ -126,7 +120,7 @@ export default (state: any = initialState, action: any) => {
         },
       ];
       state.progress.map((fileProgress) => {
-        if (fileProgress.path !== action.path) {
+        if (fileProgress && fileProgress.path !== path) {
           arrProgress.push(fileProgress);
         }
         return true;
@@ -134,7 +128,11 @@ export default (state: any = initialState, action: any) => {
       return { ...state, progress: arrProgress };
     }
     case types.PROGRESS_FINISH: {
-      return { ...state, progress: action.progresses, state: 'finished' };
+      const arrProgress = action.progresses.map((p) => ({
+        ...p,
+        state: 'finished',
+      }));
+      return { ...state, progress: arrProgress };
     }
     case types.RESET_PROGRESS: {
       return { ...state, progress: [] };
@@ -164,7 +162,12 @@ export default (state: any = initialState, action: any) => {
 };
 
 function disableBackGestureMac() {
-  if (AppConfig.isMacLike) {
+  // isMacLike also matches iPhone/iPad. Keep the suppressor for macOS
+  // Electron (trackpad history swipe) and iOS Safari web (browser back
+  // gesture), but not for the Capacitor app: WKWebView's history gestures
+  // are off there anyway, and preventDefault would kill taps near the
+  // edges plus the edge-swipe-back gesture (useSwipeBack).
+  if (AppConfig.isMacLike && !AppConfig.isCapacitor) {
     const element = document.getElementById('root');
     element.addEventListener('touchstart', (e: MouseEvent) => {
       // is not near edge of view, exit
@@ -186,10 +189,6 @@ export const actions = {
     if (getCheckForUpdateOnStartup(state)) {
       dispatch(SettingsActions.checkForUpdate());
     }
-    /*if (isFirstRun(state)) {
-      dispatch(actions.toggleOnboardingDialog());
-      dispatch(actions.toggleLicenseDialog());
-    }*/
     setTimeout(() => {
       setGlobalShortcuts(isGlobalKeyBindingEnabled(state));
       loadExtensions();
@@ -238,11 +237,13 @@ export const actions = {
   onUploadProgress:
     (progress, abort, fileName = undefined) =>
     (dispatch: (action) => void) => {
-      const progressPercentage = Math.round(
-        (progress.loaded / progress.total) * 100,
-      );
-      console.log(progressPercentage);
-
+      // Pre-registration rows report {loaded: 0, total: 0} — guard the
+      // division so they start at 0% instead of NaN (a NaN row renders
+      // without a progress bar and never matches the -1 warning state).
+      const progressPercentage =
+        progress.total > 0
+          ? Math.round((progress.loaded / progress.total) * 100)
+          : 0;
       dispatch(
         actions.setProgress(progress.key, progressPercentage, abort, fileName),
       );

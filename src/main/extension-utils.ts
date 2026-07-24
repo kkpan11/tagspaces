@@ -25,8 +25,12 @@ export function getExtensions(
             reject(err);
             return;
           }
-          // Filter subdirectories
-          const subDirectories = files.filter((file) => file.isDirectory());
+          // Filter subdirectories — skip dot-prefixed folders like `.ts`
+          // (TagSpaces metadata) or `.bin`, which are never valid plugin
+          // directories and would fail the package.json lookup below
+          const subDirectories = files.filter(
+            (file) => file.isDirectory() && !file.name.startsWith('.'),
+          );
 
           resolve(
             processDirs(
@@ -88,38 +92,64 @@ function processDirs(
           fileTypes,
           buildFolder,
           enabled,
+          isDefault,
           ...props
         } = packageJsonObj['tsextension'];
 
+        const isPerspective =
+          Array.isArray(types) && types.includes('perspective');
+
+        // For perspective extensions, manifest `id` is the perspective
+        // registry key (e.g. "timeline") — never the package import path —
+        // so derive extensionId from the directory only. For viewer/editor
+        // extensions, keep the historical behavior where `id` (if set)
+        // overrides the auto-generated package path.
         const extensionId =
-          (id ? id : '@tagspaces/extensions/' + dir.name) +
+          (isPerspective || !id ? '@tagspaces/extensions/' + dir.name : id) +
           (buildFolder ? '/' + buildFolder : '');
+        // Package name to import() at runtime (perspectives only). Webpack
+        // resolves the `main` field of the package's package.json, so we
+        // don't append buildFolder here.
+        const packageName = packagePath + '/' + dir.name;
 
         if (fileTypes) {
           fileTypes.forEach((fileType) => {
-            if (fileType.ext) {
-              const supportTypes = fileType.types ? fileType.types : types;
-              const supportedTypes = supportTypes.map((type) => ({
-                [type]: extensionId,
-                ...(isExternal && { extensionExternalPath: directoryPath }),
-              }));
+            if (!fileType.ext) return;
+            // each fileType may target multiple "types" (viewer/editor etc.)
+            const supportTypes = fileType.types || types;
+            const supportedTypes = supportTypes.map((type) => ({
+              [type]: extensionId,
+              ...(isExternal && { extensionExternalPath: directoryPath }),
+            }));
 
-              const existingItemIndex = supportedFileTypes.findIndex(
-                (item) => item.type === fileType.ext,
-              );
-              if (existingItemIndex !== -1) {
-                // If an item with the same id already exists, update its properties
-                supportedFileTypes[existingItemIndex] = {
-                  ...supportedFileTypes[existingItemIndex],
-                  ...supportedTypes.reduce((a, b) => ({ ...a, ...b })),
-                };
-              } else {
-                supportedFileTypes.push({
-                  type: fileType.ext,
-                  color: fileType.color ? fileType.color : color,
-                  ...supportedTypes.reduce((a, b) => ({ ...a, ...b })),
+            // find existing slot by extension
+            const idx = supportedFileTypes.findIndex(
+              (item) => item.type === fileType.ext,
+            );
+            if (idx !== -1 && isDefault) {
+              // If an item with the same id already exists, update its properties
+              supportedFileTypes[idx] = {
+                ...supportedFileTypes[idx],
+                ...supportedTypes.reduce((a, b) => ({ ...a, ...b }), {}),
+              };
+            } else if (idx !== -1) {
+              // merge only missing props
+              const existing = supportedFileTypes[idx];
+              // merge in any new role/extension mappings
+              supportedTypes.forEach((st) => {
+                Object.keys(st).forEach((role) => {
+                  if (!existing[role]) {
+                    existing[role] = st[role];
+                  }
                 });
-              }
+              });
+              // color stays as-is, extensions slot keyed by type
+            } else {
+              supportedFileTypes.push({
+                type: fileType.ext,
+                color: fileType.color || color || '',
+                ...supportedTypes.reduce((a, b) => ({ ...a, ...b }), {}),
+              });
             }
           });
         }
@@ -130,6 +160,7 @@ function processDirs(
           ...(isExternal && { extensionExternal: true }),
           extensionEnabled: enabled !== undefined ? enabled : !isExternal,
           version: version,
+          ...(isPerspective && id ? { id, packageName } : {}),
           ...props,
         };
       }

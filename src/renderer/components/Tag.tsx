@@ -16,10 +16,8 @@
  *
  */
 
-import React from 'react';
-import { InfoTooltipIcon } from '-/components/CommonIcons';
+import TsTooltip from '-/components/TsTooltip';
 import Button from '@mui/material/Button';
-import Tooltip from '-/components/Tooltip';
 
 interface Props {
   tagTitle?: string;
@@ -32,10 +30,10 @@ interface Props {
 function Tag(props: Props) {
   const { tagTitle, textColor, backgroundColor, isDragging, children } = props;
   return (
-    <Tooltip title={tagTitle}>
+    <TsTooltip title={tagTitle}>
       <Button
         size="small"
-        style={{
+        sx={{
           opacity: isDragging ? 0.5 : 1,
           fontSize: 13,
           fontWeight: 'normal',
@@ -45,19 +43,19 @@ function Tag(props: Props) {
           whiteSpace: 'nowrap',
           color: textColor,
           backgroundColor: backgroundColor,
-          minHeight: 20,
+          minHeight: '20px',
           minWidth: 0,
-          margin: 2,
+          margin: '2px',
           paddingTop: 0,
           paddingBottom: 0,
           paddingRight: 0,
-          paddingLeft: 5,
-          borderRadius: 5,
+          paddingLeft: '5px',
+          borderRadius: '5px',
         }}
       >
         {children}
       </Button>
-    </Tooltip>
+    </TsTooltip>
   );
 }
 

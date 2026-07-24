@@ -31,7 +31,7 @@ import { getUuid } from '@tagspaces/tagspaces-common/utils-io';
 import { useTranslation } from 'react-i18next';
 import { useSelector } from 'react-redux';
 import { useEditedEntryContext } from '-/hooks/useEditedEntryContext';
-import { executePromisesInBatches } from '-/services/utils-io';
+import { executePromisesInBatches, runConcurrent } from '-/services/utils-io';
 import { getUseTrashCan } from '-/reducers/settings';
 import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
 import { useDirectoryContentContext } from '-/hooks/useDirectoryContentContext';
@@ -53,6 +53,8 @@ type PlatformFacadeContextData = {
     path: string,
     locationID?: string,
     reflect?: boolean,
+    open?: boolean,
+    skipSelection?: boolean,
   ) => Promise<any>;
   copyFilePromise: (
     sourceFilePath: string,
@@ -125,7 +127,7 @@ type PlatformFacadeContextData = {
   saveTextFilePromise: (
     param: PlatformParms,
     content: string,
-    overwrite: boolean,
+    reflectUpdate: boolean,
   ) => Promise<any>;
   saveBinaryFilePromise: (
     param: PlatformParms,
@@ -138,7 +140,10 @@ type PlatformFacadeContextData = {
     reflect?: boolean | TS.ActionSource,
   ) => Promise<TS.FileSystemEntry>;
   deleteEntriesPromise: (...paths: TS.FileSystemEntry[]) => Promise<boolean>;
-  setFolderThumbnailPromise: (filePath: string) => Promise<string>;
+  setFolderThumbnailPromise: (
+    filePath: string,
+    force?: boolean,
+  ) => Promise<string>;
 };
 
 export const PlatformFacadeContext = createContext<PlatformFacadeContextData>({
@@ -190,13 +195,20 @@ export const PlatformFacadeContextProvider = ({
     path: string,
     locationID?: string,
     reflect: boolean = true,
+    open: boolean = true,
+    skipSelection: boolean = false,
   ): Promise<any> {
     ignoreByWatcher(path);
     const currentLocation = getLocation({ locationID });
     return currentLocation.createDirectoryPromise(path).then((result) => {
       if (result !== undefined && reflect) {
         // do not reflect if directory not created
-        reflectAddEntry(currentLocation.toFsEntry(path, false));
+        reflectAddEntry(
+          currentLocation.toFsEntry(path, false),
+          open,
+          'local',
+          skipSelection,
+        );
       }
       deignoreByWatcher(path);
       return result;
@@ -206,8 +218,12 @@ export const PlatformFacadeContextProvider = ({
   /**
    * @param filePath
    * return Promise<destThumbPath>
+   * @param force
    */
-  function setFolderThumbnailPromise(filePath: string): Promise<string> {
+  function setFolderThumbnailPromise(
+    filePath: string,
+    force = true,
+  ): Promise<string> {
     const currentLocation = findLocation();
     const directoryPath = extractContainingDirectoryPath(
       filePath,
@@ -232,27 +248,33 @@ export const PlatformFacadeContextProvider = ({
       sourceThumbPath,
       destThumbPath,
       undefined,
-      t('core:thumbAlreadyExists', { directoryName }),
-    ).then(() => {
-      //  dispatch(AppActions.setLastThumbnailImageChange(destThumbPath));
-      return destThumbPath;
-    });
+      force ? t('core:thumbAlreadyExists', { directoryName }) : null,
+    )
+      .then(() => {
+        //  dispatch(AppActions.setLastThumbnailImageChange(destThumbPath));
+        return destThumbPath;
+      })
+      .catch((e) => {
+        console.debug('set thumbnail for folder failed:', e);
+        return undefined;
+      });
   }
 
   function copyFilePromise(
     sourceFilePath: string,
     targetFilePath: string,
     locationID: string,
-    confirmMessage: string = 'File ' +
-      targetFilePath +
-      ' exist do you want to override it?',
+    confirmMessage?: string | null,
   ): Promise<any> {
     return getLocation({ locationID })
       .getPropertiesPromise(targetFilePath)
       .then((isTargetExist) => {
         if (isTargetExist) {
+          const defaultConfirm = `File "${targetFilePath}" exists. Do you want to overwrite it?`;
+          const text = confirmMessage ?? defaultConfirm;
           // eslint-disable-next-line no-alert
-          const confirmOverwrite = window && window.confirm(confirmMessage);
+          const confirmOverwrite =
+            confirmMessage !== null && window && window.confirm(text);
           if (confirmOverwrite === true) {
             return copyFilePromiseOverwrite(
               sourceFilePath,
@@ -273,6 +295,10 @@ export const PlatformFacadeContextProvider = ({
       });
   }
 
+  // Concurrency cap for bulk IPC IO. Tuned to keep V8 heap flat on huge
+  // copy/move batches (3500+ files) — eager fanout used to OOM the renderer.
+  const COPY_CONCURRENCY = 16;
+
   function copyFilesWithProgress(
     paths: string[],
     targetPath: string,
@@ -281,89 +307,68 @@ export const PlatformFacadeContextProvider = ({
     reflect = true,
   ): Promise<boolean> {
     const controller = new AbortController();
-    const signal = controller.signal;
     const location = findLocation(locationID);
 
-    const ioJobPromises = paths.map((path) => {
-      const targetFile =
-        normalizePath(targetPath) +
-        (location ? location.getDirSeparator() : AppConfig.dirSeparator) +
-        extractFileName(path, location?.getDirSeparator());
-      return {
-        promise: copyFilePromiseOverwrite(path, targetFile, locationID, false),
-        path: path,
-      };
-    });
-    const progress = (completed, path) => {
-      if (onProgress) {
-        const progress = {
-          loaded: completed, //processedSize,
-          total: ioJobPromises.length,
-          key: targetPath,
-        };
-        onProgress(
-          progress,
-          () => {
-            controller.abort();
-          },
-          path,
-        );
+    const buildTargetPath = (path: string) =>
+      normalizePath(targetPath) +
+      (location ? location.getDirSeparator() : AppConfig.dirSeparator) +
+      extractFileName(path, location?.getDirSeparator());
+
+    // Single-row batch progress. We dispatch all per-file completions under
+    // one stable key (the target dir) so the dialog renders ONE bar that
+    // fills `completed / total`, not N rows. Per-file rows for thousands of
+    // files thrashed the reducer (O(n) array rebuild on each dispatch) and
+    // the dialog (O(n log n) sort + N LinearProgress reconciliations) on
+    // every file settle — total O(n² log n). That made big copies feel slow
+    // even when the disk had finished. The `fileName` arg still updates the
+    // row label so the user sees which file just landed.
+    const batchKey = normalizePath(targetPath);
+    let completed = 0;
+    const report = (path: string) => {
+      if (!onProgress) {
+        return;
       }
+      completed++;
+      onProgress(
+        {
+          loaded: completed,
+          total: paths.length,
+          key: batchKey,
+        },
+        () => {
+          controller.abort();
+        },
+        path,
+      );
     };
-    return trackProgress(ioJobPromises, signal, progress).then(() => {
+
+    return runConcurrent(
+      paths,
+      (path) =>
+        copyFilePromiseOverwrite(
+          path,
+          buildTargetPath(path),
+          locationID,
+          false,
+        ),
+      COPY_CONCURRENCY,
+      (path, _idx, result) => {
+        if (result.status === 'rejected') {
+          console.log('Copy ' + path + ' error:', result.reason);
+        }
+        report(path);
+      },
+      controller.signal,
+    ).then(() => {
       if (reflect) {
-        const targetPaths = paths.map((path) =>
-          getAllPropertiesPromise(
-            normalizePath(targetPath) +
-              (location ? location.getDirSeparator() : AppConfig.dirSeparator) +
-              extractFileName(path, location?.getDirSeparator()),
-            locationID,
+        return reflectAddEntryPath(
+          ...paths.map((path) =>
+            getAllPropertiesPromise(buildTargetPath(path), locationID),
           ),
         );
-        return reflectAddEntryPath(...targetPaths);
       }
       return true;
     });
-  }
-
-  function trackProgress(promises, abortSignal, progress) {
-    // const total = promises.length;
-    let completed = 0;
-    let aborted = false;
-
-    // Create an array of promises that resolve when the original promises resolve
-    const progressPromises = promises.map(({ promise, path }) =>
-      promise
-        .then(() => {
-          if (!aborted) {
-            completed++;
-            // console.log(`Progress: ${completed}/${total}`);
-            if (progress) {
-              progress(completed, path);
-            }
-          }
-        })
-        .catch((err) => {
-          completed++;
-          if (progress) {
-            progress(completed, path);
-          }
-          console.log('Promise ' + path + ' error:', err);
-          throw err; //return err;
-        }),
-    );
-
-    // Use Promise.race() to wait for all progress promises to resolve
-    return Promise.race(progressPromises)
-      .then(() => Promise.all(promises))
-      .catch((err) => {
-        if (abortSignal.aborted) {
-          aborted = true;
-          console.log('Promise execution aborted');
-        } else {
-          throw err;
-        }
-      });
   }
 
   function copyFilePromiseOverwrite(
@@ -479,29 +484,65 @@ export const PlatformFacadeContextProvider = ({
   function moveFilesPromise(
     renameJobs: Array<Array<string>>,
     locationID: string,
-    onProgress = undefined,
+    onProgress: any = undefined,
     reflect = true,
     force = false,
   ): Promise<any[]> {
     const flatArray = renameJobs.flat();
     ignoreByWatcher(...flatArray);
-    return executePromisesInBatches(
-      renameJobs.map(async (renameJob) => {
-        try {
-          return await getLocation({ locationID }).renameFilePromise(
-            renameJob[0],
-            renameJob[1],
-            onProgress,
-            force,
-          );
-        } catch (err) {
-          console.log('Error rename file:', err);
-          return err; //undefined;
+
+    const controller = new AbortController();
+
+    // Single-row batch progress (same reasoning as copyFilesWithProgress).
+    // moveFilesPromise has no single targetPath argument — each job carries
+    // its own dest — so derive the batch key from the first job's parent
+    // dir. Falls back to a generated id when called with an empty list.
+    const moveLocation = findLocation(locationID);
+    const moveSep = moveLocation
+      ? moveLocation.getDirSeparator()
+      : AppConfig.dirSeparator;
+    const batchKey =
+      renameJobs.length > 0
+        ? extractContainingDirectoryPath(renameJobs[0][1], moveSep)
+        : 'move-batch-' + getUuid();
+    let completed = 0;
+    const reportMoveProgress = (sourcePath: string) => {
+      if (!onProgress) {
+        return;
+      }
+      completed++;
+      onProgress(
+        { loaded: completed, total: renameJobs.length, key: batchKey },
+        () => {
+          controller.abort();
+        },
+        sourcePath,
+      );
+    };
+
+    return runConcurrent(
+      renameJobs,
+      (job) =>
+        getLocation({ locationID })
+          .renameFilePromise(job[0], job[1], onProgress, force)
+          .catch((err) => {
+            console.log('Error rename file:', err);
+            return err;
+          }),
+      COPY_CONCURRENCY,
+      (job, _idx, result) => {
+        reportMoveProgress(job[0]);
+        if (result.status === 'rejected') {
+          console.log('Move ' + job[0] + ' error:', result.reason);
         }
-      }),
-    ).then((ret) => {
+      },
+      controller.signal,
+    ).then((settled) => {
       deignoreByWatcher(...flatArray);
-      const r = ret.filter((r) => r !== undefined);
+      const ret = settled.map((r) =>
+        r.status === 'fulfilled' ? r.value : r.reason,
+      );
+      const r = ret.filter((v) => v !== undefined);
       if (reflect && r.length > 0) {
         reflectMoveFiles(renameJobs);
       }
@@ -629,13 +670,13 @@ export const PlatformFacadeContextProvider = ({
   function saveTextFilePromise(
     param: PlatformParms,
     content: string,
-    isUpdated: boolean,
+    reflectUpdate: boolean,
   ): Promise<TS.FileSystemEntry> {
     ignoreByWatcher(param.path);
     return getLocation(param)
-      .saveTextFilePromise(param, content, isUpdated)
+      .saveTextFilePromise(param, content, true)
       .then((fsEntry) => {
-        if (isUpdated) {
+        if (reflectUpdate) {
           setReflectActions({
             action: 'update',
             entry: fsEntry,

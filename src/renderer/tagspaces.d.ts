@@ -21,7 +21,10 @@ declare module '*.md';
 declare module '*.txt';
 declare module '*.png';
 declare module '*.jpg';
+declare module '*.avif';
 declare module '*.svg';
+declare module '*.mp4';
+declare module '*.webm';
 declare module '*.woff';
 declare module '*.woff2';
 declare module '*.xml';
@@ -67,14 +70,27 @@ declare interface Window {
   ExtAutoSaveEnabled?: boolean;
   ExtAI?: ExternalAI;
   __REDUX_DEVTOOLS_EXTENSION_COMPOSE__?: any;
-  plugins?: any; // needed for Cordova
-  resolveLocalFileSystemURL?: any; // needed for Cordova
-  device?: any; // needed for Cordova
   ExtSupportedFileTypes?: Array<any>;
   ExtExtensionsFound?: Array<any>;
   ExtSearchTypeGroups?: any;
   ExtDefaultMapBounds?: any;
+  ExtShowTSLogo?: boolean;
+  ExtShowTSVersion?: boolean;
   ExtUseOnlyTagsFromTagLibrary?: boolean;
+  ExtUseLocationTags?: boolean;
+  ExtDefaultQuestionPrompt?: string;
+  ExtDefaultSystemPrompt?: string;
+  ExtSummarizePrompt?: string;
+  ExtDescriptionFromTextPrompt?: string;
+  ExtDescriptionFromImageStructuredPrompt?: string;
+  ExtDescriptionFromImagePrompt?: string;
+  ExtTagsFromTextPrompt?: string;
+  ExtTagsFromImagePrompt?: string;
+  ExtFileTemplates?: Array<any>;
+  ExtDefaultFileTemplate?: any;
+  ExtWorkSpaces?: Array<any>;
+  ExtAuthor?: string;
+  ExtHideProFeatures?: boolean;
 }
 
 declare interface NodeModule {

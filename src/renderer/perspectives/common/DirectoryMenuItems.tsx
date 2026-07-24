@@ -1,19 +1,12 @@
 import AppConfig from '-/AppConfig';
 import {
-  AddExistingFileIcon,
-  AudioRecordIcon,
   ChangeBackgroundIcon,
   CopyMoveIcon,
   CopyPictureIcon,
   DeleteIcon,
   EntryPropertiesIcon,
-  HTMLFileIcon,
   ImportTagsIcon,
-  LinkFileIcon,
   LinkIcon,
-  MarkdownFileIcon,
-  NewFileIcon,
-  NewFolderIcon,
   OpenEntryNativelyIcon,
   OpenFolderIcon,
   OpenNewWindowIcon,
@@ -22,12 +15,15 @@ import {
   RenameIcon,
   TagIcon,
 } from '-/components/CommonIcons';
-import { BetaLabel, ProLabel } from '-/components/HelperComponents';
-import InfoIcon from '-/components/InfoIcon';
+import { ProLabel } from '-/components/HelperComponents';
 import MenuKeyBinding from '-/components/menus/MenuKeyBinding';
-import { AvailablePerspectives } from '-/perspectives';
+import NewSubMenu from '-/perspectives/common/NewSubMenu';
 import { Pro } from '-/pro';
-import { getKeyBindingObject } from '-/reducers/settings';
+import {
+  getKeyBindingObject,
+  isDevMode,
+  isHideProFeatures,
+} from '-/reducers/settings';
 import { TS } from '-/tagspaces.namespace';
 import { CommonLocation } from '-/utils/CommonLocation';
 import Divider from '@mui/material/Divider';
@@ -56,16 +52,23 @@ export function getDirectoryMenuItems(
   addExistingFile?: () => void,
   setFolderThumbnail?: () => void,
   copySharingLink?: () => void,
-  importMacTags?: () => void,
+  copyRelativePath?: () => void,
+  extractTags?: () => void,
   switchPerspective?: (perspectiveId: string) => void,
   showProperties?: () => void,
   cameraTakePicture?: () => void,
-  showAddRemoveTagsDialog?: () => void,
+  showAddRemoveTagsDialog?: (
+    entries: TS.FileSystemEntry[],
+    openedEntry?: TS.FileSystemEntry,
+    fileChanged?: boolean,
+  ) => void,
   openInNewWindow?: () => void,
   changeFolderThumbnail?: () => void,
   changeFolderBackground?: () => void,
 ) {
   const keyBindings = useSelector(getKeyBindingObject);
+  const devMode: boolean = useSelector(isDevMode);
+  const hideProFeatures: boolean = useSelector(isHideProFeatures);
   const menuItems = [];
   if (selectedEntries.length < 2) {
     if (perspectiveMode) {
@@ -87,7 +90,7 @@ export function getDirectoryMenuItems(
           </MenuItem>,
         );
       }
-      if (openInNewWindow) {
+      if (openInNewWindow && !AppConfig.isNativeMobile) {
         menuItems.push(
           <MenuItem
             key="openInNewWindow"
@@ -185,12 +188,32 @@ export function getDirectoryMenuItems(
     );
   }
 
+  if (!isReadOnlyMode && showAddRemoveTagsDialog) {
+    menuItems.push(
+      <MenuItem
+        key="dirMenuAddRemoveTags"
+        data-tid="dirMenuAddRemoveTags"
+        onClick={() => {
+          onClose();
+          showAddRemoveTagsDialog(selectedEntries);
+        }}
+      >
+        <ListItemIcon>
+          <TagIcon />
+        </ListItemIcon>
+        <ListItemText primary={t('core:addRemoveTags')} />
+        <MenuKeyBinding keyBinding={keyBindings['addRemoveTags']} />
+      </MenuItem>,
+    );
+  }
+
   if (
     currentLocation &&
     selectedEntries.length < 2 &&
     !(
       currentLocation.haveObjectStoreSupport() ||
       currentLocation.haveWebDavSupport() ||
+      AppConfig.isNativeMobile ||
       AppConfig.isWeb
     ) &&
     showInFileManager
@@ -212,140 +235,47 @@ export function getDirectoryMenuItems(
       </MenuItem>,
     );
   }
-  menuItems.push(<Divider key="divider1" />);
-  if (!isReadOnlyMode && !perspectiveMode) {
-    if (createNewFile) {
-      menuItems.push(
-        <MenuItem
-          key="createNewTextFile"
-          data-tid="createNewTextFileTID"
-          onClick={() => {
-            onClose();
-            createNewFile('txt');
-          }}
-        >
-          <ListItemIcon>
-            <NewFileIcon />
-          </ListItemIcon>
-          <ListItemText primary={t('core:createTextFile')} />
-        </MenuItem>,
-      );
-
-      menuItems.push(
-        <MenuItem
-          key="createNewMarkdownFile"
-          data-tid="createNewMarkdownFileTID"
-          onClick={() => {
-            onClose();
-            createNewFile('md');
-          }}
-        >
-          <ListItemIcon>
-            <MarkdownFileIcon />
-          </ListItemIcon>
-          <ListItemText primary={t('core:createMarkdown')} />
-          <InfoIcon tooltip={t('core:createMarkdownTitle')} />
-        </MenuItem>,
-      );
-      menuItems.push(
-        <MenuItem
-          key="createHTMLTextFile"
-          data-tid="createHTMLTextFileTID"
-          onClick={() => {
-            onClose();
-            createNewFile('html');
-          }}
-        >
-          <ListItemIcon>
-            <HTMLFileIcon />
-          </ListItemIcon>
-          <ListItemText primary={t('core:createRichTextFile')} />
-          <InfoIcon tooltip={t('core:createNoteTitle')} />
-        </MenuItem>,
-      );
-      menuItems.push(
-        <MenuItem
-          key="createNewLinkFile"
-          data-tid="createNewLinkFileTID"
-          onClick={() => {
-            onClose();
-            createNewFile('url');
-          }}
-        >
-          <ListItemIcon>
-            <LinkFileIcon />
-          </ListItemIcon>
-          <ListItemText primary={t('core:createLinkFile')} />
-        </MenuItem>,
-      );
-    }
-    if (createNewAudio) {
-      menuItems.push(
-        <MenuItem
-          key="createNewAudio"
-          data-tid="createNewAudioTID"
-          disabled={!Pro}
-          onClick={() => {
-            onClose();
-            createNewAudio();
-          }}
-        >
-          <ListItemIcon>
-            <AudioRecordIcon />
-          </ListItemIcon>
-          <ListItemText
-            primary={
-              <>
-                {t('core:newAudioRecording')}
-                {!Pro && <ProLabel />}
-              </>
-            }
-          />
-        </MenuItem>,
-      );
-    }
-    if (showCreateDirectoryDialog) {
-      menuItems.push(<Divider key="divider2" />);
-      menuItems.push(
-        <MenuItem
-          key="newSubDirectory"
-          data-tid="newSubDirectory"
-          onClick={() => {
-            onClose();
-            showCreateDirectoryDialog();
-          }}
-        >
-          <ListItemIcon>
-            <NewFolderIcon />
-          </ListItemIcon>
-          <ListItemText primary={t('core:newSubdirectory')} />
-        </MenuItem>,
-      );
-    }
-    if (addExistingFile) {
-      menuItems.push(
-        <MenuItem
-          key="addExistingFile"
-          data-tid="addExistingFile"
-          onClick={() => {
-            onClose();
-            addExistingFile();
-          }}
-        >
-          <ListItemIcon>
-            <AddExistingFileIcon />
-          </ListItemIcon>
-          <ListItemText primary={t('core:addFiles')} />
-        </MenuItem>,
-      );
-    }
+  menuItems.push(<Divider key={`divider-${menuItems.length}`} />);
+  // All create/add actions (new text/markdown/rich-text/link/template/audio
+  // file, new subfolder, add from device) are grouped into a single "New ▸"
+  // submenu — see NewSubMenu. It owns its own submenu state, so it's pushed as
+  // one self-contained element.
+  if (
+    !isReadOnlyMode &&
+    !perspectiveMode &&
+    (createNewFile ||
+      createNewAudio ||
+      showCreateDirectoryDialog ||
+      addExistingFile ||
+      cameraTakePicture)
+  ) {
+    menuItems.push(
+      <NewSubMenu
+        key="newSubMenu"
+        onClose={onClose}
+        t={t}
+        createNewFile={createNewFile}
+        createNewAudio={createNewAudio}
+        showCreateDirectoryDialog={showCreateDirectoryDialog}
+        addExistingFile={addExistingFile}
+        cameraTakePicture={cameraTakePicture}
+      />,
+    );
   }
-  if (Pro && !isReadOnlyMode && selectedEntries.length < 2) {
-    if (setFolderThumbnail && perspectiveMode) {
+  if (selectedEntries.length < 2) {
+    menuItems.push(<Divider key={`divider-${menuItems.length}`} />);
+    if (
+      !hideProFeatures &&
+      Pro &&
+      !isReadOnlyMode &&
+      setFolderThumbnail &&
+      perspectiveMode
+    ) {
       menuItems.push(
         <MenuItem
           key="setAsThumb"
           data-tid="setAsThumbTID"
+          disabled={!Pro}
           onClick={() => {
             onClose();
             setFolderThumbnail();
@@ -353,16 +283,18 @@ export function getDirectoryMenuItems(
         >
           <ListItemIcon>
             <CopyPictureIcon />
+            {!Pro && <ProLabel />}
           </ListItemIcon>
           <ListItemText primary={t('core:setAsParentFolderThumbnail')} />
         </MenuItem>,
       );
     }
-    if (changeFolderThumbnail) {
+    if (!hideProFeatures && Pro && !isReadOnlyMode && changeFolderThumbnail) {
       menuItems.push(
         <MenuItem
           key="changeThumb"
           data-tid="changeThumbTID"
+          disabled={!Pro}
           onClick={() => {
             onClose();
             changeFolderThumbnail();
@@ -370,16 +302,18 @@ export function getDirectoryMenuItems(
         >
           <ListItemIcon>
             <PictureIcon />
+            {!Pro && <ProLabel />}
           </ListItemIcon>
           <ListItemText primary={t('core:changeThumbnail')} />
         </MenuItem>,
       );
     }
-    if (changeFolderBackground) {
+    if (!hideProFeatures && Pro && !isReadOnlyMode && changeFolderBackground) {
       menuItems.push(
         <MenuItem
           key="changeBackground"
           data-tid="changeBackgroundTID"
+          disabled={!Pro}
           onClick={() => {
             onClose();
             changeFolderBackground();
@@ -387,11 +321,29 @@ export function getDirectoryMenuItems(
         >
           <ListItemIcon>
             <ChangeBackgroundIcon />
+            {!Pro && <ProLabel />}
           </ListItemIcon>
           <ListItemText primary={t('core:changeBackgroundColor')} />
         </MenuItem>,
       );
     }
+  }
+  if (selectedEntries.length === 1 && copyRelativePath) {
+    menuItems.push(
+      <MenuItem
+        key="copyRelativePath"
+        data-tid="copyRelativePathTID"
+        onClick={() => {
+          onClose();
+          copyRelativePath();
+        }}
+      >
+        <ListItemIcon>
+          <LinkIcon />
+        </ListItemIcon>
+        <ListItemText primary={t('core:copyRelativePath')} />
+      </MenuItem>,
+    );
   }
   if (selectedEntries.length === 1 && copySharingLink) {
     menuItems.push(
@@ -411,39 +363,15 @@ export function getDirectoryMenuItems(
     );
   }
 
-  if (!isReadOnlyMode && showAddRemoveTagsDialog) {
+  if (!hideProFeatures && !isReadOnlyMode && extractTags) {
     menuItems.push(
       <MenuItem
-        key="dirMenuAddRemoveTags"
-        data-tid="dirMenuAddRemoveTags"
-        onClick={() => {
-          onClose();
-          showAddRemoveTagsDialog();
-        }}
-      >
-        <ListItemIcon>
-          <TagIcon />
-        </ListItemIcon>
-        <ListItemText primary={t('core:addRemoveTags')} />
-        <MenuKeyBinding keyBinding={keyBindings['addRemoveTags']} />
-      </MenuItem>,
-    );
-  }
-
-  if (
-    selectedEntries.length < 2 &&
-    AppConfig.isElectron &&
-    AppConfig.isMacLike &&
-    importMacTags
-  ) {
-    menuItems.push(
-      <MenuItem
-        key="importMacTags"
-        data-tid="importMacTags"
+        key="extractTags"
+        data-tid="extractTags"
         disabled={!Pro}
         onClick={() => {
           onClose();
-          importMacTags();
+          extractTags();
         }}
       >
         <ListItemIcon>
@@ -452,7 +380,7 @@ export function getDirectoryMenuItems(
         <ListItemText
           primary={
             <>
-              {t('core:importMacTags')}
+              {t('core:extractTags')}
               {!Pro && <ProLabel />}
             </>
           }
@@ -461,59 +389,8 @@ export function getDirectoryMenuItems(
     );
   }
 
-  if (AppConfig.isCordova && cameraTakePicture) {
-    // .isCordovaAndroid) {
-    menuItems.push(
-      <MenuItem
-        key="takePicture"
-        data-tid="takePicture"
-        onClick={() => {
-          onClose();
-          cameraTakePicture();
-        }}
-      >
-        <ListItemIcon>
-          <AddExistingFileIcon />
-        </ListItemIcon>
-        <ListItemText primary={t('core:cameraTakePicture')} />
-      </MenuItem>,
-    );
-  }
-  if (!perspectiveMode && switchPerspective) {
-    menuItems.push(<Divider key="divider3" />);
-    AvailablePerspectives.forEach((perspective) => {
-      let badge = <></>;
-      // if (!Pro && perspective.pro) {
-      //   badge = <ProLabel />;
-      // }
-      if (perspective.beta) {
-        badge = <BetaLabel />;
-      }
-      menuItems.push(
-        <MenuItem
-          key={perspective.key}
-          data-tid={perspective.key}
-          onClick={() => {
-            onClose();
-            switchPerspective(perspective.id);
-          }}
-        >
-          <ListItemIcon>{perspective.icon}</ListItemIcon>
-          <ListItemText
-            primary={
-              <>
-                {perspective.title}
-                {badge}
-              </>
-            }
-          />
-        </MenuItem>,
-      );
-    });
-  }
-
   if (selectedEntries.length < 2 && showProperties) {
-    menuItems.push(<Divider key="divider4" />);
+    menuItems.push(<Divider key={`divider-${menuItems.length}`} />);
     menuItems.push(
       <MenuItem
         key="showProperties"

@@ -16,70 +16,88 @@
  *
  */
 
-import React, { createContext, useEffect, useMemo } from 'react';
-import { formatDateTime4Tag } from '@tagspaces/tagspaces-common/misc';
-import { useTranslation } from 'react-i18next';
-import { useDirectoryContentContext } from '-/hooks/useDirectoryContentContext';
-import { useNotificationContext } from '-/hooks/useNotificationContext';
-import {
-  extractContainingDirectoryPath,
-  extractDirectoryName,
-  extractFileName,
-  getBackupFileDir,
-  getBackupFileLocation,
-  getMetaDirectoryPath,
-  getMetaFileLocationForFile,
-  getMetaFileLocationForDir,
-  getThumbFileLocationForFile,
-  getBgndFileLocationForDirectory,
-  getThumbFileLocationForDirectory,
-  joinPaths,
-  normalizePath,
-  extractTags,
-  cleanTrailingDirSeparator,
-  cleanFrontDirSeparator,
-  generateFileName,
-  getMetaContentFileLocation,
-} from '@tagspaces/tagspaces-common/paths';
-import { getUuid } from '@tagspaces/tagspaces-common/utils-io';
-import { actions as AppActions, AppDispatch } from '-/reducers/app';
-import { useDispatch, useSelector } from 'react-redux';
-import {
-  cleanMetaData,
-  downloadFile,
-  executePromisesInBatches,
-  mergeFsEntryMeta,
-  openDirectoryMessage,
-  openFileMessage,
-} from '-/services/utils-io';
-import { TS } from '-/tagspaces.namespace';
 import AppConfig from '-/AppConfig';
+import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
+import { useDirectoryContentContext } from '-/hooks/useDirectoryContentContext';
+import { useEditedEntryContext } from '-/hooks/useEditedEntryContext';
+import { useEditedEntryMetaContext } from '-/hooks/useEditedEntryMetaContext';
+import { useLocationIndexContext } from '-/hooks/useLocationIndexContext';
+import { useNotificationContext } from '-/hooks/useNotificationContext';
+import { usePerspectiveActionsContext } from '-/hooks/usePerspectiveActionsContext';
+import { usePlatformFacadeContext } from '-/hooks/usePlatformFacadeContext';
+import { useSelectedEntriesContext } from '-/hooks/useSelectedEntriesContext';
+import { Pro } from '-/pro';
+import { actions as AppActions, AppDispatch } from '-/reducers/app';
+import {
+  getAuthor,
+  getFileNameTagPlace,
+  getPrefixTagContainer,
+  getTagDelimiter,
+  getWarningOpeningFilesExternally,
+  isRevisionsEnabled,
+} from '-/reducers/settings';
 import {
   generateImageThumbnail,
   generateThumbnailPromise,
 } from '-/services/thumbsgenerator';
-import { base64ToBlob } from '-/utils/dom';
+import {
+  cleanMetaData,
+  downloadFile,
+  mergeFsEntryMeta,
+  openDirectoryMessage,
+  openFileMessage,
+  runConcurrent,
+} from '-/services/utils-io';
+import {
+  ClipOptions,
+  htmlToCleanHtml,
+  htmlToMarkdown,
+  isHtmlReaderable,
+} from '-/services/web-content';
+import { TS } from '-/tagspaces.namespace';
+import { CommonLocation } from '-/utils/CommonLocation';
+import { base64ToUint8Array } from '-/utils/dom';
+import { formatDateTime4Tag } from '@tagspaces/tagspaces-common/misc';
+import {
+  cleanTrailingDirSeparator,
+  extractContainingDirectoryPath,
+  extractDirectoryName,
+  extractFileName,
+  extractTags,
+  generateFileName,
+  getBackupDir,
+  getBackupFileDir,
+  getBackupFileLocation,
+  getBackupFolderLocation,
+  getBgndFileLocationForDirectory,
+  getFileLocationFromMetaFile,
+  getMetaContentFileLocation,
+  getMetaDirectoryPath,
+  getMetaFileLocationForDir,
+  getMetaFileLocationForFile,
+  getThumbFileLocationForDirectory,
+  getThumbFileLocationForFile,
+  isMeta,
+  joinPaths,
+  normalizePath,
+} from '@tagspaces/tagspaces-common/paths';
 import {
   enhanceEntry,
+  getUuid,
   loadJSONString,
 } from '@tagspaces/tagspaces-common/utils-io';
-import { useSelectedEntriesContext } from '-/hooks/useSelectedEntriesContext';
-import {
-  getFileNameTagPlace,
-  getPrefixTagContainer,
-  getWarningOpeningFilesExternally,
-} from '-/reducers/settings';
-import { usePlatformFacadeContext } from '-/hooks/usePlatformFacadeContext';
-import { useEditedEntryContext } from '-/hooks/useEditedEntryContext';
-import { useEditedEntryMetaContext } from '-/hooks/useEditedEntryMetaContext';
-import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
-import { Pro } from '-/pro';
-import { CommonLocation } from '-/utils/CommonLocation';
-import { useLocationIndexContext } from '-/hooks/useLocationIndexContext';
-import useFirstRender from '-/utils/useFirstRender';
+import React, { createContext, useMemo } from 'react';
+import { useTranslation } from 'react-i18next';
+import { useDispatch, useSelector } from 'react-redux';
 
 type IOActionsContextData = {
-  createDirectory: (directoryPath: string) => Promise<boolean>;
+  createDirectory: (
+    directoryPath: string,
+    locationID?: string,
+    reflect?: boolean,
+    open?: boolean,
+    skipSelection?: boolean,
+  ) => Promise<boolean>;
   deleteEntries: (...entries: TS.FileSystemEntry[]) => Promise<boolean>;
   deleteDirectory: (directoryPath: string) => Promise<boolean>;
   deleteFile: (filePath: string, uuid: string) => Promise<boolean>;
@@ -114,12 +132,33 @@ type IOActionsContextData = {
     targetPath: string,
     onDownloadProgress?: (progress, abort, fileName?) => void,
   ) => Promise<TS.FileSystemEntry>;
+  downloadUrlAs: (
+    url: string,
+    targetPath: string,
+    format: 'html' | 'markdown',
+    options?: {
+      extractArticle?: boolean;
+      embedImages?: boolean;
+      tags?: string;
+      stripStyles?: boolean;
+    },
+  ) => Promise<TS.FileSystemEntry>;
+  inspectUrl: (url: string) => Promise<{ readerable: boolean; isPdf: boolean }>;
+  probeContentType: (url: string) => Promise<string>;
   downloadFsEntry: (fsEntry: TS.FileSystemEntry) => void;
   uploadFilesAPI: (
     files: Array<any>,
     targetPath: string,
     onUploadProgress?: (progress, abort, fileName?) => void,
     uploadMeta?: boolean,
+    open?: boolean,
+    targetLocationId?: string,
+    sourceLocationId?: string,
+  ) => Promise<TS.FileSystemEntry[]>;
+  uploadMeta: (
+    files: string[],
+    targetPath: string,
+    onUploadProgress?: (progress, abort, fileName?) => void,
     open?: boolean,
     targetLocationId?: string,
     sourceLocationId?: string,
@@ -153,16 +192,19 @@ type IOActionsContextData = {
   saveMetaDataPromise: (
     entry: TS.FileSystemEntry,
     metaData: any,
+    reflect?: boolean,
   ) => Promise<TS.FileSystemEntryMeta>;
   getMetadata: (
     path: string,
     id: string,
     location: CommonLocation,
+    isFile: boolean,
   ) => Promise<TS.FileSystemEntryMeta>;
   getMetadataID: (
     path: string,
     id: string,
     location: CommonLocation,
+    isFile: boolean,
   ) => Promise<string>;
   saveFsEntryMeta: (
     entry: TS.FileSystemEntry,
@@ -219,6 +261,11 @@ type IOActionsContextData = {
     file: TS.OrderVisibilitySettings,
     files?: Array<TS.OrderVisibilitySettings>,
   ) => Promise<TS.FileSystemEntryMeta>;
+  reorderColumn: (
+    entry: TS.FileSystemEntry,
+    columnFiles?: TS.OrderVisibilitySettings[],
+    filePath?: string,
+  ) => Promise<TS.OrderVisibilitySettings[]>;
 };
 
 export const IOActionsContext = createContext<IOActionsContextData>({
@@ -231,8 +278,12 @@ export const IOActionsContext = createContext<IOActionsContextData>({
   copyDirs: undefined,
   copyFiles: undefined,
   downloadUrl: undefined,
+  downloadUrlAs: undefined,
+  inspectUrl: undefined,
+  probeContentType: undefined,
   downloadFsEntry: undefined,
   uploadFilesAPI: undefined,
+  uploadMeta: undefined,
   uploadFiles: undefined,
   renameDirectory: undefined,
   renameFile: undefined,
@@ -257,6 +308,7 @@ export const IOActionsContext = createContext<IOActionsContextData>({
   getDirectoryOrder: undefined,
   getFilesOrder: undefined,
   pushFileOrder: undefined,
+  reorderColumn: undefined,
 });
 
 export type IOActionsContextProviderProps = {
@@ -269,7 +321,7 @@ export const IOActionsContextProvider = ({
   const { t } = useTranslation();
   const dispatch: AppDispatch = useDispatch();
   const { showNotification } = useNotificationContext();
-  const { selectedEntries } = useSelectedEntriesContext();
+  const { selectedEntries, setSelectedEntries } = useSelectedEntriesContext();
   const {
     createDirectoryPromise,
     renameFilePromise,
@@ -286,7 +338,8 @@ export const IOActionsContextProvider = ({
     saveBinaryFilePromise,
     deleteEntriesPromise,
   } = usePlatformFacadeContext();
-  const { actions, setReflectActions } = useEditedEntryContext();
+  const { setActions } = usePerspectiveActionsContext();
+  const { setReflectActions } = useEditedEntryContext();
   const { setReflectMetaActions } = useEditedEntryMetaContext();
   const {
     currentDirectoryPath,
@@ -299,12 +352,15 @@ export const IOActionsContextProvider = ({
   const warningOpeningFilesExternally = useSelector(
     getWarningOpeningFilesExternally,
   );
+  const author = useSelector(getAuthor);
+  const revisionsEnabled = useSelector(isRevisionsEnabled);
   const prefixTagContainer = useSelector(getPrefixTagContainer);
   const filenameTagPlacedAtEnd = useSelector(getFileNameTagPlace);
-  const firstRender = useFirstRender();
+  const tagDelimiter: string = useSelector(getTagDelimiter);
+  //const firstRender = useFirstRender();
   const currentLocation = findLocation();
 
-  useEffect(() => {
+  /* useEffect(() => {
     if (!firstRender && actions && actions.length > 0) {
       for (const action of actions) {
         if (action.action === 'add') {
@@ -329,32 +385,25 @@ export const IOActionsContextProvider = ({
               );
             }
           }
-        } else if (action.action === 'update') {
-          // reflect visibility change on renamed KanBan column
-          if (
-            action.entry &&
-            !action.entry.isFile &&
-            action.entry.meta?.perspective === 'kanban'
-          ) {
-            const dirPath = extractContainingDirectoryPath(
-              action.entry.path,
-              currentLocation?.getDirSeparator(),
-            );
-            if (
-              cleanTrailingDirSeparator(
-                cleanFrontDirSeparator(currentDirectoryPath),
-              ) === cleanTrailingDirSeparator(cleanFrontDirSeparator(dirPath))
-            ) {
-              reflectRenameVisibility(action.oldEntryPath, action.entry.path);
-            }
-          }
         }
       }
     }
-  }, [actions]);
+  }, [actions]);*/
 
-  function createDirectory(directoryPath: string) {
-    return createDirectoryPromise(directoryPath)
+  function createDirectory(
+    directoryPath: string,
+    locationID?: string,
+    reflect: boolean = true,
+    open: boolean = true,
+    skipSelection: boolean = false,
+  ) {
+    return createDirectoryPromise(
+      directoryPath,
+      locationID,
+      reflect,
+      open,
+      skipSelection,
+    )
       .then((result) => {
         if (result !== undefined && result.dirPath !== undefined) {
           // eslint-disable-next-line no-param-reassign
@@ -389,13 +438,22 @@ export const IOActionsContextProvider = ({
   function deleteEntries(...entries: TS.FileSystemEntry[]): Promise<boolean> {
     if (entries && entries.length > 0) {
       return deleteEntriesPromise(...entries)
-        .then((success) => {
-          const fileNames = entries
-            .map((e) => {
-              deleteMeta(e.path, e.uuid);
-              return e.name;
-            })
-            .join(' ');
+        .then(async (success) => {
+          // Await sidecar + thumbnail + revisions cleanup before reporting the
+          // delete as complete. Previously deleteMeta() was fire-and-forget, so
+          // the delete resolved (and the UI updated) while `.ts/<name>.json` /
+          // `.ts/<name>.jpg` were still on disk or mid-deletion. Re-uploading a
+          // same-named file then raced that cleanup: uploadFile()'s
+          // "already exist, skipped" guard rejected the new thumbnail, and the
+          // lagging deleteMeta() subsequently wiped the freshly uploaded file's
+          // metadata/thumb and emitted stray `delete` reflect actions — most
+          // visibly breaking re-upload in the Kanban perspective.
+          await Promise.all(
+            entries
+              .filter((e) => e.isFile)
+              .map((e) => deleteMeta(e.path, e.uuid)),
+          );
+          const fileNames = entries.map((e) => e.name).join(' ');
           if (success) {
             showNotification(
               t('deletingEntriesSuccessful', {
@@ -519,10 +577,14 @@ export const IOActionsContextProvider = ({
   }
 
   function deleteFile(filePath: string, uuid: string) {
+    const fileName = extractFileName(
+      filePath,
+      currentLocation?.getDirSeparator(),
+    );
     return deleteEntriesPromise(currentLocation.toFsEntry(filePath, true))
       .then(() => {
         showNotification(
-          `Deleting file ${filePath} successful.`,
+          `Deleting file ${fileName} successful.`,
           'default',
           true,
         );
@@ -531,12 +593,123 @@ export const IOActionsContextProvider = ({
       .catch((error) => {
         console.log('Error while deleting file: ' + error);
         showNotification(
-          `Error while deleting file ${filePath}`,
+          `Error while deleting file ${fileName}`,
           'error',
           true,
         );
         return false;
       });
+  }
+
+  // Conservative cap: each dir IO job is a recursive walk (fs.copy on local,
+  // per-key fanout on S3). 2 keeps disk/network from thrashing while still
+  // overlapping a small dir behind a large one. Renderer doesn't accumulate
+  // per-file promises here — only one PromiseSettledResult per top-level dir.
+  const DIR_IO_CONCURRENCY = 2;
+
+  /**
+   * Shared runner for copyDirs/moveDirs. Caps concurrency, threads an abort
+   * signal through runConcurrent (clicking abort on any in-flight row stops
+   * new dirs from being picked up AND triggers the inner per-dir abort), and
+   * keeps the post-batch reflect/progress wiring identical to the original.
+   */
+  function runDirIOJobs(
+    dirPaths: Array<any>,
+    targetPath: string,
+    locationID: string,
+    onProgress: any,
+    mode: 'copy' | 'move',
+  ): Promise<boolean> {
+    const controller = new AbortController();
+
+    // Wrap onProgress so the per-row abort fn calls both the inner per-dir
+    // abort (stops the current walk where supported — fs-extra filter; S3
+    // mutes further progress) and our controller.abort (prevents new dirs
+    // from starting). Same semantics as copyFilesWithProgress.
+    const wrappedProgress = onProgress
+      ? (progress: any, innerAbort: any, fileName: any) => {
+          const combinedAbort = () => {
+            if (typeof innerAbort === 'function') {
+              try {
+                innerAbort();
+              } catch (e) {
+                console.log('inner dir abort failed:', e);
+              }
+            }
+            controller.abort();
+          };
+          onProgress(progress, combinedAbort, fileName);
+        }
+      : undefined;
+
+    return runConcurrent(
+      dirPaths,
+      ({ path, count }) => {
+        const dirName = extractDirectoryName(
+          path,
+          currentLocation?.getDirSeparator(),
+        );
+        const newDirPath = joinPaths(
+          currentLocation?.getDirSeparator(),
+          targetPath,
+          dirName,
+        );
+        const param = { path, total: count, locationID };
+        const inner =
+          mode === 'move'
+            ? moveDirectoryPromise(param, newDirPath, wrappedProgress, false)
+            : copyDirectoryPromise(param, newDirPath, wrappedProgress, false);
+        return inner.then((resolved): Promise<TS.EditAction | undefined> => {
+          if (mode === 'move') {
+            return Promise.resolve({
+              action: 'move',
+              entry: currentLocation!.toFsEntry(resolved, false),
+              oldEntryPath: path,
+            });
+          }
+          return getAllPropertiesPromise(resolved).then(
+            (fsEntry: TS.FileSystemEntry) => ({
+              action: 'add',
+              entry: fsEntry,
+            }),
+          );
+        });
+      },
+      DIR_IO_CONCURRENCY,
+      undefined,
+      controller.signal,
+    ).then((settled) => {
+      const actions: TS.EditAction[] = [];
+      for (const r of settled) {
+        if (r && r.status === 'fulfilled' && r.value) {
+          actions.push(r.value as TS.EditAction);
+        } else if (r && r.status === 'rejected') {
+          console.log(mode + ' dirs failed:', r.reason);
+        }
+      }
+      if (actions.length !== settled.length) {
+        showNotification(
+          t(
+            mode === 'move'
+              ? 'core:movingFoldersFailed'
+              : 'core:copyingFoldersFailed',
+          ),
+        );
+      }
+      // If onProgress was wired, the dialog already shows in-flight rows.
+      // If not, mirror the previous behavior of emitting a final 100/0 list
+      // so consumers without progress callbacks still see completion state.
+      if (!onProgress) {
+        const progresses = actions
+          .map((a) => a && a.entry && { path: a.entry.path, progress: 100 })
+          .filter(Boolean) as { path: string; progress: number }[];
+        if (progresses.length > 0) {
+          dispatch(AppActions.setProgresses(progresses));
+        }
+      }
+      setReflectActions(...actions);
+      return true;
+    });
   }
 
   function moveDirs(
@@ -545,51 +718,7 @@ export const IOActionsContextProvider = ({
     locationID: string,
     onProgress = undefined,
   ): Promise<boolean> {
-    const progress = dirPaths.length > 10 ? undefined : onProgress;
-    const promises = dirPaths.map(({ path, count }) => {
-      const dirName = extractDirectoryName(
-        path,
-        currentLocation?.getDirSeparator(),
-      );
-      return moveDirectoryPromise(
-        { path: path, total: count, locationID },
-        joinPaths(currentLocation?.getDirSeparator(), targetPath, dirName),
-        progress,
-        false,
-      )
-        .then((newDirPath) => {
-          // console.log('Moving dir from ' + path + ' to ' + targetPath);
-          const action: TS.EditAction = {
-            action: 'move',
-            entry: currentLocation.toFsEntry(newDirPath, false),
-            oldEntryPath: path,
-          };
-          return action;
-        })
-        .catch((err) => {
-          console.log('Moving dirs failed ', err);
-          showNotification(t('core:copyingFoldersFailed'));
-          return undefined;
-        });
-    });
-    return executePromisesInBatches(promises).then((actions) => {
-      if (!progress) {
-        const progresses = actions.map((action) =>
-          action
-            ? {
-                path: action.entry.path,
-                progress: 100,
-              }
-            : {
-                path: action.entry.path,
-                progress: 0,
-              },
-        );
-        dispatch(AppActions.setProgresses(progresses));
-      }
-      setReflectActions(...actions.filter((value) => value !== undefined));
-      return true;
-    });
+    return runDirIOJobs(dirPaths, targetPath, locationID, onProgress, 'move');
   }
 
   function moveFiles(
@@ -607,15 +736,10 @@ export const IOActionsContextProvider = ({
         location.getDirSeparator() +
         extractFileName(path, location.getDirSeparator()),
     ]);
-    return moveFilesPromise(
-      moveJobs,
-      location.uuid,
-      paths.length > 10 ? undefined : onProgress,
-      false,
-      force,
-    )
-      .then((moveArray) => {
+    return moveFilesPromise(moveJobs, location!.uuid, onProgress, false, force)
+      .then(async (moveArray) => {
         if (moveArray !== undefined && moveArray.length > 0) {
+          setSelectedEntries([]);
           const moveError = moveArray.find((err) => err instanceof Error);
           if (!moveError) {
             showNotification(t('core:filesMovedSuccessful'));
@@ -689,8 +813,25 @@ export const IOActionsContextProvider = ({
               ]);
               return true;
             });
+            // Most files have no sidecar/thumb/pdf-text. Filter to only
+            // existing ones so we don't fan out thousands of guaranteed-to-fail
+            // IPC invokes — see the symmetric prefilter in copyFiles.
+            const sourceMetaPaths = moveMetaJobs.map((j) => j[0]);
+            const existenceResults = await runConcurrent(
+              sourceMetaPaths,
+              (p) =>
+                location
+                  .checkFileExist(p)
+                  .then((exists) => Boolean(exists))
+                  .catch(() => false),
+              16,
+            );
+            const existingMoveMetaJobs = moveMetaJobs.filter((_, i) => {
+              const r = existenceResults[i];
+              return r && r.status === 'fulfilled' && r.value === true;
+            });
             return moveFilesPromise(
-              moveMetaJobs,
+              existingMoveMetaJobs,
               location.uuid,
               undefined,
               false,
@@ -706,18 +847,18 @@ export const IOActionsContextProvider = ({
               });
           } else {
             showNotification(
-              t('core:copyingFilesFailed') + ' ' + moveError.message,
+              t('core:movingFilesFailed') + ' ' + moveError.message,
             );
             return false;
           }
         } else {
-          showNotification(t('core:copyingFilesFailed'));
+          showNotification(t('core:movingFilesFailed'));
           return false;
         }
       })
       .catch((err) => {
         console.log('Moving files failed with ' + err);
-        showNotification(t('core:copyingFilesFailed'));
+        showNotification(t('core:movingFilesFailed'));
         return false;
       });
   }
@@ -728,54 +869,7 @@ export const IOActionsContextProvider = ({
     locationID: string,
     onProgress = undefined,
   ): Promise<boolean> {
-    const progress = dirPaths.length > 10 ? undefined : onProgress;
-    const promises = dirPaths.map(({ path, count }) => {
-      const dirName = extractDirectoryName(
-        path,
-        currentLocation?.getDirSeparator(),
-      );
-      return copyDirectoryPromise(
-        { path: path, total: count, locationID },
-        joinPaths(currentLocation?.getDirSeparator(), targetPath, dirName),
-        progress,
-        false,
-      )
-        .then((newDirPath) => {
-          // console.log('Copy dir from ' + path + ' to ' + targetPath);
-          return getAllPropertiesPromise(newDirPath).then(
-            (fsEntry: TS.FileSystemEntry) => {
-              const action: TS.EditAction = {
-                action: 'add',
-                entry: fsEntry, //toFsEntry(newDirPath, false),
-              };
-              return action;
-            },
-          );
-        })
-        .catch((err) => {
-          console.log('Copy dirs failed ', err);
-          showNotification(t('core:copyingFoldersFailed'));
-          return undefined;
-        });
-    });
-    return executePromisesInBatches(promises).then((actions) => {
-      if (!progress) {
-        const progresses = actions.map((action) =>
-          action
-            ? {
-                path: action.entry.path,
-                progress: 100,
-              }
-            : {
-                path: action.entry.path,
-                progress: 0,
-              },
-        );
-        dispatch(AppActions.setProgresses(progresses));
-      }
-      setReflectActions(...actions.filter((value) => value !== undefined));
-      return true;
-    });
+    return runDirIOJobs(dirPaths, targetPath, locationID, onProgress, 'copy');
   }
 
   function copyFiles(
@@ -784,13 +878,8 @@ export const IOActionsContextProvider = ({
     locationID: string,
     onProgress,
   ): Promise<boolean> {
-    return copyFilesWithProgress(
-      paths,
-      targetPath,
-      locationID,
-      paths.length > 10 ? undefined : onProgress,
-    )
-      .then((success) => {
+    return copyFilesWithProgress(paths, targetPath, locationID, onProgress)
+      .then(async (success) => {
         if (success) {
           showNotification(t('core:filesCopiedSuccessful'));
           const metaPaths = paths.flatMap((path) =>
@@ -813,10 +902,31 @@ export const IOActionsContextProvider = ({
                 ],
           );
 
+          // Most files have no sidecar/thumb. Filter to only existing ones so
+          // we don't fan out thousands of guaranteed-to-fail IPC invokes —
+          // each failed call round-trips a full-path Error string back to the
+          // renderer, which previously OOM'd V8 on 3500+ file copies.
+          const sidecarLocation = findLocation(locationID);
+          const existenceResults = sidecarLocation
+            ? await runConcurrent(
+                metaPaths,
+                (p) =>
+                  sidecarLocation
+                    .checkFileExist(p)
+                    .then((exists) => Boolean(exists))
+                    .catch(() => false),
+                16,
+              )
+            : [];
+          const existingMetaPaths = metaPaths.filter((_, i) => {
+            const r = existenceResults[i];
+            return r && r.status === 'fulfilled' && r.value === true;
+          });
+
           return copyFilesWithProgress(
-            metaPaths,
+            existingMetaPaths,
             getMetaDirectoryPath(targetPath),
-            locationID, //metaPaths.length > 10 ? undefined : onProgress,
+            locationID, //existingMetaPaths.length > 10 ? undefined : onProgress,
             false,
           )
             .then(() => {
@@ -852,7 +962,7 @@ export const IOActionsContextProvider = ({
     location
       .loadMetaDataPromise(path)
       .then((fsEntryMeta: TS.FileSystemEntryMeta) => {
-        if (fsEntryMeta.id) {
+        if (fsEntryMeta?.id && !location?.isReadOnly) {
           return saveFsEntryMeta(location.toFsEntry(path, fsEntryMeta.isFile), {
             ...fsEntryMeta,
             id: fileId,
@@ -862,17 +972,61 @@ export const IOActionsContextProvider = ({
       .catch(() => {});
   }
 
-  function fetchUrl(url: string, targetPath: string, haveProgress: boolean) {
+  /**
+   * Native HTTP GET on Capacitor (bypasses the WKWebView CORS that makes
+   * cross-origin fetch() fail with "Load failed"). The native call lives in the
+   * Capacitor IO module; this is just the platform indirection.
+   */
+  function capacitorHttpGet(
+    url: string,
+  ): Promise<{ base64: string; contentType: string }> {
+    // eslint-disable-next-line global-require
+    const ioAPI = require('-/services/io-capacitor');
+    return ioAPI.httpGet(url);
+  }
+
+  function fetchUrl(
+    url: string,
+    targetPath: string,
+    haveProgress: boolean,
+    objectStore: boolean,
+  ) {
     if (AppConfig.isElectron) {
-      return window.electronIO.ipcRenderer.invoke(
-        'fetchUrl',
-        url,
-        targetPath,
-        haveProgress,
-      );
+      // Object-store targets need the bytes back in the renderer so they can be
+      // uploaded into the bucket; local targets are streamed straight to disk in
+      // the main process. Both requests go through the Chromium network stack
+      // (browser User-Agent, no renderer CSP / server CORS limits).
+      if (objectStore) {
+        return window.electronIO.ipcRenderer
+          .invoke('fetchUrlBuffer', url)
+          .then((res) => {
+            if (res?.error) {
+              throw new Error(res.error);
+            }
+            return { arrayBuffer: () => Promise.resolve(res.data) };
+          });
+      }
+      return window.electronIO.ipcRenderer
+        .invoke('fetchUrl', url, targetPath, haveProgress)
+        .then((res) => {
+          if (res?.error) {
+            throw new Error(res.error);
+          }
+          return res;
+        });
+    }
+    if (AppConfig.isCapacitor) {
+      // WKWebView rejects cross-origin fetch() from the capacitor:// origin
+      // ("Load failed"). Route through the native HTTP plugin, which isn't bound
+      // by CORS, and expose an arrayBuffer() so saveFile() takes the same path
+      // as the web/object-store branch.
+      return capacitorHttpGet(url).then(({ base64 }) => ({
+        arrayBuffer: () => Promise.resolve(base64ToUint8Array(base64)),
+      }));
     }
     return fetch(url);
   }
+
   /**
    * @param url
    * @param targetPath
@@ -901,7 +1055,12 @@ export const IOActionsContextProvider = ({
         return saveFilePromise({ path: targetPath }, arrayBuffer, true);
       });
     }
-    return fetchUrl(url, targetPath, onDownloadProgress !== undefined)
+    return fetchUrl(
+      url,
+      targetPath,
+      onDownloadProgress !== undefined,
+      location.haveObjectStoreSupport(),
+    )
       .then((response) => saveFile(response))
       .then((fsEntry: TS.FileSystemEntry) => {
         return generateThumbnailPromise(
@@ -913,8 +1072,7 @@ export const IOActionsContextProvider = ({
           location?.getDirSeparator(),
         ).then((dataURL) => {
           if (dataURL && dataURL.length > 6) {
-            const baseString = dataURL.split(',').pop();
-            const fileContent = base64ToBlob(baseString);
+            const fileContent = base64ToUint8Array(dataURL);
             return saveBinaryFilePromise(
               {
                 path: getThumbFileLocationForFile(
@@ -937,46 +1095,207 @@ export const IOActionsContextProvider = ({
       });
   }
 
+  /**
+   * Fetch a page's HTML, bypassing CORS/CSP via the main process on Electron.
+   * Capped in size/time: the page is untrusted and fetched whole into memory.
+   */
+  function fetchPageHtml(url: string): Promise<string> {
+    if (AppConfig.isElectron) {
+      return window.electronIO.ipcRenderer
+        .invoke('fetchUrlBuffer', url, {
+          maxBytes: 50 * 1024 * 1024,
+          timeoutMs: 60000,
+        })
+        .then((res) => {
+          if (res?.error) {
+            throw new Error(res.error);
+          }
+          return new TextDecoder('utf-8').decode(res.data);
+        });
+    }
+    if (AppConfig.isCapacitor) {
+      return capacitorHttpGet(url).then(({ base64 }) =>
+        new TextDecoder('utf-8').decode(base64ToUint8Array(base64)),
+      );
+    }
+    return fetch(url).then((r) => {
+      if (!r.ok) {
+        throw new Error(`${r.status} ${r.statusText}`);
+      }
+      return r.text();
+    });
+  }
+
+  function blobToDataUrl(blob: Blob): Promise<string> {
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result as string);
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  /**
+   * Resolve an image URL to a base64 data URL (CORS/CSP-free on Electron).
+   * Image URLs come from untrusted page content, so fetch them without the app
+   * session's cookies and with size/time caps to limit SSRF/DoS exposure.
+   */
+  function fetchImageDataUrl(url: string): Promise<string | null> {
+    if (AppConfig.isElectron) {
+      return window.electronIO.ipcRenderer
+        .invoke('fetchUrlBuffer', url, {
+          omitCredentials: true,
+          maxBytes: 15 * 1024 * 1024,
+          timeoutMs: 30000,
+        })
+        .then((res) => {
+          if (res?.error || !res?.data) {
+            return null;
+          }
+          const blob = new Blob([res.data], {
+            type: res.contentType || 'application/octet-stream',
+          });
+          return blobToDataUrl(blob);
+        })
+        .catch(() => null);
+    }
+    if (AppConfig.isCapacitor) {
+      // Build the data URL straight from the native base64 body.
+      return capacitorHttpGet(url)
+        .then(({ base64, contentType }) =>
+          base64 ? `data:${contentType || 'image/*'};base64,${base64}` : null,
+        )
+        .catch(() => null);
+    }
+    return fetch(url, { credentials: 'omit' })
+      .then((r) => r.blob())
+      .then(blobToDataUrl)
+      .catch(() => null);
+  }
+
+  /**
+   * Download an HTML page and save it as cleaned HTML or Markdown (scripts
+   * stripped, images optionally inlined as data URLs, optional article
+   * extraction). Binary URLs should use downloadUrl instead.
+   */
+  function downloadUrlAs(
+    url: string,
+    targetPath: string,
+    format: 'html' | 'markdown',
+    options: {
+      extractArticle?: boolean;
+      embedImages?: boolean;
+      tags?: string;
+      stripStyles?: boolean;
+    } = {},
+  ): Promise<TS.FileSystemEntry> {
+    const opts: ClipOptions = {
+      sourceUrl: url,
+      fetchImage: fetchImageDataUrl,
+      extractArticle: options.extractArticle,
+      embedImages: options.embedImages,
+      tags: options.tags,
+      stripStyles: options.stripStyles,
+      scrappedOn: new Date().toISOString(),
+    };
+    return fetchPageHtml(url)
+      .then((html) =>
+        format === 'markdown'
+          ? htmlToMarkdown(html, opts)
+          : htmlToCleanHtml(html, opts),
+      )
+      .then((content) =>
+        saveTextFilePromise({ path: targetPath }, content, true),
+      );
+  }
+
+  /**
+   * Cheaply probe a URL's Content-Type (headers only) to recognize PDFs/images
+   * served from extension-less URLs (e.g. arxiv.org/pdf/...). Returns '' on
+   * failure or where it isn't supported (web).
+   */
+  function probeContentType(url: string): Promise<string> {
+    if (AppConfig.isElectron) {
+      return window.electronIO.ipcRenderer
+        .invoke('probeContentType', url)
+        .then((res) => (res?.error ? '' : res?.contentType || ''))
+        .catch(() => '');
+    }
+    if (AppConfig.isCapacitor) {
+      // eslint-disable-next-line global-require
+      const ioAPI = require('-/services/io-capacitor');
+      return ioAPI
+        .httpHead(url)
+        .then((res: { contentType?: string }) => res?.contentType || '')
+        .catch(() => '');
+    }
+    return Promise.resolve('');
+  }
+
+  /**
+   * Fetch a page and report whether it's a parseable article (Readability) and
+   * whether the body is actually a PDF (magic bytes) — used to gate the
+   * HTML/Markdown conversion options, which only make sense for real HTML.
+   */
+  function inspectUrl(
+    url: string,
+  ): Promise<{ readerable: boolean; isPdf: boolean }> {
+    return fetchPageHtml(url)
+      .then((html) => ({
+        isPdf: html.slice(0, 8).startsWith('%PDF-'),
+        readerable: isHtmlReaderable(html),
+      }))
+      .catch(() => ({ readerable: false, isPdf: false }));
+  }
+
   function downloadFsEntry(fsEntry: TS.FileSystemEntry) {
     const loc = findLocation(fsEntry.locationID);
-    if (loc) {
-      if (fsEntry.isEncrypted) {
-        loc
-          .getFileContentPromise(fsEntry.path, 'arraybuffer')
-          .then((arrayBuffer) => {
-            const url = window.URL || window.webkitURL;
-            const openedEntryUrl = url.createObjectURL(new Blob([arrayBuffer]));
-            const downloadResult = downloadFile(
-              fsEntry.path,
-              openedEntryUrl,
-              currentLocation?.getDirSeparator(),
-            );
-            if (downloadResult === -1) {
-              showNotification(t('core:cantDownloadLocalFile'));
-            }
-          });
-      } else if (loc.haveObjectStoreSupport()) {
-        loc.generateURLforPath(fsEntry.path, 86400).then((url) => {
-          const downloadResult = downloadFile(
-            fsEntry.path,
-            url,
-            currentLocation?.getDirSeparator(),
-          );
-          if (downloadResult === -1) {
-            showNotification(t('core:cantDownloadLocalFile'));
-          }
-        });
-      } else {
-        const downloadResult = downloadFile(
-          fsEntry.path,
-          fsEntry.url,
-          currentLocation?.getDirSeparator(),
-        );
-        if (downloadResult === -1) {
-          showNotification(t('core:cantDownloadLocalFile'));
-        }
-      }
+    if (!loc) {
+      return;
     }
+
+    // Resolve the URL to download from, depending on the entry/location type.
+    let urlPromise: Promise<string>;
+    if (fsEntry.isEncrypted) {
+      urlPromise = loc
+        .getFileContentPromise(fsEntry.path, 'arraybuffer')
+        .then((arrayBuffer) => {
+          const url = window.URL || window.webkitURL;
+          return url.createObjectURL(new Blob([arrayBuffer]));
+        });
+    } else if (loc.haveObjectStoreSupport()) {
+      urlPromise = loc.generateURLforPath(fsEntry.path, 86400);
+    } else {
+      urlPromise = Promise.resolve(fsEntry.url);
+    }
+
+    const fileName = extractFileName(
+      fsEntry.path,
+      currentLocation?.getDirSeparator(),
+    );
+
+    urlPromise.then((url) => {
+      const downloadResult = downloadFile(
+        fsEntry.path,
+        url,
+        currentLocation?.getDirSeparator(),
+      );
+      if (downloadResult === -1) {
+        showNotification(t('core:cantDownloadLocalFile'));
+      } else if (downloadResult instanceof Promise) {
+        // Native mobile (Capacitor): confirm start, then success/failure.
+        showNotification(t('core:downloadStarted', { fileName }));
+        downloadResult
+          .then(() => {
+            showNotification(t('core:downloadSuccessful', { fileName }));
+            return true;
+          })
+          .catch((e) => {
+            showNotification(
+              t('core:downloadFileError', { message: e.message }),
+            );
+          });
+      }
+    });
   }
   /**
    * with HTML5 Files API
@@ -998,13 +1317,24 @@ export const IOActionsContextProvider = ({
     targetLocationId: string = undefined,
     sourceLocationId: string = undefined,
   ): Promise<TS.FileSystemEntry[]> {
-    if (AppConfig.isElectron || AppConfig.isCordovaiOS) {
-      const arrFiles = [];
-      for (let i = 0; i < files.length; i += 1) {
-        arrFiles.push(files[i].path);
+    // Path-based upload only works where the platform attaches a real native
+    // path to each browser File object: Electron sets it via
+    // `ipcRenderer.getPathForFile`.
+    // Capacitor's `<input type="file">` returns standard browser File objects
+    // with `file.path === undefined`, so it must take the FileReader →
+    // ArrayBuffer → saveBinaryFilePromise path below (which uses Uint8Array
+    // — make sure `blobToBase64` in io-capacitor.ts handles ArrayBuffer.isView,
+    // otherwise the writes silently produce garbage).
+    if (AppConfig.isElectron) {
+      if (onUploadProgress) {
+        for (let i = 0; i < files.length; i += 1) {
+          const key =
+            cleanTrailingDirSeparator(targetPath) + '/' + files[i].name;
+          onUploadProgress({ key: key, loaded: 0, total: 0 }, undefined);
+        }
       }
       return uploadFiles(
-        arrFiles,
+        files.map((f) => f.path),
         targetPath,
         onUploadProgress,
         uploadMeta,
@@ -1012,6 +1342,68 @@ export const IOActionsContextProvider = ({
         targetLocationId,
         sourceLocationId,
       );
+    }
+
+    // FileReader path (web / Capacitor): resolve each file's final target
+    // path up front — the same key the upload later reports progress under —
+    // and pre-register the dialog rows with it. Keying the pre-registration
+    // by the raw file name diverges from the real upload key whenever the
+    // name gets transformed below (decodeURIComponent, the mobile capture
+    // timestamp tag), leaving a stale, bar-less duplicate row in the upload
+    // dialog next to the live one.
+    const usedTargetPaths = new Set<string>();
+    const targetFilePaths = files.map((file) => {
+      let fileName = file.name;
+      try {
+        fileName = decodeURIComponent(file.name);
+      } catch (ex) {}
+      const buildPath = (name: string) => {
+        let p = joinPaths(currentLocation?.getDirSeparator(), targetPath, name);
+        if (
+          currentLocation?.haveObjectStoreSupport() &&
+          (p.startsWith('\\') || p.startsWith('/'))
+        ) {
+          p = p.substr(1);
+        }
+        return p;
+      };
+      let filePath;
+      if (
+        AppConfig.isNativeMobile &&
+        (file.type?.startsWith('image/') || file.type?.startsWith('video/'))
+      ) {
+        // Camera / photo-library captures on mobile arrive with generic,
+        // colliding names (iOS names every capture "image.jpg", videos
+        // "video.mov"), so a second capture is skipped as "already exists".
+        // Tag imported images and videos with the capture timestamp to make
+        // each import unique, e.g. "image [20260612T122345].jpg". The tag is
+        // second-resolution and the whole batch is stamped in this one pass —
+        // bump the stamp until the path is unique so multi-selected captures
+        // don't collide with each other.
+        let stamp = new Date();
+        do {
+          filePath = buildPath(
+            generateFileName(
+              fileName,
+              [formatDateTime4Tag(stamp, true)],
+              tagDelimiter,
+              currentLocation?.getDirSeparator(),
+              ' ', // space before the [tag] container → "name [tag].ext"
+              true, // place the tag at the end of the filename
+            ),
+          );
+          stamp = new Date(stamp.getTime() + 1000);
+        } while (usedTargetPaths.has(filePath));
+      } else {
+        filePath = buildPath(fileName);
+      }
+      usedTargetPaths.add(filePath);
+      return filePath;
+    });
+    if (onUploadProgress) {
+      targetFilePaths.forEach((filePath) => {
+        onUploadProgress({ key: filePath, loaded: 0, total: 0 }, undefined);
+      });
     }
 
     return new Promise(async (resolve) => {
@@ -1022,23 +1414,8 @@ export const IOActionsContextProvider = ({
       async function setupReader(inx) {
         const file = files[inx];
         const reader = new FileReader();
-        let fileName = file.name;
-        try {
-          fileName = decodeURIComponent(file.name);
-        } catch (ex) {}
-        let filePath = joinPaths(
-          currentLocation?.getDirSeparator(),
-          targetPath,
-          fileName,
-        );
-        if (
-          currentLocation?.haveObjectStoreSupport() &&
-          (filePath.startsWith('\\') || filePath.startsWith('/'))
-        ) {
-          filePath = filePath.substr(1);
-        }
         reader.onload = async (event: any) => {
-          await readerLoaded(event, inx, filePath);
+          await readerLoaded(event, inx, targetFilePaths[inx]);
         };
         reader.readAsArrayBuffer(file);
       }
@@ -1052,6 +1429,10 @@ export const IOActionsContextProvider = ({
             'warning',
             true,
           );
+          // Flip the pre-registered progress row into the warning state
+          // (-1 → warning icon with the fileExist tooltip) instead of
+          // leaving it sitting at 0% forever.
+          dispatch(AppActions.setProgress(fileTargetPath, -1, undefined));
         } else {
           const result = event.currentTarget
             ? event.currentTarget.result
@@ -1077,8 +1458,7 @@ export const IOActionsContextProvider = ({
               )
                 .then((dataURL) => {
                   if (dataURL && dataURL.length > 6) {
-                    const baseString = dataURL.split(',').pop();
-                    const fileContent = base64ToBlob(baseString);
+                    const fileContent = base64ToUint8Array(dataURL);
                     const thumbPath = getThumbFileLocationForFile(
                       fileTargetPath,
                       currentLocation?.getDirSeparator(),
@@ -1106,12 +1486,29 @@ export const IOActionsContextProvider = ({
                 };
               }
               fsEntries.push(fsEntry);
+              // Insert the imported file into the current directory listing.
+              // Unlike the Electron path (uploadFiles → setReflectActions),
+              // this Capacitor/web FileReader path previously only triggered
+              // thumbnail generation for *existing* entries, so freshly
+              // imported files were written to disk but never appeared until a
+              // manual reload — making import look broken (notably on the iOS
+              // App Documents location at "/").
+              setReflectActions({
+                action: 'add',
+                entry: fsEntry,
+                open: false,
+                source: 'upload',
+              });
               showNotification(
-                'File ' + fileTargetPath + ' successfully imported.',
+                t('core:fileImportedSuccess', {
+                  path: extractFileName(
+                    fileTargetPath,
+                    currentLocation?.getDirSeparator(),
+                  ),
+                }),
                 'default',
                 true,
               );
-              // dispatch(AppActions.reflectCreateEntry(fileTargetPath, true));
             }
           } catch (error) {
             console.log(
@@ -1143,11 +1540,12 @@ export const IOActionsContextProvider = ({
     onUploadProgress?: (progress, response) => void,
     reflect: boolean = true,
     locationID: string = undefined,
-  ) {
+    override = false,
+  ): Promise<TS.FileSystemEntry> {
     return findLocation(locationID)
       .getPropertiesPromise(filePath)
       .then((entryProps) => {
-        if (entryProps) {
+        if (entryProps && !override) {
           showNotification(
             'File with the same name already exist, importing skipped!',
             'warning',
@@ -1167,7 +1565,11 @@ export const IOActionsContextProvider = ({
               // handle meta files
               if (fileType === 'meta') {
                 try {
-                  fsEntry.meta = loadJSONString(fileContent.toString());
+                  const data =
+                    fileContent instanceof Uint8Array
+                      ? new TextDecoder('utf-8')
+                      : fileContent.toString();
+                  fsEntry.meta = loadJSONString(data);
                 } catch (e) {
                   console.debug('cannot parse entry meta');
                 }
@@ -1194,7 +1596,86 @@ export const IOActionsContextProvider = ({
       })
       .catch((err) => {
         console.log('Error getting properties', err);
+        return undefined;
       });
+  }
+
+  interface job {
+    src: string;
+    dst: string;
+    type: 'meta' | 'thumb' | 'file';
+    originalPathForThumb?: string;
+  }
+  /**
+   * Uploads the “.meta” and thumbnail files.
+   * Returns a Promise that resolves when *all* meta/thumb uploads settle.
+   */
+  function uploadMeta(
+    paths: string[],
+    targetPath: string,
+    onUploadProgress?: (progress, response) => void,
+    open = true,
+    targetLocationId: string = undefined,
+    sourceLocationId: string = undefined,
+  ): Promise<TS.FileSystemEntry[]> {
+    const metaJobs: job[] = [];
+    const targetLocation = findLocation(targetLocationId);
+
+    for (let i = 0; i < paths.length; i++) {
+      const src = paths[i];
+      let dst = joinPaths(
+        targetLocation?.getDirSeparator(),
+        targetPath,
+        extractFileName(src),
+      );
+      // meta file
+      metaJobs.push({
+        src: getMetaFileLocationForFile(src),
+        dst: getMetaFileLocationForFile(dst),
+        type: 'meta',
+      });
+
+      // thumb file
+      metaJobs.push({
+        src: getThumbFileLocationForFile(src, undefined, false),
+        dst: getThumbFileLocationForFile(dst, undefined, false),
+        type: 'thumb',
+        originalPathForThumb: src,
+      });
+    }
+    return processUploadJobs(
+      metaJobs,
+      onUploadProgress,
+      open,
+      targetLocationId,
+      sourceLocationId,
+      true,
+    ).then((entries) => {
+      if (entries && entries.length > 0) {
+        const filePaths = entries.map((entry) => {
+          return getFileLocationFromMetaFile(entry.path);
+        });
+        const unique = [...new Set(filePaths)];
+        const reflectActionsPromises: Promise<TS.EditAction>[] = unique.map(
+          (path) => {
+            return getAllPropertiesPromise(path, targetLocationId).then(
+              (entry) => {
+                return {
+                  action: 'update',
+                  entry: entry,
+                  open: false,
+                  oldEntryPath: entry.path,
+                };
+              },
+            );
+          },
+        );
+        Promise.all(reflectActionsPromises).then((reflectActions) => {
+          setReflectActions(...reflectActions);
+        });
+      }
+      return entries;
+    });
   }
 
   /**
@@ -1216,114 +1697,143 @@ export const IOActionsContextProvider = ({
     targetLocationId: string = undefined,
     sourceLocationId: string = undefined,
   ): Promise<TS.FileSystemEntry[]> {
+    const uploadJobs: job[] = [];
+    paths.map((path) => {
+      let target = joinPaths(
+        currentLocation?.getDirSeparator(),
+        targetPath,
+        extractFileName(path, AppConfig.dirSeparator),
+      );
+      uploadJobs.push({
+        src: path,
+        dst: target,
+        type: 'file',
+      });
+      if (uploadMeta) {
+        // copy meta
+        uploadJobs.push({
+          src: getMetaFileLocationForFile(path, AppConfig.dirSeparator),
+          dst: getMetaFileLocationForFile(
+            target,
+            currentLocation?.getDirSeparator(),
+          ),
+          type: 'meta',
+        });
+
+        // thumb file
+        uploadJobs.push({
+          src: getThumbFileLocationForFile(path, AppConfig.dirSeparator),
+          dst: getThumbFileLocationForFile(
+            target,
+            currentLocation?.getDirSeparator(),
+            false,
+          ),
+          type: 'thumb',
+          originalPathForThumb: path,
+        });
+      }
+      return true;
+    });
+    return processUploadJobs(
+      uploadJobs,
+      onUploadProgress,
+      open,
+      targetLocationId,
+      sourceLocationId,
+    ).then((entries) => {
+      const reflectActions: TS.EditAction[] = entries.map((entry) => ({
+        action: 'add',
+        entry: entry,
+        open: open,
+        source: 'upload',
+      }));
+      setReflectActions(...reflectActions);
+      return entries;
+    });
+  }
+
+  function processUploadJobs(
+    uploadJobs: job[],
+    onUploadProgress?: (progress, response) => void,
+    open = true,
+    targetLocationId: string = undefined,
+    sourceLocationId: string = undefined,
+    override = false,
+  ): Promise<TS.FileSystemEntry[]> {
     return new Promise((resolve, reject) => {
-      const uploadJobs = [];
-      paths.map((path) => {
-        let target = joinPaths(
-          currentLocation?.getDirSeparator(),
-          targetPath,
-          extractFileName(path, AppConfig.dirSeparator),
-        ); // with "/" dir separator cannot extractFileName on Win
-        // fix for Win
-        /*if (
-          currentLocation.haveObjectStoreSupport() &&
-          (target.startsWith('\\') || target.startsWith('/'))
-        ) {
-          target = target.substr(1);
-        }*/
-        uploadJobs.push([path, target, 'file']);
-        if (uploadMeta) {
-          // copy meta
-          uploadJobs.push([
-            getMetaFileLocationForFile(path, AppConfig.dirSeparator),
-            getMetaFileLocationForFile(
-              target,
-              currentLocation?.getDirSeparator(),
-            ),
-            'meta',
-          ]);
-          uploadJobs.push([
-            getThumbFileLocationForFile(path, AppConfig.dirSeparator),
-            getThumbFileLocationForFile(
-              target,
-              currentLocation?.getDirSeparator(),
-            ),
-            'thumb',
-            path,
-          ]);
-        }
-        return true;
-      });
-      const jobsPromises = uploadJobs.map((job) => {
-        // console.log("Selected File: "+JSON.stringify(selection.currentTarget.files[0]));
-        // const file = selection.currentTarget.files[0];
-        const filePath = job[1];
-        const fileType = job[2];
+      const jobsPromises: Promise<TS.FileSystemEntry>[] = uploadJobs.map(
+        (job) => {
+          // console.log("Selected File: "+JSON.stringify(selection.currentTarget.files[0]));
+          // const file = selection.currentTarget.files[0];
+          const filePath = job.dst;
+          const fileType = job.type;
+          const originalPathForThumb = job.originalPathForThumb;
 
-        // TODO try to replace this with <input type="file"
-        if (AppConfig.isElectron) {
-          return findLocation(sourceLocationId)
-            .getFileContentPromise(job[0], 'arraybuffer')
-            .then((fileContent) =>
-              uploadFile(
-                filePath,
-                fileType,
-                fileContent,
-                onUploadProgress,
-                false,
-                targetLocationId,
-              ),
-            )
-            .catch((err) => {
-              if (
-                err &&
-                err.message &&
-                err.message.indexOf(
-                  'Error: EISDIR: illegal operation on a directory, read',
-                ) > -1
-              ) {
-                const errorMessage = t('core:uploadDirsNotSupported');
-                showNotification(errorMessage, 'warning', true);
-                dispatch(AppActions.setProgress(filePath, -1, errorMessage));
-              }
-              // console.log('Error getting file:' + job[0] + ' ' + err);
-              if (fileType === 'thumb' && job[3]) {
-                return generateThumbnailPromise(
-                  job[3],
-                  0,
-                  currentLocation.loadTextFilePromise,
-                  currentLocation.getFileContentPromise,
-                  currentLocation.getThumbPath,
-                  currentLocation?.getDirSeparator(),
-                ).then((dataURL) => {
-                  if (dataURL && dataURL.length > 6) {
-                    const baseString = dataURL.split(',').pop();
-                    const fileContent = base64ToBlob(baseString);
-                    return uploadFile(
-                      filePath,
-                      fileType,
-                      fileContent,
-                      onUploadProgress,
-                      false,
-                      targetLocationId,
-                    );
-                  }
-                  return undefined;
-                });
-              }
-            });
-        }
+          // TODO try to replace this with <input type="file"
+          if (AppConfig.isElectron) {
+            return findLocation(sourceLocationId)
+              .getFileContentPromise(job.src, 'arraybuffer')
+              .then((fileContent) =>
+                uploadFile(
+                  filePath,
+                  fileType,
+                  fileContent,
+                  onUploadProgress,
+                  false,
+                  targetLocationId,
+                  override,
+                ),
+              )
+              .catch((err) => {
+                if (
+                  err &&
+                  err.message &&
+                  err.message.indexOf(
+                    'Error: EISDIR: illegal operation on a directory, read',
+                  ) > -1
+                ) {
+                  const errorMessage = t('core:uploadDirsNotSupported');
+                  showNotification(errorMessage, 'warning', true);
+                  dispatch(AppActions.setProgress(filePath, -1, errorMessage));
+                }
+                if (fileType === 'thumb' && originalPathForThumb) {
+                  return generateThumbnailPromise(
+                    originalPathForThumb,
+                    0,
+                    currentLocation.loadTextFilePromise,
+                    currentLocation.getFileContentPromise,
+                    currentLocation.getThumbPath,
+                    currentLocation.getDirSeparator(),
+                  ).then((dataURL) => {
+                    if (dataURL && dataURL.length > 6) {
+                      const fileContent = base64ToUint8Array(dataURL);
+                      return uploadFile(
+                        filePath,
+                        fileType,
+                        fileContent,
+                        onUploadProgress,
+                        false,
+                        targetLocationId,
+                        override,
+                      );
+                    }
+                    return undefined;
+                  });
+                }
+              });
+          }
 
-        return undefined;
-      });
+          return undefined;
+        },
+      );
       Promise.allSettled(jobsPromises)
         .then((filesProm) => {
-          const arrFiles: Array<TS.FileSystemEntry> = [];
-          const arrMeta: Array<TS.FileSystemEntry> = [];
+          const arrFiles: TS.FileSystemEntry[] = [];
+          const arrMeta: TS.FileSystemEntry[] = [];
 
           filesProm.map((result) => {
             if (result.status !== 'rejected') {
-              const file = result.value;
+              const file: TS.FileSystemEntry = result.value;
               if (file) {
                 if (file.meta) {
                   arrMeta.push(file);
@@ -1346,7 +1856,7 @@ export const IOActionsContextProvider = ({
             );
 
             // Enhance entries
-            const entriesEnhanced = arrFiles.map(
+            const entriesEnhanced: Promise<TS.FileSystemEntry>[] = arrFiles.map(
               async (file: TS.FileSystemEntry) => {
                 const metaFilePath = getMetaFileLocationForFile(
                   file.path,
@@ -1382,28 +1892,21 @@ export const IOActionsContextProvider = ({
                   }
                 }
                 if (file.meta) {
-                  return enhanceEntry(
+                  const enhancedEntry: TS.FileSystemEntry = enhanceEntry(
                     file,
-                    AppConfig.tagDelimiter,
+                    tagDelimiter,
                     currentLocation?.getDirSeparator(),
                   );
+                  return enhancedEntry;
                 }
                 return file;
               },
             );
             Promise.all(entriesEnhanced).then((entries) => {
-              const reflectActions: TS.EditAction[] = entries.map((entry) => ({
-                action: 'add',
-                entry: entry,
-                open: open,
-                source: 'upload',
-              }));
-              setReflectActions(...reflectActions);
               resolve(entries);
             });
           } else {
-            // eslint-disable-next-line prefer-promise-reject-errors
-            reject('Upload failed');
+            reject(undefined);
           }
           return true;
         })
@@ -1440,11 +1943,17 @@ export const IOActionsContextProvider = ({
       })
       .catch((error) => {
         console.log('Error while renaming directory: ' + error);
+        const reason =
+          typeof error === 'string' ? error : error?.message || String(error);
+        const targetExists = /exists\. Renaming of/i.test(reason);
+        const dirName = extractDirectoryName(
+          directoryPath,
+          currentLocation?.getDirSeparator(),
+        );
         showNotification(
-          `Error renaming directory '${extractDirectoryName(
-            directoryPath,
-            currentLocation?.getDirSeparator(),
-          )}'`,
+          targetExists
+            ? `Cannot rename '${dirName}': a directory with the new name already exists.`
+            : `Error renaming directory '${dirName}': ${reason}`,
           'error',
           true,
         );
@@ -1567,7 +2076,7 @@ export const IOActionsContextProvider = ({
 
   function openFsEntryNatively(fsEntry: TS.FileSystemEntry) {
     if (fsEntry.isFile) {
-      if (AppConfig.isCordova) {
+      if (AppConfig.isNativeMobile) {
         currentLocation.openFile(fsEntry);
       } else {
         openFileMessage(fsEntry.path, warningOpeningFilesExternally);
@@ -1591,7 +2100,7 @@ export const IOActionsContextProvider = ({
 
       const extractedTags = extractTags(
         selectedFilePath,
-        AppConfig.tagDelimiter,
+        tagDelimiter,
         currentLocation?.getDirSeparator(),
       );
       extractedTags.push('copy');
@@ -1603,7 +2112,7 @@ export const IOActionsContextProvider = ({
         generateFileName(
           fileName,
           extractedTags,
-          AppConfig.tagDelimiter,
+          tagDelimiter,
           currentLocation?.getDirSeparator(),
           prefixTagContainer,
           filenameTagPlacedAtEnd,
@@ -1615,10 +2124,12 @@ export const IOActionsContextProvider = ({
           return openDirectory(dirPath);
         })*/
         .catch((error) => {
-          showNotification('Error creating duplicate: ' + error.message);
+          showNotification(
+            t('core:errorCreatingDuplicate', { message: error.message }),
+          );
         });
     } else {
-      showNotification('Unable to duplicate, no file selected');
+      showNotification(t('core:unableToDuplicateNoFile'));
     }
   }
 
@@ -1643,6 +2154,7 @@ export const IOActionsContextProvider = ({
   async function saveMetaDataPromise(
     entry: TS.FileSystemEntry,
     metaData: any,
+    reflect = true,
   ): Promise<TS.FileSystemEntryMeta> {
     const location = findLocation(entry.locationID);
     //const cleanedMetaData = cleanMetaData(metaData);
@@ -1663,7 +2175,13 @@ export const IOActionsContextProvider = ({
         );
         const metaExist = await location.getPropertiesPromise(metaFolder);
         if (!metaExist) {
-          await createDirectoryPromise(metaFolder, location.uuid);
+          try {
+            await createDirectoryPromise(metaFolder, location.uuid);
+          } catch (err) {
+            // e.g. EPERM inside macOS .app bundles or other protected folders
+            console.log('Cannot create meta folder ' + metaFolder + ': ' + err);
+            return undefined;
+          }
         }
       } else {
         // check and create meta folder if not exist
@@ -1675,7 +2193,19 @@ export const IOActionsContextProvider = ({
         const metaDirectoryProperties =
           await location.getPropertiesPromise(metaDirectoryPath);
         if (!metaDirectoryProperties) {
-          await createDirectoryPromise(metaDirectoryPath, location.uuid, false);
+          try {
+            await createDirectoryPromise(
+              metaDirectoryPath,
+              location.uuid,
+              false,
+            );
+          } catch (err) {
+            // e.g. EPERM inside macOS .app bundles or other protected folders
+            console.log(
+              'Cannot create meta folder ' + metaDirectoryPath + ': ' + err,
+            );
+            return undefined;
+          }
         }
 
         metaFilePath = getMetaFileLocationForDir(
@@ -1684,11 +2214,11 @@ export const IOActionsContextProvider = ({
         );
       }
       const meta = mergeFsEntryMeta(metaData);
-      const content = JSON.stringify(cleanMetaData(meta));
+      const content = JSON.stringify(cleanMetaData(meta), null, 2);
       return saveTextFilePromise(
         { path: metaFilePath, locationID: entry.locationID },
         content,
-        true,
+        reflect,
       )
         .then((success) => {
           if (success) {
@@ -1698,7 +2228,11 @@ export const IOActionsContextProvider = ({
         })
         .catch((err) => {
           console.log('Error ' + entry.path + ' with ' + err);
-          showNotification('Error: ' + err.message, 'error', true);
+          showNotification(
+            t('core:genericError', { message: err.message }),
+            'error',
+            true,
+          );
           return undefined;
         });
     }
@@ -1714,79 +2248,131 @@ export const IOActionsContextProvider = ({
     path: string,
     id: string,
     location: CommonLocation,
+    isFile: boolean,
   ): Promise<string> {
-    return getMetadata(path, id, location).then((metaData) => metaData.id);
+    return getMetadata(path, id, location, isFile)
+      .then((metaData) => metaData.id)
+      .catch((err) => {
+        console.log('Error getting metadata id: ' + err);
+        return '';
+      });
   }
 
   function getMetadata(
     path: string,
     id: string,
     location: CommonLocation,
+    isFile: boolean,
   ): Promise<TS.FileSystemEntryMeta> {
+    const isMetaPath =
+      path.indexOf(location.getDirSeparator() + AppConfig.metaFolder) !== -1 ||
+      path.indexOf(AppConfig.metaFolder + location.getDirSeparator()) !== -1;
+
     return location
       .loadMetaDataPromise(path)
       .then((fsEntryMeta: TS.FileSystemEntryMeta) => {
-        if (fsEntryMeta.id) {
+        if (fsEntryMeta?.id) {
           return fsEntryMeta;
-        } else {
-          return saveFsEntryMeta(location.toFsEntry(path, fsEntryMeta.isFile), {
+        } else if (!location.isReadOnly) {
+          // meta exists but has no id — save it with the id
+          return saveFsEntryMeta(location.toFsEntry(path, isFile), {
             ...fsEntryMeta,
             id: id,
-          }).then((fsEntryMeta) => fsEntryMeta);
-        }
-      })
-      .catch(() => {
-        if (
-          path.indexOf(location.getDirSeparator() + AppConfig.metaFolder) === -1
-        ) {
-          // create new meta id to not be changed -> next time listDirectory will get the same id for the file from meta
-          const mataData = { id: id };
-          const metaFilePath = path.endsWith(location.getDirSeparator())
-            ? getMetaFileLocationForDir(path, location.getDirSeparator())
-            : getMetaFileLocationForFile(path, location.getDirSeparator());
-
-          return saveTextFilePromise(
-            { path: metaFilePath, locationID: location.uuid },
-            JSON.stringify(mataData),
-            true,
-          )
-            .then(() => mataData)
-            .catch((e) => {
-              console.error(e);
-              return mataData;
-            });
+          })
+            .then((meta) => meta ?? { id: id })
+            .catch(() => ({ id: id }));
         } else {
           return { id: id };
         }
+      })
+      .catch(() => {
+        // loadMetaDataPromise throws when no meta file exists yet
+        if (!isMetaPath && !location.isReadOnly) {
+          // create new meta sidecar so id is persisted across sessions
+          return saveFsEntryMeta(location.toFsEntry(path, isFile), { id: id })
+            .then((meta) => meta ?? { id: id })
+            .catch(() => ({ id: id }));
+        }
+        return { id: id };
       });
   }
-
-  /*function createFsEntryMeta(
-    entry: TS.FileSystemEntry,
-    props: any = {},
-  ): Promise<string> {
-    const newFsEntryMeta: TS.FileSystemEntryMeta = mergeFsEntryMeta(props);
-    return saveMetaDataPromise(entry, newFsEntryMeta)
-      .then(() => newFsEntryMeta.id)
-      .catch((error) => {
-        console.log(
-          'Error saveMetaDataPromise for ' +
-            entry.path +
-            ' orphan id: ' +
-            newFsEntryMeta.id,
-          error,
-        );
-        return newFsEntryMeta.id;
-      });
-  }*/
 
   function saveFsEntryMeta(
     entry: TS.FileSystemEntry,
     meta: any,
   ): Promise<TS.FileSystemEntryMeta> {
-    return findLocation(entry.locationID)
+    const location = findLocation(entry.locationID);
+    if (location?.isReadOnly) {
+      return Promise.resolve(undefined);
+    }
+    return location
       .loadMetaDataPromise(entry.path)
       .then((fsEntryMeta) => {
+        if (
+          Pro &&
+          revisionsEnabled &&
+          !isMeta(entry.path) &&
+          meta.description !== undefined
+        ) {
+          const uuid = entry.isFile ? entry.uuid : entry.meta?.id;
+          getMetadataID(entry.path, uuid, location, entry.isFile).then((id) => {
+            if (fsEntryMeta && fsEntryMeta.description) {
+              const backupDir = getBackupDir(entry);
+              location.listDirectoryPromise(backupDir, []).then((backup) => {
+                const haveBackup = backup.some((b) =>
+                  b.path.endsWith(AppConfig.sidecarRevisionExtension),
+                );
+                if (!haveBackup) {
+                  // init description
+                  const targetPath = entry.isFile
+                    ? getBackupFileLocation(
+                        entry.path,
+                        id,
+                        location.getDirSeparator(),
+                      )
+                    : getBackupFolderLocation(
+                        entry.path,
+                        id,
+                        location.getDirSeparator(),
+                      );
+                  saveTextFilePromise(
+                    {
+                      path: targetPath + AppConfig.sidecarRevisionExtension,
+                      locationID: entry.locationID,
+                    },
+                    JSON.stringify({ description: fsEntryMeta?.description }),
+                    false,
+                  );
+                }
+              });
+            }
+            // wait 5ms in order ot get older timestamp
+            setTimeout(() => {
+              const targetPath = entry.isFile
+                ? getBackupFileLocation(
+                    entry.path,
+                    id,
+                    location.getDirSeparator(),
+                  )
+                : getBackupFolderLocation(
+                    entry.path,
+                    id,
+                    location.getDirSeparator(),
+                  );
+              saveTextFilePromise(
+                {
+                  path: targetPath + AppConfig.sidecarRevisionExtension,
+                  locationID: entry.locationID,
+                },
+                JSON.stringify({
+                  description: meta.description,
+                  ...(author && { author: author }),
+                }),
+                false,
+              );
+            }, 5);
+          });
+        }
         return saveMetaDataPromise(entry, {
           ...fsEntryMeta,
           ...meta,
@@ -2006,20 +2592,28 @@ export const IOActionsContextProvider = ({
   }
 
   function setThumbnailImageChange(entry: TS.FileSystemEntry) {
+    const location = findLocation(entry.locationID);
     if (
-      currentLocation?.haveObjectStoreSupport() ||
-      currentLocation?.haveWebDavSupport()
+      location &&
+      (location?.haveObjectStoreSupport() || location?.haveWebDavSupport())
     ) {
       // reload cache
-      const folderThumbPath = getThumbFileLocationForDirectory(
-        entry.path,
-        currentLocation?.getDirSeparator(),
-      );
-      currentLocation
-        .generateURLforPath(folderThumbPath, 604800)
-        .then(() => setThumbnailImageChangeAction(entry));
+      if (entry.isFile) {
+        location.delUrlCache(entry.meta.thumbPath);
+        setThumbnailImageChangeAction(entry);
+      } else {
+        // reload cache for folder
+        const folderThumbPath = getThumbFileLocationForDirectory(
+          entry.path,
+          location?.getDirSeparator(),
+        );
+        location
+          .generateURLforPath(folderThumbPath, 604800)
+          .then(() => setThumbnailImageChangeAction(entry));
+      }
+    } else {
+      setThumbnailImageChangeAction(entry);
     }
-    setThumbnailImageChangeAction(entry);
   }
 
   function setThumbnailImageChangeAction(entry: TS.FileSystemEntry) {
@@ -2055,7 +2649,7 @@ export const IOActionsContextProvider = ({
     ) // 4K -> 3840, 2K -> 2560
       .then((base64Image) => {
         if (base64Image) {
-          const data = base64ToBlob(base64Image.split(',').pop());
+          const data = base64ToUint8Array(base64Image);
           return saveBinaryFilePromise({ path: folderBgndPath }, data, true)
             .then(() => {
               // props.setLastBackgroundImageChange(new Date().getTime());
@@ -2070,6 +2664,45 @@ export const IOActionsContextProvider = ({
       .catch((error) => {
         console.log('Background generation failed ', error);
         return Promise.reject(error);
+      });
+  }
+
+  /**
+   *
+   * @param entry
+   * @param columnFiles if = undefined toTop ordered
+   * @param filePath
+   */
+  function reorderColumn(
+    entry: TS.FileSystemEntry,
+    columnFiles: TS.OrderVisibilitySettings[] = undefined,
+    filePath = undefined,
+  ): Promise<TS.OrderVisibilitySettings[]> {
+    const dirPath = extractContainingDirectoryPath(
+      filePath ? filePath : entry.path,
+    );
+
+    return pushFileOrder(
+      dirPath,
+      {
+        uuid: entry.uuid,
+        name: extractFileName(entry.path, currentLocation?.getDirSeparator()),
+      },
+      columnFiles,
+    )
+      .then((updatedFsEntryMeta) => {
+        return saveCurrentLocationMetaData(dirPath, updatedFsEntryMeta)
+          .then(() => {
+            return updatedFsEntryMeta.customOrder.files;
+          })
+          .catch((err) => {
+            console.log('Error adding files for ' + dirPath + ' with ' + err);
+            return undefined;
+          });
+      })
+      .catch((error) => {
+        console.log('Error reorderTop ' + error);
+        return undefined;
       });
   }
 
@@ -2090,11 +2723,8 @@ export const IOActionsContextProvider = ({
                 if (folders) {
                   setCurrentDirectoryDirs(folders);
                 }
-                /* const action: TS.KanBanMetaActions = {
-                  action: 'directoryVisibilityChange',
-                  meta: updatedFsEntryMeta,
-                };
-                setReflectKanBanActions(action);*/
+                const action: TS.PerspectiveActions = { action: 'reload' };
+                setActions(action);
               })
               .catch((err) => {
                 console.log(
@@ -2116,8 +2746,7 @@ export const IOActionsContextProvider = ({
     currentDirPath: string,
     dir: TS.OrderVisibilitySettings,
   ): Promise<TS.FileSystemEntryMeta> {
-    return currentLocation
-      .loadMetaDataPromise(currentDirPath)
+    return getMetadata(currentDirPath, dir.uuid, currentLocation, false)
       .then((fsEntryMeta) => {
         const customOrder: TS.CustomOrder = fsEntryMeta.customOrder
           ? fsEntryMeta.customOrder
@@ -2153,64 +2782,63 @@ export const IOActionsContextProvider = ({
     oldDirPath: string,
     newDirPath: string,
   ): void {
-    const parentDirectory = extractContainingDirectoryPath(
-      //extractParentDirectoryPath(
-      oldDirPath,
-      currentLocation?.getDirSeparator(),
-    );
-    const oldDir = extractDirectoryName(
-      oldDirPath,
-      currentLocation?.getDirSeparator(),
-    );
-    currentLocation
-      .loadMetaDataPromise(parentDirectory)
-      .then((fsEntryMeta) => {
-        const customOrder: TS.CustomOrder = fsEntryMeta.customOrder
-          ? fsEntryMeta.customOrder
-          : {};
+    if (oldDirPath !== newDirPath) {
+      const parentDirectory = extractContainingDirectoryPath(
+        //extractParentDirectoryPath(
+        oldDirPath,
+        currentLocation?.getDirSeparator(),
+      );
+      const oldDir = extractDirectoryName(
+        oldDirPath,
+        currentLocation?.getDirSeparator(),
+      );
+      currentLocation
+        .loadMetaDataPromise(parentDirectory)
+        .then((fsEntryMeta) => {
+          const customOrder: TS.CustomOrder = fsEntryMeta.customOrder
+            ? fsEntryMeta.customOrder
+            : {};
 
-        //let dirs: TS.OrderVisibilitySettings[] = [dir];
-        if (customOrder.folders && customOrder.folders.length > 0) {
-          const index = customOrder.folders.findIndex(
-            (col) => col.name === oldDir,
-          );
-          if (index !== -1) {
-            const newDir = extractDirectoryName(
-              newDirPath,
-              currentLocation?.getDirSeparator(),
+          //let dirs: TS.OrderVisibilitySettings[] = [dir];
+          if (customOrder.folders && customOrder.folders.length > 0) {
+            const index = customOrder.folders.findIndex(
+              (col) => col.name === oldDir,
             );
-            customOrder.folders[index] = {
-              ...customOrder.folders[index],
-              name: newDir,
-            };
-            const updatedFsEntryMeta = {
-              ...fsEntryMeta,
-              customOrder: { ...customOrder, folders: customOrder.folders },
-            };
+            if (index !== -1) {
+              const newDir = extractDirectoryName(
+                newDirPath,
+                currentLocation?.getDirSeparator(),
+              );
+              customOrder.folders[index] = {
+                ...customOrder.folders[index],
+                name: newDir,
+              };
+              const updatedFsEntryMeta = {
+                ...fsEntryMeta,
+                customOrder: { ...customOrder, folders: customOrder.folders },
+              };
 
-            saveCurrentLocationMetaData(parentDirectory, updatedFsEntryMeta)
-              .then(() => {
-                const folders = updatedFsEntryMeta.customOrder?.folders;
-                if (folders) {
-                  setCurrentDirectoryDirs(folders);
-                }
-                /*const action: TS.KanBanMetaActions = {
-                  action: 'directoryVisibilityChange',
-                  meta: updatedFsEntryMeta,
-                };
-                setReflectKanBanActions(action);*/
-              })
-              .catch((err) => {
-                console.log(
-                  'Error adding dirs for ' + parentDirectory + ' with ' + err,
-                );
-              });
+              saveCurrentLocationMetaData(parentDirectory, updatedFsEntryMeta)
+                .then(() => {
+                  const folders = updatedFsEntryMeta.customOrder?.folders;
+                  if (folders) {
+                    setCurrentDirectoryDirs(folders);
+                  }
+                  const action: TS.PerspectiveActions = { action: 'reload' };
+                  setActions(action);
+                })
+                .catch((err) => {
+                  console.log(
+                    'Error adding dirs for ' + parentDirectory + ' with ' + err,
+                  );
+                });
+            }
           }
-        }
-      })
-      .catch((ex) => {
-        console.log(ex);
-      });
+        })
+        .catch((ex) => {
+          console.log(ex);
+        });
+    }
   }
 
   function getDirectoryOrder(
@@ -2244,10 +2872,12 @@ export const IOActionsContextProvider = ({
     entry: TS.FileSystemEntry,
     filesArray: Array<TS.FileSystemEntry>,
   ): Promise<TS.FileSystemEntryMeta> {
-    const files: Array<TS.OrderVisibilitySettings> = filesArray.map((file) => ({
-      uuid: file.uuid,
-      name: file.name,
-    }));
+    const files: Array<TS.OrderVisibilitySettings> = filesArray
+      .filter((f) => f.isFile)
+      .map((file) => ({
+        uuid: file.uuid,
+        name: file.name,
+      }));
     return currentLocation
       .loadMetaDataPromise(entry.path)
       .then((fsEntryMeta) => {
@@ -2325,9 +2955,13 @@ export const IOActionsContextProvider = ({
       copyDirs,
       copyFiles,
       downloadUrl,
+      downloadUrlAs,
+      inspectUrl,
+      probeContentType,
       downloadFsEntry,
       uploadFilesAPI,
       uploadFiles,
+      uploadMeta,
       renameDirectory,
       renameFile,
       openFileNatively,
@@ -2351,6 +2985,7 @@ export const IOActionsContextProvider = ({
       getDirectoryOrder,
       getFilesOrder,
       pushFileOrder,
+      reorderColumn,
     };
   }, [
     warningOpeningFilesExternally,

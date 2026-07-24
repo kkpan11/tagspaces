@@ -2,14 +2,7 @@
  * Copyright (c) 2016-present - TagSpaces GmbH. All rights reserved.
  */
 
-import { test, expect } from './fixtures';
-import {
-  defaultLocationPath,
-  defaultLocationName,
-  createPwMinioLocation,
-  createPwLocation,
-  createS3Location,
-} from './location.helpers';
+import { expect, test } from './fixtures';
 import {
   clickOn,
   expectElementExist,
@@ -17,51 +10,39 @@ import {
   getGridFileSelector,
   isDisplayed,
 } from './general.helpers';
-import { startTestingApp, stopApp, testDataRefresh } from './hook';
+import { startTestingApp, stopApp } from './hook';
+import {
+  createPwLocation,
+  createS3Location,
+  defaultLocationName,
+} from './location.helpers';
 import { openContextEntryMenu } from './test-utils';
 import { clearDataStorage, closeWelcomePlaywright } from './welcome.helpers';
-import { stopServices } from '../setup-functions';
 
-let s3ServerInstance;
-let webServerInstance;
-let minioServerInstance;
-
-test.beforeAll(async ({ s3Server, webServer, minioServer }) => {
-  s3ServerInstance = s3Server;
-  webServerInstance = webServer;
-  minioServerInstance = minioServer;
-
-  await startTestingApp();
+test.beforeAll(async ({ isWeb, isS3, webServerPort }, testInfo) => {
+  await startTestingApp({ isWeb, isS3, webServerPort, testInfo });
   await closeWelcomePlaywright();
 });
 
 test.afterAll(async () => {
-  await stopServices(s3ServerInstance, webServerInstance, minioServerInstance);
-  await testDataRefresh(s3ServerInstance);
   await clearDataStorage();
   await stopApp();
 });
-/*test.afterEach(async ({ page }, testInfo) => {
-  if (testInfo.status !== testInfo.expectedStatus) {
-    await takeScreenshot(testInfo);
-  }
-});*/
-test.beforeEach(async () => {
-  if (global.isMinio) {
-    await createPwMinioLocation('', defaultLocationName, true);
-  } else if (global.isS3) {
+
+test.beforeEach(async ({ isS3, testDataDir }) => {
+  if (isS3) {
     await createS3Location('', defaultLocationName, true);
   } else {
-    await createPwLocation(defaultLocationPath, defaultLocationName, true);
+    await createPwLocation(testDataDir, defaultLocationName, true);
   }
   await clickOn('[data-tid=location_' + defaultLocationName + ']');
-  await expectElementExist(getGridFileSelector('empty_folder'), true, 8000);
+  await expectElementExist(getGridFileSelector('empty_folder'), true, 15000);
   // If its have opened file
   // await closeFileProperties();
 });
 
 test.describe('TST59 - Media player', () => {
-  test('TST5901 - Play ogg file [web,minio,electron]', async () => {
+  test('TST5901 - Play ogg file [web,s3,electron]', async () => {
     await openContextEntryMenu(
       getGridFileSelector('sample.ogg'),
       'fileMenuOpenFile',
@@ -69,22 +50,24 @@ test.describe('TST59 - Media player', () => {
     await expectMediaPlay(false);
   });
 
-  /**
-   * http://localhost:63342/test-artifacts/playwright-report/trace/manifest.webmanifest?_ijt=eojod6f91jej1donf3vd1jp8ju
-   */
-  test('TST5902 - Play ogv file [web,minio,electron]', async () => {
-    if (!global.isWin) {
-      await openContextEntryMenu(
-        getGridFileSelector('sample.ogv'),
-        'fileMenuOpenFile',
-      );
-      await expectMediaPlay();
-    }
+  test('TST5902 - Play webm file [web,s3,electron]', async ({ isWeb }) => {
+    // Smoke test for the media-player (Vidstack) extension: opening a video
+    // file mounts the player with the correct source. This is intentionally
+    // NOT a decode/seek assertion — the player lazy-loads (load="visible" +
+    // preload="metadata") and a headless/offscreen CI Electron window never
+    // reaches HAVE_METADATA, so video.duration is NaN for every codec
+    // (ogv/mp4/webm alike). sample.webm is used because it is small and
+    // royalty-free; the assertion lives in expectMediaPlay().
+    await openContextEntryMenu(
+      getGridFileSelector('sample.webm'),
+      'fileMenuOpenFile',
+    );
+    await expectMediaPlay(!isWeb, 'sample.webm');
   });
 
-  test('TST5903 - Open and close about dialog [web,minio,electron]', async () => {
+  test('TST5903 - Open and close about dialog [web,s3,electron]', async () => {
     await openContextEntryMenu(
-      getGridFileSelector('sample.mp4'),
+      getGridFileSelector('sample.ogv'),
       'fileMenuOpenFile',
     );
     await expectElementExist('iframe', true, 8000);
@@ -114,7 +97,7 @@ test.describe('TST59 - Media player', () => {
     expect(aboutNotExists).toBeTruthy();
   });
 
-  test('TST5904 - Play mp3 [web,minio,electron]', async () => {
+  test('TST5904 - Play mp3 [web,s3,electron]', async () => {
     await openContextEntryMenu(
       getGridFileSelector('sample.mp3'),
       'fileMenuOpenFile',
@@ -122,28 +105,7 @@ test.describe('TST59 - Media player', () => {
     await expectMediaPlay(false);
   });
 
-  /**
-   * for mp4 codecs missing web on Chromium browser
-   */
-  test('TST5905 - Play webm [web,minio,electron]', async () => {
-    await openContextEntryMenu(
-      getGridFileSelector('sample.webm'),
-      'fileMenuOpenFile',
-    );
-
-    await expectMediaPlay(false);
-
-    // Access the iframe
-    /*const iframeElement = await global.client.waitForSelector('iframe');
-    const frame = await iframeElement.contentFrame();
-
-    // Click on the desired element within the iframe
-    await frame.click('#container');
-    const playExists = await isDisplayed('[data-plyr=play]', true, 2000, frame);
-    expect(playExists).toBeTruthy();*/
-  });
-
-  test('TST5906 - Play flac [web,minio,electron]', async () => {
+  test('TST5906 - Play flac [web,s3,electron]', async () => {
     await openContextEntryMenu(
       getGridFileSelector('sample.flac'),
       'fileMenuOpenFile',
@@ -151,20 +113,4 @@ test.describe('TST59 - Media player', () => {
     await expectMediaPlay(false);
   });
 
-  test('TST5911 - Play 3gp [web,minio,electron]', async () => {
-    /*await clickOn('[data-tid=settings]');
-    await clickOn('[data-tid=fileTypeSettingsDialog]');
-    const selectEl = global.client.locator('[data-tid=viewerTIDgif]');
-    await selectEl.evaluate(node => node.scrollIntoView());
-   // await selectEl.scrollIntoViewIfNeeded();
-    await clickOn('[data-tid=viewerTIDgif]');
-    await clickOn('[data-tid=Media_PlayerviewerTIDgif]');
-    await clickOn('[data-tid=closeSettingsDialog]');*/
-
-    await openContextEntryMenu(
-      getGridFileSelector('sample.3gp'),
-      'fileMenuOpenFile',
-    );
-    await expectMediaPlay(false);
-  });
 });

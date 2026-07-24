@@ -15,7 +15,6 @@ export { default } from './components/MainContainer';
 // }
 
 export const defaultSettings = {
-  testID: 'listPerspectiveContainer',
   settingsKey: 'tsPerspectiveList',
   orderBy: true,
   sortBy: 'byName',
@@ -29,5 +28,6 @@ export const defaultSettings = {
   showEntriesDescription: true,
   showTags: true,
   gridPageLimit: 100,
+  maxVisibleTags: 4,
   maxDescriptionPreviewLength: 100,
 };

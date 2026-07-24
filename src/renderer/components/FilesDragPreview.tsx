@@ -1,8 +1,8 @@
-import React from 'react';
+import { useSelectedEntriesContext } from '-/hooks/useSelectedEntriesContext';
 import Avatar from '@mui/material/Avatar';
 import Chip from '@mui/material/Chip';
+import React from 'react';
 import { useTranslation } from 'react-i18next';
-import { useSelectedEntriesContext } from '-/hooks/useSelectedEntriesContext';
 
 export interface Props {
   // entriesLength: number;
@@ -19,12 +19,11 @@ export function FilesDragPreview(props: Props) {
     <Chip
       size="small"
       avatar={<Avatar>{entriesLength}</Avatar>}
-      style={{ marginLeft: 15 }}
+      sx={{ marginLeft: '15px' }}
       label={t('core:selectedFiles')}
       color="primary"
     />
   );
 }
-//const areEqual = (prevProp, nextProp) => nextProp.entriesLength === prevProp.entriesLength;
-//export default React.memo(FilesDragPreview, areEqual);
+
 export default React.memo(FilesDragPreview);

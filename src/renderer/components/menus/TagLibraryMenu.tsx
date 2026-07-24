@@ -16,7 +16,6 @@
  *
  */
 
-import AppConfig from '-/AppConfig';
 import {
   CreateFileIcon,
   ExportIcon,
@@ -26,20 +25,21 @@ import {
 } from '-/components/CommonIcons';
 import { ProLabel, ProTooltip } from '-/components/HelperComponents';
 import TsMenuList from '-/components/TsMenuList';
+import { SettingsTab } from '-/components/dialogs/SettingsDialog';
+import { useSettingsDialogContext } from '-/components/dialogs/hooks/useSettingsDialogContext';
 import { useEditedTagLibraryContext } from '-/hooks/useEditedTagLibraryContext';
-import { useNotificationContext } from '-/hooks/useNotificationContext';
 import { Pro } from '-/pro';
 import { getSaveTagInLocation } from '-/reducers/settings';
 import { openURLExternally } from '-/services/utils-io';
+import { Box } from '@mui/material';
 import ListItemIcon from '@mui/material/ListItemIcon';
 import ListItemText from '@mui/material/ListItemText';
 import Menu from '@mui/material/Menu';
 import MenuItem from '@mui/material/MenuItem';
 import Links from 'assets/links';
-import { useRef, useState } from 'react';
+import { useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSelector } from 'react-redux';
-import ImportExportTagGroupsDialog from '../dialogs/ImportExportTagGroupsDialog';
 
 interface Props {
   classes?: any;
@@ -47,73 +47,44 @@ interface Props {
   open: boolean;
   onClose: () => void;
   showCreateTagGroupDialog: () => void;
-  refreshTagsFromLocation: () => void;
 }
 
 function TagLibraryMenu(props: Props) {
   const { t } = useTranslation();
-  const { showNotification } = useNotificationContext();
-  const { tagGroups } = useEditedTagLibraryContext();
+  const { refreshTagLibrary } = useEditedTagLibraryContext();
+  const { openSettingsDialog } = useSettingsDialogContext();
 
   const saveTagInLocation: boolean = useSelector(getSaveTagInLocation);
   const fileInput = useRef<HTMLInputElement>(null);
-  const tagGroupsImported = useRef([]);
-  // const [tagGroups, setTagGroups] = useState(null);
-  const [
-    isImportExportTagGroupDialogOpened,
-    setIsImportExportTagGroupDialogOpened,
-  ] = useState(false);
-  const [dialogModeImport, setDialogModeImport] = useState(false);
-
-  function handleCloseDialogs() {
-    setIsImportExportTagGroupDialogOpened(false);
-  }
 
   function handleExportTagGroup() {
     props.onClose();
-    setDialogModeImport(false);
-    // setTagGroups(props.tagGroups);
-    setIsImportExportTagGroupDialogOpened(true);
+    openSettingsDialog(SettingsTab.BackupRestore, {
+      mode: 'export',
+      scope: 'tagGroups',
+    });
   }
 
   function handleImportTagGroup() {
     props.onClose();
-    setDialogModeImport(true);
     fileInput.current.click();
   }
 
   function handleFileInputChange(selection: any) {
     const target = selection.currentTarget;
     const file = target.files[0];
-    const reader: any = new FileReader();
-
-    reader.onload = () => {
-      try {
-        const jsonObj = JSON.parse(reader.result);
-        if (jsonObj.tagGroups) {
-          tagGroupsImported.current = jsonObj.tagGroups;
-          setIsImportExportTagGroupDialogOpened(true);
-        } else {
-          showNotification(t('core:invalidImportFile'), 'warning', true);
-        }
-      } catch (e) {
-        showNotification(t('core:invalidImportFile'), 'warning', true);
-      }
-    };
-    reader.readAsText(file);
+    if (file) {
+      openSettingsDialog(SettingsTab.BackupRestore, {
+        mode: 'import',
+        scope: 'tagGroups',
+        importFile: file,
+      });
+    }
     target.value = null;
   }
 
   return (
-    <div style={{ overflowY: 'hidden' }}>
-      {isImportExportTagGroupDialogOpened && (
-        <ImportExportTagGroupsDialog
-          open={isImportExportTagGroupDialogOpened}
-          onClose={handleCloseDialogs}
-          tagGroups={dialogModeImport ? tagGroupsImported.current : tagGroups}
-          dialogModeImport={dialogModeImport}
-        />
-      )}
+    <Box sx={{ overflowY: 'hidden' }}>
       <Menu anchorEl={props.anchorEl} open={props.open} onClose={props.onClose}>
         <TsMenuList>
           <MenuItem
@@ -136,7 +107,7 @@ function TagLibraryMenu(props: Props) {
               disabled={!Pro || !saveTagInLocation}
               data-tid="refreshTagGroups"
               onClick={() => {
-                props.refreshTagsFromLocation();
+                refreshTagLibrary(true);
                 props.onClose();
               }}
             >
@@ -159,14 +130,12 @@ function TagLibraryMenu(props: Props) {
             </ListItemIcon>
             <ListItemText primary={t('core:importTags')} />
           </MenuItem>
-          {!AppConfig.isCordovaAndroid && (
-            <MenuItem data-tid="exportTagGroup" onClick={handleExportTagGroup}>
-              <ListItemIcon>
-                <ExportIcon />
-              </ListItemIcon>
-              <ListItemText primary={t('core:exportTagGroupsButton')} />
-            </MenuItem>
-          )}
+          <MenuItem data-tid="exportTagGroup" onClick={handleExportTagGroup}>
+            <ListItemIcon>
+              <ExportIcon />
+            </ListItemIcon>
+            <ListItemText primary={t('core:exportTagGroupsButton')} />
+          </MenuItem>
           <MenuItem
             data-tid="taglibraryHelp"
             onClick={() => {
@@ -186,9 +155,10 @@ function TagLibraryMenu(props: Props) {
         ref={fileInput}
         accept="*"
         type="file"
+        data-tid="tagLibraryImportFileInput"
         onChange={handleFileInputChange}
       />
-    </div>
+    </Box>
   );
 }
 

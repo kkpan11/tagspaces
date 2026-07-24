@@ -3,9 +3,7 @@
  */
 import { test, expect } from './fixtures';
 import {
-  defaultLocationPath,
   defaultLocationName,
-  createPwMinioLocation,
   createPwLocation,
   createS3Location,
 } from './location.helpers';
@@ -14,33 +12,27 @@ import {
   expectElementExist,
   getGridFileName,
   getGridFileSelector,
+  reloadDirectory,
   takeScreenshot,
 } from './general.helpers';
 
-import { startTestingApp, stopApp, testDataRefresh } from './hook';
+import { startTestingApp, stopApp } from './hook';
 import { closeWelcomePlaywright } from './welcome.helpers';
 import { getDirEntries } from './perspective-grid.helpers';
-import { stopServices } from '../setup-functions';
 
-let s3ServerInstance;
-let webServerInstance;
-let minioServerInstance;
-
-test.beforeAll(async ({ s3Server, webServer, minioServer }) => {
-  s3ServerInstance = s3Server;
-  webServerInstance = webServer;
-  minioServerInstance = minioServer;
-  if (global.isS3) {
-    await startTestingApp();
+test.beforeAll(async ({ isWeb, isS3, webServerPort }, testInfo) => {
+  if (isS3) {
+    await startTestingApp({ isWeb, isS3, webServerPort, testInfo });
     await closeWelcomePlaywright();
   } else {
-    await startTestingApp('extconfig.js');
+    await startTestingApp(
+      { isWeb, isS3, webServerPort, testInfo },
+      'extconfig.js',
+    );
   }
 });
 
 test.afterAll(async () => {
-  await stopServices(s3ServerInstance, webServerInstance, minioServerInstance);
-  await testDataRefresh(s3ServerInstance);
   await stopApp();
 });
 
@@ -50,27 +42,27 @@ test.afterAll(async () => {
   }
 });*/
 
-test.beforeEach(async () => {
-  if (global.isMinio) {
-    await createPwMinioLocation('', defaultLocationName, true);
-  } else if (global.isS3) {
+test.beforeEach(async ({ isS3, testDataDir }) => {
+  if (isS3) {
     await createS3Location('', defaultLocationName, true);
   } else {
-    await createPwLocation(defaultLocationPath, defaultLocationName, true);
+    await createPwLocation(testDataDir, defaultLocationName, true);
   }
   await clickOn('[data-tid=location_' + defaultLocationName + ']');
-  await expectElementExist(getGridFileSelector('empty_folder'), true, 8000);
+  await expectElementExist(getGridFileSelector('empty_folder'), true, 15000);
   // If its have opened file
   // await closeFileProperties();
   await clickOn('[data-tid=gridPerspectiveSortMenu]');
 });
 
 // Scenarios for sorting files in grid perspective
-test.describe('TST5003 - Testing sort files in the grid perspective [web,electron]', () => {
-  test('TST10xx - Sort by name [web,electron]', async () => {
+test.describe('TST5003 - Testing sort files in the grid perspective', () => {
+  test('TST5050 - Sort by name [web,s3,electron]', async ({
+    testDataDir,
+  }) => {
     // DESC
     await clickOn('[data-tid=gridPerspectiveSortByName]');
-    let sorted = getDirEntries('byName', false);
+    let sorted = getDirEntries(testDataDir, 'byName', false);
     for (let i = 0; i < sorted.length; i += 1) {
       const fileName = await getGridFileName(i);
       expect(fileName).toBe(sorted[i].name); //'sample_exif.jpg');
@@ -80,17 +72,19 @@ test.describe('TST5003 - Testing sort files in the grid perspective [web,electro
     await clickOn('[data-tid=gridPerspectiveSortMenu]');
     await clickOn('[data-tid=gridPerspectiveSortByName]');
 
-    sorted = getDirEntries('byName', true);
+    sorted = getDirEntries(testDataDir, 'byName', true);
     for (let i = 0; i < sorted.length; i += 1) {
       const fileName = await getGridFileName(i);
       expect(fileName).toBe(sorted[i].name); //'sample.avif');
     }
   });
 
-  test('TST10xx - Sort by size [web,electron]', async () => {
+  test('TST5051 - Sort by size [web,s3,electron]', async ({
+    testDataDir,
+  }) => {
     await clickOn('[data-tid=gridPerspectiveSortBySize]');
     // DESC
-    let sorted = getDirEntries('byFileSize', true);
+    let sorted = getDirEntries(testDataDir, 'byFileSize', true);
     for (let i = 0; i < sorted.length; i += 1) {
       const fileName = await getGridFileName(i);
       expect(fileName).toBe(sorted[i].name); //'sample.csv');
@@ -99,17 +93,19 @@ test.describe('TST5003 - Testing sort files in the grid perspective [web,electro
     // ASC
     await clickOn('[data-tid=gridPerspectiveSortMenu]');
     await clickOn('[data-tid=gridPerspectiveSortBySize]');
-    sorted = getDirEntries('byFileSize', false);
+    sorted = getDirEntries(testDataDir, 'byFileSize', false);
     for (let i = 0; i < sorted.length; i += 1) {
       const fileName = await getGridFileName(i);
       expect(fileName).toBe(sorted[i].name); //'sample.nef');
     }
   });
 
-  test('TST10xx - Sort by date [web,electron]', async () => {
+  test('TST5052 - Sort by date [web,s3,electron]', async ({
+    testDataDir,
+  }) => {
     await clickOn('[data-tid=gridPerspectiveSortByDate]');
 
-    let sorted = getDirEntries('byDateModified', true);
+    let sorted = getDirEntries(testDataDir, 'byDateModified', true);
     for (let i = 0; i < sorted.length; i += 1) {
       const fileName = await getGridFileName(i);
       expect(fileName).toBe(sorted[i].name);
@@ -119,16 +115,18 @@ test.describe('TST5003 - Testing sort files in the grid perspective [web,electro
     await clickOn('[data-tid=gridPerspectiveSortMenu]');
     await clickOn('[data-tid=gridPerspectiveSortByDate]');
 
-    sorted = getDirEntries('byDateModified', false);
+    sorted = getDirEntries(testDataDir, 'byDateModified', false);
     for (let i = 0; i < sorted.length; i += 1) {
       const fileName = await getGridFileName(i);
       expect(fileName).toBe(sorted[i].name);
     }
   });
 
-  test('TST10xx - Sort by extension [web,electron]', async () => {
+  test('TST5053 - Sort by extension [web,s3,electron]', async ({
+    testDataDir,
+  }) => {
     await clickOn('[data-tid=gridPerspectiveSortByExt]');
-    let sorted = getDirEntries('byExtension', true);
+    let sorted = getDirEntries(testDataDir, 'byExtension', true);
     for (let i = 0; i < sorted.length; i += 1) {
       const fileName = await getGridFileName(i);
       expect(fileName).toBe(sorted[i].name);
@@ -136,16 +134,18 @@ test.describe('TST5003 - Testing sort files in the grid perspective [web,electro
 
     await clickOn('[data-tid=gridPerspectiveSortMenu]');
     await clickOn('[data-tid=gridPerspectiveSortByExt]');
-    sorted = getDirEntries('byExtension', false);
+    sorted = getDirEntries(testDataDir, 'byExtension', false);
     for (let i = 0; i < sorted.length; i += 1) {
       const fileName = await getGridFileName(i);
       expect(fileName).toBe(sorted[i].name);
     }
   });
 
-  test('TST10xx - Sort by tags [web,electron]', async () => {
+  test('TST5054 - Sort by tags [web,s3,electron]', async ({
+    testDataDir,
+  }) => {
     await clickOn('[data-tid=gridPerspectiveSortByFirstTag]');
-    let sorted = getDirEntries('byFirstTag', true);
+    let sorted = getDirEntries(testDataDir, 'byFirstTag', true);
     for (let i = 0; i < sorted.length; i += 1) {
       const fileName = await getGridFileName(i);
       expect(fileName).toBe(sorted[i].name);
@@ -153,7 +153,31 @@ test.describe('TST5003 - Testing sort files in the grid perspective [web,electro
     // ASC
     await clickOn('[data-tid=gridPerspectiveSortMenu]');
     await clickOn('[data-tid=gridPerspectiveSortByFirstTag]');
-    sorted = getDirEntries('byFirstTag', false);
+    sorted = getDirEntries(testDataDir, 'byFirstTag', false);
+    for (let i = 0; i < sorted.length; i += 1) {
+      const fileName = await getGridFileName(i);
+      expect(fileName).toBe(sorted[i].name);
+    }
+  });
+
+  // Regression guard for the SortedDirContextProvider reset effect (keyed only
+  // on currentDirectory.path): a non-default sort must survive a same-directory
+  // reload — the path the automatic "reload on focus" also uses
+  // (openDirectory(currentDirectoryPath)) — instead of reverting to byName.
+  test('TST5055 - Sort persists after directory reload [web,s3,electron]', async ({
+    testDataDir,
+  }) => {
+    // Pick a non-default criterion (default is byName asc) → size, descending.
+    await clickOn('[data-tid=gridPerspectiveSortBySize]');
+    const sorted = getDirEntries(testDataDir, 'byFileSize', true);
+    for (let i = 0; i < sorted.length; i += 1) {
+      const fileName = await getGridFileName(i);
+      expect(fileName).toBe(sorted[i].name);
+    }
+
+    // Reload the same directory — must keep the chosen sort, not reset it.
+    await reloadDirectory();
+    await expectElementExist(getGridFileSelector('empty_folder'), true, 15000);
     for (let i = 0; i < sorted.length; i += 1) {
       const fileName = await getGridFileName(i);
       expect(fileName).toBe(sorted[i].name);

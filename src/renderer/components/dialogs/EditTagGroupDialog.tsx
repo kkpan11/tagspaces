@@ -15,13 +15,19 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  */
-
+import AppConfig from '-/AppConfig';
+import DraggablePaper from '-/components/DraggablePaper';
+import { ProLabel } from '-/components/HelperComponents';
+import InfoIcon from '-/components/InfoIcon';
 import Tag from '-/components/Tag';
+import TransparentBackground from '-/components/TransparentBackground';
 import TsButton from '-/components/TsButton';
 import TsSelect from '-/components/TsSelect';
 import TsTextField from '-/components/TsTextField';
+import ColorPickerDialog from '-/components/dialogs/ColorPickerDialog';
 import TsDialogActions from '-/components/dialogs/components/TsDialogActions';
 import TsDialogTitle from '-/components/dialogs/components/TsDialogTitle';
+import WorkSpacesDropdown from '-/components/dialogs/components/WorkSpacesDropdown';
 import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
 import { useTagGroupsLocationContext } from '-/hooks/useTagGroupsLocationContext';
 import { useTaggingActionsContext } from '-/hooks/useTaggingActionsContext';
@@ -29,20 +35,18 @@ import { Pro } from '-/pro';
 import { getSaveTagInLocation } from '-/reducers/settings';
 import { TS } from '-/tagspaces.namespace';
 import { CommonLocation } from '-/utils/CommonLocation';
-import { useMediaQuery, useTheme } from '@mui/material';
+import { Box, Paper, useMediaQuery, useTheme } from '@mui/material';
 import Dialog from '@mui/material/Dialog';
 import DialogContent from '@mui/material/DialogContent';
 import FormControl from '@mui/material/FormControl';
 import FormHelperText from '@mui/material/FormHelperText';
 import ListItem from '@mui/material/ListItem';
-import ListItemText from '@mui/material/ListItemText/ListItemText';
+import ListItemText from '@mui/material/ListItemText';
 import MenuItem from '@mui/material/MenuItem';
-import Switch from '@mui/material/Switch';
-import React, { ChangeEvent, useEffect, useState } from 'react';
+import TsSwitch from '-/components/TsSwitch';
+import React, { ChangeEvent, useContext, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSelector } from 'react-redux';
-import TransparentBackground from '../TransparentBackground';
-import ColorPickerDialog from './ColorPickerDialog';
 
 const defaultTagGroupLocation = 'TAG_LIBRARY';
 
@@ -60,6 +64,9 @@ function EditTagGroupDialog(props: Props) {
   const { removeLocationTagGroup } = useTagGroupsLocationContext();
   const { t } = useTranslation();
   const saveTagInLocation: boolean = useSelector(getSaveTagInLocation);
+  const [workSpaceId, setWorkSpaceId] = useState<string>(
+    selectedTagGroupEntry ? selectedTagGroupEntry.workSpaceId || '' : '',
+  );
   const [displayColorPicker, setDisplayColorPicker] = useState<boolean>(false);
   const [displayTextColorPicker, setDisplayTextColorPicker] =
     useState<boolean>(false);
@@ -74,6 +81,12 @@ function EditTagGroupDialog(props: Props) {
   );
   const theme = useTheme();
   const smallScreen = useMediaQuery(theme.breakpoints.down('md'));
+  const workSpacesContext = Pro?.contextProviders?.WorkSpacesContext
+    ? useContext<TS.WorkSpacesContextData>(
+        Pro.contextProviders.WorkSpacesContext,
+      )
+    : undefined;
+  const workSpaces = workSpacesContext?.getWorkSpaces() ?? [];
 
   useEffect(() => {
     setNewLocationId(undefined);
@@ -112,45 +125,52 @@ function EditTagGroupDialog(props: Props) {
   }
 
   const onConfirm = async () => {
-    if (disableConfirmButton()) {
-      return;
+    if (disableConfirmButton()) return;
+
+    if (!selectedTagGroupEntry || !selectedTagGroupEntry.children) return;
+
+    if (
+      Pro &&
+      isLocationChanged() &&
+      selectedTagGroupEntry.locationId !== undefined
+    ) {
+      const location: CommonLocation = findLocation(
+        selectedTagGroupEntry.locationId,
+      );
+      if (location) {
+        await removeLocationTagGroup(location, selectedTagGroupEntry.uuid);
+      }
     }
 
-    if (selectedTagGroupEntry && selectedTagGroupEntry.children) {
-      if (
-        Pro &&
-        isLocationChanged() &&
-        selectedTagGroupEntry.locationId !== undefined
-      ) {
-        // remove old location
-        const location: CommonLocation = findLocation(
-          selectedTagGroupEntry.locationId,
-        );
-        if (location) {
-          await removeLocationTagGroup(location, selectedTagGroupEntry.uuid);
-        }
-      }
-      updateTagGroup({
-        ...selectedTagGroupEntry,
-        title,
-        color,
-        textcolor,
-        ...(isLocationChanged() && {
-          locationId:
-            newLocationId === defaultTagGroupLocation
-              ? undefined
-              : newLocationId,
-        }),
-        modified_date: new Date().getTime(),
-        children: selectedTagGroupEntry.children.map((tag) => ({
-          ...tag,
-          color: applyChanges ? color : tag.color,
-          textcolor: applyChanges ? textcolor : tag.textcolor,
-          style: tag.style,
-        })),
-      });
-      onClose();
+    const payload: any = {
+      ...selectedTagGroupEntry,
+      title,
+      color,
+      textcolor,
+      modified_date: Date.now(),
+      children: selectedTagGroupEntry.children.map((tag) => ({
+        ...tag,
+        color: applyChanges ? color : tag.color,
+        textcolor: applyChanges ? textcolor : tag.textcolor,
+        style: tag.style,
+      })),
+    };
+
+    // location handling (only change if location actually changed)
+    if (isLocationChanged()) {
+      payload.locationId =
+        newLocationId === defaultTagGroupLocation ? undefined : newLocationId;
     }
+
+    // add or remove workSpaceId explicitly
+    if (workSpaceId !== undefined) {
+      payload.workSpaceId = workSpaceId;
+    } else {
+      delete payload.workSpaceId; // removes it entirely so updateTagGroup won't keep the old value
+    }
+
+    updateTagGroup(payload);
+    onClose();
   };
 
   const okButton = (
@@ -159,21 +179,22 @@ function EditTagGroupDialog(props: Props) {
       onClick={onConfirm}
       data-tid="editTagGroupConfirmButton"
       variant="contained"
-      style={{
-        // @ts-ignore
-        WebkitAppRegion: 'no-drag',
-      }}
+      style={
+        {
+          WebkitAppRegion: 'no-drag',
+        } as React.CSSProperties & { WebkitAppRegion?: string }
+      }
     >
       {t('core:ok')}
     </TsButton>
   );
 
   const renderContent = (
-    <DialogContent style={{ overflow: 'visible' }}>
+    <DialogContent sx={{ overflowY: 'visible', overflowX: 'hidden' }}>
       <FormControl
         fullWidth={true}
         error={inputError}
-        style={{ overflow: 'visible' }}
+        sx={{ overflow: 'visible' }}
       >
         <TsTextField
           error={inputError}
@@ -189,12 +210,17 @@ function EditTagGroupDialog(props: Props) {
         )}
       </FormControl>
       {saveTagInLocation && (
-        <FormControl fullWidth={true} error={inputError}>
-          <FormHelperText style={{ marginLeft: 0, marginTop: 0 }}>
-            {t('core:tagGroupLocation')}
-          </FormHelperText>
+        <ListItem sx={{ paddingLeft: 0, paddingRight: 0 }}>
           <TsSelect
-            fullWidth={false}
+            fullWidth
+            disabled={!Pro}
+            label={
+              <>
+                {t('core:tagGroupLocation')}
+                <InfoIcon tooltip={t('tagGroupLocationHelp')} />
+                <ProLabel />
+              </>
+            }
             defaultValue={
               selectedTagGroupEntry.locationId || defaultTagGroupLocation
             }
@@ -214,18 +240,34 @@ function EditTagGroupDialog(props: Props) {
               </MenuItem>
             ))}
           </TsSelect>
-        </FormControl>
+        </ListItem>
       )}
-      <ListItem style={{ paddingLeft: 0, paddingRight: 0 }}>
+      <ListItem sx={{ paddingLeft: 0, paddingRight: 0 }}>
+        <WorkSpacesDropdown
+          disabled={!Pro}
+          dataTid="taggroupWorkspaceTID"
+          workSpaceId={workSpaceId}
+          setWorkSpaceId={setWorkSpaceId}
+          workSpaces={workSpaces}
+          label={
+            <>
+              {t('core:workspace')}
+              <ProLabel />
+            </>
+          }
+          onOpenNewWorkspace={() => workSpacesContext.openNewWorkspaceDialog()}
+        />
+      </ListItem>
+      <ListItem sx={{ paddingLeft: 0, paddingRight: 0 }}>
         <ListItemText primary={t('tagBackgroundColor')} />
         <TransparentBackground>
           <TsButton
             onClick={() => setDisplayColorPicker(!displayColorPicker)}
             data-tid="editTagGroupBackgroundColor"
-            style={{
-              height: 30,
-              borderRadius: 2,
-              borderWidth: 1,
+            sx={{
+              height: '30px',
+              borderRadius: AppConfig.defaultCSSRadius,
+              borderWidth: '1px',
               borderStyle: 'solid',
               borderColor: 'gray',
               padding: '5px',
@@ -244,16 +286,16 @@ function EditTagGroupDialog(props: Props) {
           />
         )}
       </ListItem>
-      <ListItem style={{ paddingLeft: 0, paddingRight: 0 }}>
+      <ListItem sx={{ paddingLeft: 0, paddingRight: 0 }}>
         <ListItemText primary={t('core:tagForegroundColor')} />
         <TransparentBackground>
           <TsButton
             onClick={() => setDisplayTextColorPicker(!displayTextColorPicker)}
             data-tid="editTagGroupForegroundColor"
-            style={{
-              height: 30,
-              borderRadius: 2,
-              borderWidth: 1,
+            sx={{
+              height: '30px',
+              borderRadius: AppConfig.defaultCSSRadius,
+              borderWidth: '1px',
               borderStyle: 'solid',
               borderColor: 'gray',
               padding: '5px',
@@ -273,18 +315,17 @@ function EditTagGroupDialog(props: Props) {
           />
         )}
       </ListItem>
-      <ListItem style={{ paddingLeft: 0, paddingRight: 0 }}>
+      <ListItem sx={{ paddingLeft: 0, paddingRight: 0 }}>
         <ListItemText primary={t('core:tagPreview')} />
         <Tag backgroundColor={color} textColor={textcolor} isDragging={false}>
-          <span style={{ textTransform: 'lowercase' }}>
+          <Box sx={{ textTransform: 'lowercase', marginRight: '4px' }}>
             {t('core:tagPreview')}
-          </span>
-          <span style={{ margin: 3 }} />
+          </Box>
         </Tag>
       </ListItem>
-      <ListItem style={{ paddingLeft: 0, paddingRight: 0 }}>
+      <ListItem sx={{ paddingLeft: 0, paddingRight: 0 }}>
         <ListItemText primary={t('core:colorChangesToAllTags')} />
-        <Switch
+        <TsSwitch
           data-tid="editTagGroupSwitch"
           onClick={() => setApplyChanges(!applyChanges)}
           checked={applyChanges}
@@ -297,6 +338,7 @@ function EditTagGroupDialog(props: Props) {
     <Dialog
       open={open}
       fullScreen={smallScreen}
+      PaperComponent={smallScreen ? Paper : DraggablePaper}
       onClose={onClose}
       onKeyDown={(event) => {
         if (event.key === 'Enter' || event.keyCode === 13) {

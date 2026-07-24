@@ -20,7 +20,6 @@ import TsButton from '-/components/TsButton';
 import { useUserContext } from '-/hooks/useUserContext';
 import { Pro } from '-/pro';
 import { clearAllURLParams } from '-/utils/dom';
-import Auth from '@aws-amplify/auth';
 import ExitToAppIcon from '@mui/icons-material/ExitToApp';
 import Avatar from '@mui/material/Avatar';
 import Box from '@mui/material/Box';
@@ -60,7 +59,7 @@ function UserDetailsPopover(props: Props) {
   }
 
   const signOut = () => {
-    Auth.signOut();
+    // TODO: wire to future auth provider (was Auth.signOut())
     clearAllURLParams();
     onClose();
   };
@@ -146,7 +145,8 @@ function UserDetailsPopover(props: Props) {
                 <TsButton
                   onClick={async () => {
                     try {
-                      await Auth.setPreferredMFA(currentUser, 'NOMFA');
+                      // TODO: re-implement against future auth provider
+                      // (was Auth.setPreferredMFA(currentUser, 'NOMFA'))
                       signOut();
                     } catch (error) {
                       console.log(error);

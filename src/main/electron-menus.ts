@@ -16,14 +16,10 @@
  *
  */
 
-import { app, Menu, shell } from 'electron';
+import { app, BrowserWindow, Menu, shell } from 'electron';
 import Links from '../../assets/links';
 
 export default function buildDesktopMenu(props: any, i18n) {
-  function quitApp() {
-    app.quit();
-  }
-
   const templateDefault = [
     {
       label: i18n.t('file'),
@@ -55,6 +51,19 @@ export default function buildDesktopMenu(props: any, i18n) {
           click: props.toggleOpenLinkDialog,
         },
         {
+          label: i18n.t('print'),
+          accelerator: 'CmdOrCtrl+p',
+          click: () => {
+            const win = BrowserWindow.getFocusedWindow();
+            if (win) {
+              win.webContents.print({
+                // silent: false,
+                printBackground: false,
+              });
+            }
+          },
+        },
+        {
           type: 'separator',
         },
         {
@@ -63,7 +72,7 @@ export default function buildDesktopMenu(props: any, i18n) {
         {
           label: i18n.t('exitApp'),
           accelerator: 'CmdOrCtrl+q',
-          click: quitApp,
+          click: () => app.quit(),
         },
       ],
     },
@@ -97,6 +106,11 @@ export default function buildDesktopMenu(props: any, i18n) {
           label: i18n.t('paste'),
           accelerator: 'CmdOrCtrl+v',
           role: 'paste',
+        },
+        {
+          label: i18n.t('pasteAndMatchStyle'),
+          accelerator: 'CmdOrCtrl+Shift+v',
+          role: 'pasteAndMatchStyle',
         },
         {
           label: i18n.t('selectAll'),
@@ -187,6 +201,7 @@ export default function buildDesktopMenu(props: any, i18n) {
         },
       ],
     },
+    { label: i18n.t('window'), role: 'windowMenu' },
     {
       label: '&' + i18n.t('help'),
       submenu: [
@@ -209,6 +224,12 @@ export default function buildDesktopMenu(props: any, i18n) {
           label: '&' + i18n.t('whatsNew'),
           click: () => {
             shell.openExternal(Links.links.changelogURL);
+          },
+        },
+        {
+          label: '&' + i18n.t('followOnMastodon'),
+          click: () => {
+            shell.openExternal(Links.links.mastodon);
           },
         },
         {

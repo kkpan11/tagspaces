@@ -15,31 +15,31 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  */
-
-import AppConfig from '-/AppConfig';
 import {
   AIIcon,
-  AdvancedSettingsIcon,
+  ExportImportIcon,
   ExtensionIcon,
   FileIcon,
   KeyboardIcon,
   OptionsIcon,
+  PerspectiveIcon,
 } from '-/components/CommonIcons';
 import DraggablePaper from '-/components/DraggablePaper';
 import { BetaLabel } from '-/components/HelperComponents';
 import TsButton from '-/components/TsButton';
-import ConfirmDialog from '-/components/dialogs/ConfirmDialog';
 import SettingsAI from '-/components/dialogs/components/SettingsAI';
-import SettingsAdvanced from '-/components/dialogs/components/SettingsAdvanced';
+import SettingsBackupRestore from '-/components/dialogs/components/SettingsBackupRestore';
 import SettingsExtensions from '-/components/dialogs/components/SettingsExtensions';
 import SettingsFileTypes from '-/components/dialogs/components/SettingsFileTypes';
 import SettingsGeneral from '-/components/dialogs/components/SettingsGeneral';
 import SettingsKeyBindings from '-/components/dialogs/components/SettingsKeyBindings';
+import SettingsPerspectives from '-/components/dialogs/components/SettingsPerspectives';
+import SettingsTemplates from '-/components/dialogs/components/SettingsTemplates';
 import TsDialogActions from '-/components/dialogs/components/TsDialogActions';
 import TsDialogTitle from '-/components/dialogs/components/TsDialogTitle';
-import { isDesktopMode } from '-/reducers/settings';
+import type { SettingsBackupIntent } from '-/services/export-import-validators';
 import { openURLExternally } from '-/services/utils-io';
-import { clearAllURLParams } from '-/utils/dom';
+import ArticleIcon from '@mui/icons-material/Article';
 import Dialog from '@mui/material/Dialog';
 import DialogContent from '@mui/material/DialogContent';
 import Paper from '@mui/material/Paper';
@@ -48,38 +48,84 @@ import Tabs from '@mui/material/Tabs';
 import { useTheme } from '@mui/material/styles';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import Links from 'assets/links';
-import { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useSelector } from 'react-redux';
+
+export enum SettingsTab {
+  General = 'general',
+  FileTypes = 'fileTypes',
+  Templates = 'templates',
+  KeyBindings = 'keyBindings',
+  Extensions = 'extensions',
+  Perspectives = 'perspectives',
+  BackupRestore = 'backupRestore',
+  AI = 'ai',
+}
+
+// Re-exported for callers that import it from the dialog (e.g. the settings
+// dialog context provider). Defined in export-import-validators to avoid an
+// import cycle with SettingsBackupRestore.
+export type { SettingsBackupIntent };
 
 interface Props {
   open: boolean;
+  tab?: SettingsTab;
+  backup?: SettingsBackupIntent;
   classes?: any;
   onClose: () => void;
 }
 
 function SettingsDialog(props: Props) {
   const { t } = useTranslation();
-  const [currentTab, setCurrentTab] = useState<number>(0);
-  const desktopMode = useSelector(isDesktopMode);
-  const [isResetSettingsDialogOpened, setIsResetSettingsDialogOpened] =
-    useState<boolean>(false);
-  const { open, onClose } = props;
+  const { open, onClose, tab, backup } = props;
+  const [currentTab, setCurrentTab] = useState<SettingsTab>(
+    tab || SettingsTab.General,
+  );
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const extFilterRef = useRef<HTMLInputElement>(null);
+  // const desktopMode = useSelector(isDesktopMode);
   const theme = useTheme();
   const smallScreen = useMediaQuery(theme.breakpoints.down('md'));
 
-  const handleTabClick = (event, tab) => {
-    setCurrentTab(tab);
+  // Focus the filter/search field that belongs to a given tab. General and
+  // File Types are the two tabs that carry a filter box at their top.
+  const focusTabField = (nextTab: SettingsTab) => {
+    if (nextTab === SettingsTab.General) {
+      searchInputRef.current?.focus();
+    } else if (nextTab === SettingsTab.FileTypes) {
+      extFilterRef.current?.focus();
+    }
+  };
+
+  // Move focus to the current tab's filter field when the user switches tabs.
+  // The initial dialog-open case is handled by the transition's onEntered
+  // (below), which fires after MUI's focus trap has settled; skipping the first
+  // run here avoids racing that transition.
+  const didFocusMount = useRef(false);
+  useEffect(() => {
+    if (!didFocusMount.current) {
+      didFocusMount.current = true;
+      return;
+    }
+    focusTabField(currentTab);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentTab]);
+
+  const handleTabClick = (
+    event: React.SyntheticEvent,
+    newValue: SettingsTab | string,
+  ) => {
+    setCurrentTab(newValue as SettingsTab);
   };
 
   const helpButton = (
     <TsButton
       onClick={() => openURLExternally(Links.documentationLinks.settings, true)}
-      color="secondary"
-      style={{
-        // @ts-ignore
-        WebkitAppRegion: 'no-drag',
-      }}
+      sx={
+        {
+          WebkitAppRegion: 'no-drag',
+        } as React.CSSProperties & { WebkitAppRegion?: string }
+      }
     >
       {t('core:help')}
     </TsButton>
@@ -87,7 +133,7 @@ function SettingsDialog(props: Props) {
 
   const renderContent = (
     <DialogContent
-      style={{
+      sx={{
         overflowY: 'hidden',
         overflowX: 'hidden',
         display: smallScreen ? 'block' : 'flex',
@@ -100,68 +146,100 @@ function SettingsDialog(props: Props) {
         onChange={handleTabClick}
         indicatorColor="primary"
         scrollButtons="auto"
-        variant={smallScreen ? 'scrollable' : 'standard'}
+        variant="scrollable"
         orientation={smallScreen ? 'horizontal' : 'vertical'}
-        // allowScrollButtonsMobile
+        allowScrollButtonsMobile
       >
         <Tab
-          style={{
+          value={SettingsTab.General}
+          sx={{
             textTransform: 'unset',
             justifyContent: 'flex-start',
           }}
           iconPosition="start"
-          icon={!smallScreen && <OptionsIcon />}
+          icon={smallScreen ? '' : <OptionsIcon />}
           data-tid="generalSettingsDialog"
           label={t('core:generalTab')}
         />
         <Tab
-          style={{
+          value={SettingsTab.FileTypes}
+          sx={{
             textTransform: 'unset',
             justifyContent: 'flex-start',
           }}
           iconPosition="start"
-          icon={!smallScreen && <FileIcon />}
+          icon={smallScreen ? '' : <FileIcon />}
           data-tid="fileTypeSettingsDialog"
           label={t('core:fileTypeTab')}
         />
         <Tab
-          style={{
+          value={SettingsTab.Templates}
+          sx={{
+            textTransform: 'unset',
+            justifyContent: 'flex-start',
+          }}
+          data-tid="templatesDialogTID"
+          iconPosition="start"
+          icon={smallScreen ? '' : <ArticleIcon />}
+          label={
+            <span style={{ whiteSpace: 'nowrap' }}>
+              {t('core:templatesTab')}
+            </span>
+          }
+        />
+        <Tab
+          value={SettingsTab.KeyBindings}
+          sx={{
             textTransform: 'unset',
             justifyContent: 'flex-start',
           }}
           iconPosition="start"
-          icon={!smallScreen && <KeyboardIcon />}
+          icon={smallScreen ? '' : <KeyboardIcon />}
           data-tid="keyBindingsSettingsDialog"
           label={t('core:keyBindingsTab')}
         />
         <Tab
-          style={{
+          value={SettingsTab.Extensions}
+          sx={{
             textTransform: 'unset',
             justifyContent: 'flex-start',
           }}
           iconPosition="start"
-          icon={!smallScreen && <ExtensionIcon />}
+          icon={smallScreen ? '' : <ExtensionIcon />}
           data-tid="extensionsSettingsDialog"
           label={t('core:extensionsTab')}
         />
         <Tab
-          style={{
+          value={SettingsTab.Perspectives}
+          sx={{
             textTransform: 'unset',
             justifyContent: 'flex-start',
           }}
           iconPosition="start"
-          icon={!smallScreen && <AdvancedSettingsIcon />}
-          data-tid="advancedSettingsDialogTID"
-          label={t('core:advancedSettingsTab')}
+          icon={smallScreen ? '' : <PerspectiveIcon />}
+          data-tid="perspectivesSettingsDialog"
+          label={t('core:perspectivesSettingsTab')}
         />
         <Tab
-          style={{
+          value={SettingsTab.BackupRestore}
+          sx={{
+            textTransform: 'unset',
+            justifyContent: 'flex-start',
+          }}
+          iconPosition="start"
+          icon={smallScreen ? '' : <ExportImportIcon />}
+          data-tid="backupRestoreSettingsDialog"
+          label={t('core:backupRestoreSettingsTab')}
+        />
+        <Tab
+          value={SettingsTab.AI}
+          sx={{
             textTransform: 'unset',
             justifyContent: 'flex-start',
           }}
           data-tid="aiSettingsDialogTID"
           iconPosition="start"
-          icon={!smallScreen && <AIIcon />}
+          icon={smallScreen ? '' : <AIIcon />}
           label={
             <span style={{ whiteSpace: 'nowrap' }}>
               {t('core:aiSettingsTab')}
@@ -178,42 +256,23 @@ function SettingsDialog(props: Props) {
           width: smallScreen ? '100%' : 600,
         }}
       >
-        {currentTab === 0 && <SettingsGeneral />}
-        {currentTab === 1 && <SettingsFileTypes />}
-        {currentTab === 2 && <SettingsKeyBindings />}
-        {currentTab === 3 && <SettingsExtensions />}
-        {currentTab === 4 && (
-          <SettingsAdvanced
-            showResetSettings={setIsResetSettingsDialogOpened}
-          />
+        {currentTab === SettingsTab.General && (
+          <SettingsGeneral searchInputRef={searchInputRef} />
         )}
-        {currentTab === 5 && <SettingsAI closeSettings={onClose} />}
+        {currentTab === SettingsTab.FileTypes && (
+          <SettingsFileTypes filterInputRef={extFilterRef} />
+        )}
+        {currentTab === SettingsTab.Templates && <SettingsTemplates />}
+        {currentTab === SettingsTab.KeyBindings && <SettingsKeyBindings />}
+        {currentTab === SettingsTab.Extensions && <SettingsExtensions />}
+        {currentTab === SettingsTab.Perspectives && <SettingsPerspectives />}
+        {currentTab === SettingsTab.BackupRestore && (
+          <SettingsBackupRestore backup={backup} />
+        )}
+        {currentTab === SettingsTab.AI && (
+          <SettingsAI closeSettings={onClose} />
+        )}
       </div>
-      {isResetSettingsDialogOpened && (
-        <ConfirmDialog
-          open={isResetSettingsDialogOpened}
-          onClose={() => {
-            setIsResetSettingsDialogOpened(false);
-          }}
-          title="Confirm"
-          content={t('core:confirmResetSettings')}
-          confirmCallback={(result) => {
-            if (result) {
-              clearAllURLParams();
-              localStorage.clear();
-              // eslint-disable-next-line no-restricted-globals
-              if (AppConfig.isElectron) {
-                window.electronIO.ipcRenderer.sendMessage('reloadWindow');
-              } else {
-                window.location.reload();
-              }
-            }
-          }}
-          cancelDialogTID="cancelResetSettingsDialogTID"
-          confirmDialogTID="confirmResetSettingsDialogTID"
-          confirmDialogContentTID="confirmResetSettingsDialogContentTID"
-        />
-      )}
     </DialogContent>
   );
 
@@ -221,12 +280,8 @@ function SettingsDialog(props: Props) {
     <Dialog
       sx={{
         '& .MuiDialog-paper': {
-          maxWidth: 'unset',
           height: '100%',
-          // background: props.fullScreen
-          //   ? theme.palette.background.default
-          //   : alpha(theme.palette.background.default, 0.85),
-          // backdropFilter: props.fullScreen ? 'unset' : 'blur(5px)',
+          maxWidth: 'unset',
         },
       }}
       fullScreen={smallScreen}
@@ -235,7 +290,14 @@ function SettingsDialog(props: Props) {
       keepMounted
       scroll="paper"
       onClose={onClose}
-      style={{ maxWidth: 'auto' }}
+      // The dialog is keepMounted, so autoFocus on a field would fire once
+      // while hidden and never again. Focus the current tab's filter field
+      // after the open transition completes, once MUI's focus trap has settled.
+      slotProps={{
+        transition: {
+          onEntered: () => focusTabField(currentTab),
+        },
+      }}
     >
       <TsDialogTitle
         dialogTitle={t('core:settings')}
@@ -246,7 +308,7 @@ function SettingsDialog(props: Props) {
       {renderContent}
       {!smallScreen && (
         <TsDialogActions
-          style={{
+          sx={{
             justifyContent: 'space-between',
           }}
         >

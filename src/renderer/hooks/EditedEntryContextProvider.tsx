@@ -16,13 +16,24 @@
  *
  */
 
-import React, { createContext, useMemo, useReducer, useRef } from 'react';
-import { extractTagsAsObjects } from '@tagspaces/tagspaces-common/paths';
+import React, {
+  createContext,
+  useCallback,
+  useMemo,
+  useReducer,
+  useState,
+} from 'react';
+import {
+  extractTagsAsObjects,
+  isMeta,
+} from '@tagspaces/tagspaces-common/paths';
 import { TS } from '-/tagspaces.namespace';
 import AppConfig from '-/AppConfig';
+import { useSelector } from 'react-redux';
+import { getTagDelimiter } from '-/reducers/settings';
 
 type EditedEntryContextData = {
-  actions: TS.EditAction[];
+  actions: TS.EditAction[] | undefined;
   reflectUpdateMeta: (...entries: TS.FileSystemEntry[]) => void;
   setReflectActions: (...actionsArray: TS.EditAction[]) => void;
   reflectDeleteEntries: (...entries: TS.FileSystemEntry[]) => void;
@@ -33,6 +44,7 @@ type EditedEntryContextData = {
     entry: TS.FileSystemEntry,
     open?: boolean,
     source?: TS.ActionSource,
+    skipSelection?: boolean,
   ) => void;
 };
 
@@ -52,90 +64,131 @@ export type EditedEntryContextProviderProps = {
 export const EditedEntryContextProvider = ({
   children,
 }: EditedEntryContextProviderProps) => {
-  const actions = useRef<TS.EditAction[]>(undefined);
-  //const { getAllPropertiesPromise } = useDirectoryContentContext(); // cannot be injected here!
+  const tagDelimiter: string = useSelector(getTagDelimiter);
+  const [actions, setActions] = useState<TS.EditAction[] | undefined>(
+    undefined,
+  );
 
-  const [ignored, forceUpdate] = useReducer((x) => x + 1, 0, undefined);
+  const setReflectActions = useCallback((...actionsArray: TS.EditAction[]) => {
+    // keep the array as provided — immutability is preserved
+    setActions(actionsArray.length > 0 ? [...actionsArray] : undefined);
+  }, []);
 
-  function setReflectActions(...actionsArray: TS.EditAction[]) {
-    actions.current = actionsArray;
-    forceUpdate();
-  }
-
-  function reflectDeleteEntries(...entries: TS.FileSystemEntry[]) {
-    const actionsArray = [];
-    for (let i = 0; i < entries.length; i++) {
-      const currentAction: TS.EditAction = {
+  const reflectDeleteEntries = useCallback(
+    (...entries: TS.FileSystemEntry[]) => {
+      if (!entries || entries.length === 0) {
+        setActions(undefined);
+        return;
+      }
+      // Internal .ts sidecar/thumbnail/revision files are never shown in any
+      // view, so no consumer acts on their delete actions. Emitting them is
+      // not only useless — it's harmful: deleteFile()/deleteEntries() reflect
+      // the real file first and then reflect this meta cleanup. When the two
+      // setActions() calls aren't separated by a macrotask (Capacitor resolves
+      // a non-existent-file delete via a microtask, unlike Electron's IPC),
+      // React 18 batches them and the meta-only update clobbers the real
+      // file-delete — leaving the grid and the opened viewer stale until a
+      // manual reload. Drop meta entries; if nothing user-visible remains,
+      // don't touch `actions` at all (an empty/undefined update would clobber
+      // the preceding real delete just the same).
+      const visibleEntries = entries.filter(
+        (entry) => entry && !isMeta(entry.path),
+      );
+      if (visibleEntries.length === 0) {
+        return;
+      }
+      const actionsArray: TS.EditAction[] = visibleEntries.map((entry) => ({
         action: 'delete',
-        entry: entries[i],
-      };
-      actionsArray.push(currentAction);
-    }
-    actions.current = actionsArray;
-    forceUpdate();
-  }
+        entry,
+      }));
+      setActions(actionsArray);
+    },
+    [],
+  );
 
-  function reflectUpdateMeta(...entries: TS.FileSystemEntry[]) {
-    actions.current = entries.map((fsEntry) => ({
+  const reflectUpdateMeta = useCallback((...entries: TS.FileSystemEntry[]) => {
+    if (!entries || entries.length === 0) {
+      setActions(undefined);
+      return;
+    }
+    const actionsArray: TS.EditAction[] = entries.map((fsEntry) => ({
       action: 'update',
       entry: fsEntry,
       oldEntryPath: fsEntry.path,
     }));
-    forceUpdate();
-  }
+    setActions(actionsArray);
+  }, []);
 
-  function reflectAddEntryPath(
-    ...entriesPromises: Promise<TS.FileSystemEntry>[]
-  ): Promise<boolean> {
-    //const entriesPromises = paths.map((path) => getAllPropertiesPromise(path));
-    return Promise.all(entriesPromises).then((entries) => {
-      const actions: TS.EditAction[] = entries
-        .filter((entry) => entry)
-        .map((entry) => ({
-          action: 'add',
-          entry: entry,
-        }));
-      if (actions.length > 0) {
-        setReflectActions(...actions);
+  const reflectAddEntryPath = useCallback(
+    async (...entriesPromises: Promise<TS.FileSystemEntry>[]) => {
+      try {
+        const entries = await Promise.all(entriesPromises);
+        const newActions: TS.EditAction[] = entries
+          .filter((e) => !!e)
+          .map((entry) => ({
+            action: 'add',
+            entry,
+          }));
+        if (newActions.length > 0) {
+          setActions(newActions);
+        }
+        return true;
+      } catch (err) {
+        // handle silently or rethrow depending on your error policy
+        // for now return false to indicate failure
+        return false;
       }
-      return true;
-    });
-  }
+    },
+    [],
+  );
 
   /**
    * warning: no entry.meta will be added in reflectAddEntry. To add meta use reflectAddEntryPath
    * @param entry
    * @param open
    * @param actionSource
+   * @param skipSelection
    */
-  function reflectAddEntry(
-    entry: TS.FileSystemEntry,
-    open = true,
-    actionSource: TS.ActionSource = 'local',
-  ) {
-    if (!entry.tags || entry.tags.length === 0) {
-      entry.tags = extractTagsAsObjects(entry.name, AppConfig.tagDelimiter);
-    }
-    const currentAction: TS.EditAction = {
-      action: 'add',
-      entry: entry,
-      open: open,
-      ...(typeof actionSource !== 'boolean' && { source: actionSource }),
-    };
-    actions.current = [currentAction];
-    forceUpdate();
-  }
+  const reflectAddEntry = useCallback(
+    (
+      entry: TS.FileSystemEntry,
+      open = true,
+      actionSource: TS.ActionSource = 'local',
+      skipSelection: boolean = false,
+    ) => {
+      if (!entry.tags || entry.tags.length === 0) {
+        entry.tags = extractTagsAsObjects(entry.name, tagDelimiter);
+      }
+      const currentAction: TS.EditAction = {
+        action: 'add',
+        entry,
+        open,
+        ...(typeof actionSource !== 'boolean' && { source: actionSource }),
+        ...(skipSelection !== undefined && { skipSelection }),
+      };
+      setActions([currentAction]);
+    },
+    [],
+  );
 
-  const context = useMemo(() => {
-    return {
-      actions: actions.current,
+  const context = useMemo(
+    () => ({
+      actions,
       reflectUpdateMeta,
       setReflectActions,
       reflectDeleteEntries,
       reflectAddEntryPath,
       reflectAddEntry,
-    };
-  }, [actions.current]);
+    }),
+    [
+      actions,
+      reflectUpdateMeta,
+      setReflectActions,
+      reflectDeleteEntries,
+      reflectAddEntryPath,
+      reflectAddEntry,
+    ],
+  );
 
   return (
     <EditedEntryContext.Provider value={context}>

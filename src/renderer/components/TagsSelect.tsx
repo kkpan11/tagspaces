@@ -21,6 +21,8 @@ import TsTextField from '-/components/TsTextField';
 import AiGenTagsButton from '-/components/chat/AiGenTagsButton';
 import EntryTagMenu from '-/components/menus/EntryTagMenu';
 import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
+import { useEditedTagLibraryContext } from '-/hooks/useEditedTagLibraryContext';
+import { Pro } from '-/pro';
 import {
   getTagColor,
   getTagTextColor,
@@ -34,7 +36,13 @@ import { Box, InputAdornment } from '@mui/material';
 import Autocomplete from '@mui/material/Autocomplete';
 import FormHelperText from '@mui/material/FormHelperText';
 import { getUuid } from '@tagspaces/tagspaces-common/utils-io';
-import React, { useReducer, useRef, useState } from 'react';
+import React, {
+  useContext,
+  useEffect,
+  useReducer,
+  useRef,
+  useState,
+} from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSelector } from 'react-redux';
 
@@ -55,15 +63,29 @@ interface Props {
 function TagsSelect(props: Props) {
   const { t } = useTranslation();
   const { currentLocation } = useCurrentLocationContext();
+  const { tagGroups } = useEditedTagLibraryContext();
+
+  const workSpacesContext = Pro?.contextProviders?.WorkSpacesContext
+    ? useContext<TS.WorkSpacesContextData>(
+        Pro.contextProviders.WorkSpacesContext,
+      )
+    : undefined;
+
+  const currentWorkSpace =
+    workSpacesContext && workSpacesContext.getCurrentWorkSpace
+      ? workSpacesContext?.getCurrentWorkSpace()
+      : undefined;
+
   const desktopMode = useSelector(isDesktopMode);
   const isUseOnlyTagsFromTagLibrary = useSelector(useOnlyTagsFromTagLibrary);
   const [tagMenuAnchorEl, setTagMenuAnchorEl] = useState<null | HTMLElement>(
     null,
   );
-
   const [selectedTag, setSelectedTag] = useState(undefined);
   const tagsError = useRef<boolean>(false);
-  const allTags = useRef<Array<TS.Tag>>(getAllTags());
+  const allTags = useRef<Array<TS.Tag>>(
+    getAllTags(tagGroups, currentWorkSpace),
+  );
 
   const defaultBackgroundColor = useSelector(getTagColor);
   const defaultTextColor = useSelector(getTagTextColor);
@@ -76,8 +98,16 @@ function TagsSelect(props: Props) {
     tags = [],
     tagMode,
     handleNewTags,
+    handleChange,
     generateButton,
+    tagSearchType,
+    dataTid,
   } = props;
+
+  useEffect(() => {
+    allTags.current = getAllTags(tagGroups, currentWorkSpace);
+    forceUpdate();
+  }, [currentWorkSpace, tagGroups]);
 
   function handleTagChange(
     event: Object,
@@ -95,7 +125,7 @@ function TagsSelect(props: Props) {
           handleNewTags([]);
         }
         if (reason === 'selectOption') {
-          props.handleChange(props.tagSearchType, selectedTags, reason);
+          handleChange(tagSearchType, selectedTags, reason);
         } else if (reason === 'createOption') {
           if (selectedTags && selectedTags.length) {
             const newTags = parseTagsInput(
@@ -103,12 +133,12 @@ function TagsSelect(props: Props) {
             );
             selectedTags.pop();
             const allNewTags = [...selectedTags, ...newTags];
-            props.handleChange(props.tagSearchType, allNewTags, reason);
+            handleChange(tagSearchType, allNewTags, reason);
           }
         } else if (reason === 'remove-value') {
-          props.handleChange(props.tagSearchType, selectedTags, reason);
+          handleChange(tagSearchType, selectedTags, reason);
         } else if (reason === 'clear') {
-          props.handleChange(props.tagSearchType, [], reason);
+          handleChange(tagSearchType, [], reason);
         }
       }
     } else {
@@ -123,16 +153,16 @@ function TagsSelect(props: Props) {
     const newTags = [];
     tags.map((tag) => {
       if (tagsValidation(tag)) {
-        const newTag: TS.Tag = {
+        const existingTag = allTags.current.find(
+          (option) => option.title === tag,
+        );
+        const newTag: TS.Tag = existingTag ?? {
           id: getUuid(),
           title: '' + tag,
           color: defaultBackgroundColor,
           textcolor: defaultTextColor,
         };
-        //if (!allTags.current.find((option) => option.title === newTag.title)) {
         newTags.push(newTag);
-        //allTags.current.push(newTag);
-        //}
       } else {
         tagsError.current = true;
         forceUpdate();
@@ -175,7 +205,7 @@ function TagsSelect(props: Props) {
   return (
     <Box sx={{ flexGrow: 1 }}>
       <Autocomplete
-        data-tid={props.dataTid}
+        data-tid={dataTid}
         disabled={currentLocation?.isReadOnly}
         multiple
         options={!currentLocation?.isReadOnly ? allTags.current : []}
@@ -188,49 +218,80 @@ function TagsSelect(props: Props) {
         value={tags}
         onChange={handleTagChange}
         onInputChange={handleInputChange}
-        renderTags={(value: readonly TS.Tag[], getTagProps) =>
-          value.map((option: TS.Tag, index: number) => (
-            <TagContainer
-              key={selectedEntry?.path + option + index}
-              tag={option}
-              tagMode={tagMode}
-              handleTagMenu={handleTagMenu}
-              handleRemoveTag={handleRemoveTag}
-            />
-          ))
+        renderValue={(values) =>
+          (values as Array<TS.Tag | string>).flatMap((value, index) => {
+            // freeSolo + autoSelect can briefly surface the raw typed string
+            // here before onChange (createOption) replaces it with a Tag.
+            // Guard against rendering TagContainer with a string `tag`.
+            if (typeof value === 'string') return [];
+            return [
+              <TagContainer
+                key={(selectedEntry?.path ?? '') + value.id + index}
+                tag={value}
+                tagMode={tagMode}
+                handleTagMenu={handleTagMenu}
+                handleRemoveTag={handleRemoveTag}
+              />,
+            ];
+          })
         }
         renderOption={(props, option) => (
           <Box component="li" {...props}>
             <TagContainer tag={option} tagMode={tagMode} />
           </Box>
         )}
-        renderInput={(params) => (
-          <>
-            <TsTextField
-              {...params}
-              label={label}
-              placeholder={placeholderText}
-              margin="normal"
-              autoFocus={autoFocus}
-              error={tagsError.current}
-              style={{ marginTop: 0, marginBottom: 0, whiteSpace: 'nowrap' }}
-              fullWidth
-              slotProps={{
-                input: {
-                  ...params.InputProps,
-                  endAdornment: generateButton && (
-                    <InputAdornment position="end">
-                      <AiGenTagsButton variant="text" />
-                    </InputAdornment>
-                  ),
-                },
-              }}
-            />
-            {tagsError.current && (
-              <FormHelperText>{t('core:tagTitleHelper')}</FormHelperText>
-            )}
-          </>
-        )}
+        renderInput={(params) => {
+          // Backspace on an empty input removes the last selected tag.
+          // Wrap MUI's existing onKeyDown rather than replacing it so freeSolo
+          // Enter-to-commit still works. Pass the single tag to remove (not
+          // the new list) — 'remove-value' consumers like EntryProperties
+          // interpret the array as "tags to remove".
+          const existingOnKeyDown = params.slotProps.htmlInput.onKeyDown;
+          params.slotProps.htmlInput.onKeyDown = (event) => {
+            if (
+              event.key === 'Backspace' &&
+              (event.target as HTMLInputElement).value === '' &&
+              tags.length > 0
+            ) {
+              event.preventDefault();
+              event.stopPropagation();
+              handleRemoveTag(event, [tags[tags.length - 1]]);
+              return;
+            }
+            if (existingOnKeyDown) {
+              existingOnKeyDown(event);
+            }
+          };
+          // Append the AI gen button to MUI's default endAdornment instead of
+          // replacing it — overriding slotProps wholesale would drop
+          // params.slotProps.htmlInput (which carries the onKeyDown that
+          // commits freeSolo values on Enter).
+          if (generateButton) {
+            params.slotProps.input.endAdornment = (
+              <>
+                {params.slotProps.input.endAdornment}
+                <InputAdornment position="end">
+                  <AiGenTagsButton variant="text" />
+                </InputAdornment>
+              </>
+            );
+          }
+          return (
+            <>
+              <TsTextField
+                {...params}
+                label={label}
+                placeholder={placeholderText}
+                autoFocus={autoFocus}
+                error={tagsError.current}
+                sx={{ marginTop: 0, marginBottom: 0, whiteSpace: 'nowrap' }}
+              />
+              {tagsError.current && (
+                <FormHelperText>{t('core:tagTitleHelper')}</FormHelperText>
+              )}
+            </>
+          );
+        }}
       />
       {selectedEntry && (
         <EntryTagMenu

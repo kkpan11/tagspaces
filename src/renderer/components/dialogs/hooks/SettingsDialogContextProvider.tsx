@@ -25,9 +25,16 @@ import React, {
 } from 'react';
 import LoadingLazy from '-/components/LoadingLazy';
 import AppConfig from '-/AppConfig';
+import {
+  SettingsBackupIntent,
+  SettingsTab,
+} from '-/components/dialogs/SettingsDialog';
 
 type SettingsDialogContextData = {
-  openSettingsDialog: () => void;
+  openSettingsDialog: (
+    tab?: SettingsTab,
+    backup?: SettingsBackupIntent,
+  ) => void;
   closeSettingsDialog: () => void;
 };
 
@@ -47,6 +54,8 @@ const SettingsDialog = React.lazy(
 export const SettingsDialogContextProvider = ({
   children,
 }: SettingsDialogContextProviderProps) => {
+  const currentTab = useRef<SettingsTab>(SettingsTab.General);
+  const backupIntent = useRef<SettingsBackupIntent>(undefined);
   const open = useRef<boolean>(false);
 
   const [ignored, forceUpdate] = useReducer((x) => x + 1, 0, undefined);
@@ -67,13 +76,20 @@ export const SettingsDialogContextProvider = ({
     }
   }, []);
 
-  function openDialog() {
+  function openDialog(
+    tab: SettingsTab = SettingsTab.General,
+    backup?: SettingsBackupIntent,
+  ) {
+    currentTab.current = tab;
+    backupIntent.current = backup;
     open.current = true;
     forceUpdate();
   }
 
   function closeDialog() {
     open.current = false;
+    currentTab.current = SettingsTab.General;
+    backupIntent.current = undefined;
     forceUpdate();
   }
 
@@ -94,7 +110,12 @@ export const SettingsDialogContextProvider = ({
 
   return (
     <SettingsDialogContext.Provider value={context}>
-      <SettingsDialogAsync open={open.current} onClose={closeDialog} />
+      <SettingsDialogAsync
+        open={open.current}
+        tab={currentTab.current}
+        backup={backupIntent.current}
+        onClose={closeDialog}
+      />
       {children}
     </SettingsDialogContext.Provider>
   );

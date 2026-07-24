@@ -18,7 +18,9 @@
 
 import AppConfig from '-/AppConfig';
 import {
+  CloseIcon,
   EditIcon,
+  FilterIcon,
   MoreMenuIcon,
   SearchIcon,
   SmallArrowDownIcon,
@@ -27,6 +29,7 @@ import {
 import RenderHistory from '-/components/RenderHistory';
 import TsButton from '-/components/TsButton';
 import TsIconButton from '-/components/TsIconButton';
+import TsTextField from '-/components/TsTextField';
 import BookmarksMenu from '-/components/menus/BookmarksMenu';
 import HistoryMenu from '-/components/menus/HistoryMenu';
 import SearchMenu from '-/components/menus/SearchMenu';
@@ -42,22 +45,24 @@ import {
   getShowBookmarks,
   getShowUnixHiddenEntries,
   getStoredSearchesVisible,
+  isDesktopMode,
 } from '-/reducers/settings';
 import { TS } from '-/tagspaces.namespace';
-import { Box } from '@mui/material';
-import Grid from '@mui/material/Grid2';
+import { Box, InputAdornment } from '@mui/material';
+import Grid from '@mui/material/Grid';
 import Typography from '@mui/material/Typography';
 import React, { useContext, useReducer, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { connect } from 'react-redux';
+import { connect, useSelector } from 'react-redux';
 import { bindActionCreators } from 'redux';
 import { Pro } from '../pro';
+import { SettingsTab } from './dialogs/SettingsDialog';
+import { useSettingsDialogContext } from './dialogs/hooks/useSettingsDialogContext';
 import SidePanelTitle from './SidePanelTitle';
 
 interface Props {
   style?: any;
   showUnixHiddenEntries: boolean;
-  reduceHeightBy: number;
   storedSearchesVisible: boolean;
   showBookmarks: boolean;
   fileOpenHistory: boolean;
@@ -88,19 +93,26 @@ function StoredSearches(props: Props) {
 
   const [bookmarksMenuAnchorEl, setBookmarksMenuAnchorEl] =
     useState<null | HTMLElement>(null);
+  const [showFilter, setShowFilter] = useState<boolean>(false);
+  const [filterQuery, setFilterQuery] = useState<string>('');
+  const desktopMode = useSelector(isDesktopMode);
 
-  const [isExportSearchesDialogOpened, setExportSearchesDialogOpened] =
-    useState<boolean>(false);
+  const query = showFilter ? filterQuery.trim().toLowerCase() : '';
 
-  const [importFile, setImportFile] = useState<File>(undefined);
+  const { openSettingsDialog } = useSettingsDialogContext();
+
+  const toggleFilter = () => {
+    setShowFilter((prev) => {
+      if (prev) {
+        setFilterQuery('');
+      }
+      return !prev;
+    });
+  };
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const menuHistoryKey = useRef<string>(undefined);
   const [ignored, forceUpdate] = useReducer((x) => x + 1, 0, undefined);
-
-  const ExportSearchesDialog =
-    Pro && Pro.UI ? Pro.UI.ExportSearchesDialog : false;
-  const ImportSearchesDialog =
-    Pro && Pro.UI ? Pro.UI.ImportSearchesDialog : false;
 
   const handleSearchMenu = (event: any) => {
     setSearchMenuAnchorEl(event.currentTarget);
@@ -113,111 +125,241 @@ function StoredSearches(props: Props) {
   function handleFileInputChange(selection: any) {
     const target = selection.currentTarget;
     const file = target.files[0];
-    setImportFile(file);
+    if (file) {
+      openSettingsDialog(SettingsTab.BackupRestore, {
+        mode: 'import',
+        scope: 'searches',
+        importFile: file,
+      });
+    }
     target.value = null;
   }
 
   const preventDefault = (event: React.SyntheticEvent) =>
     event.preventDefault();
 
-  const noSearchesFound = searches.length < 1;
-
-  const { reduceHeightBy } = props;
-
   const bookmarkItems: Array<TS.BookmarkItem> =
     Pro && bookmarksContext
       ? bookmarksContext.bookmarks //getBookmarks()
       : [];
 
-  const bookmarksAvailable = bookmarkItems && bookmarkItems.length > 0;
-  const openedFilesAvailable = fileOpenHistory && fileOpenHistory.length > 0;
-  const editedFilesAvailable = fileEditHistory && fileEditHistory.length > 0;
-  const openedFoldersAvailable =
-    folderOpenHistory && folderOpenHistory.length > 0;
+  const filterActive = !!query;
+  const filterItems = (items: any[]) =>
+    filterActive
+      ? (items || []).filter((it) => it.path?.toLowerCase().includes(query))
+      : items || [];
+
+  const filteredSearches = filterActive
+    ? searches.filter((s) => s.title?.toLowerCase().includes(query))
+    : searches;
+  const filteredBookmarks = filterItems(bookmarkItems);
+  const filteredFileOpen = filterItems(fileOpenHistory);
+  const filteredFileEdit = filterItems(fileEditHistory);
+  const filteredFolderOpen = filterItems(folderOpenHistory);
+
+  const noSearchesFound = filteredSearches.length < 1;
+  const bookmarksAvailable = filteredBookmarks.length > 0;
+  const openedFilesAvailable = filteredFileOpen.length > 0;
+  const editedFilesAvailable = filteredFileEdit.length > 0;
+  const openedFoldersAvailable = filteredFolderOpen.length > 0;
+
+  // While filtering, force every section open so matches are visible and hide
+  // sections that have no match; otherwise honour the user's collapse state.
+  const searchesExpanded = filterActive || props.storedSearchesVisible;
+  const bookmarksExpanded = filterActive || props.showBookmarks;
+  const fileOpenExpanded = filterActive || props.fileOpenHistory;
+  const fileEditExpanded = filterActive || props.fileEditHistory;
+  const folderOpenExpanded = filterActive || props.folderOpenHistory;
+
+  const showSearchesSection = !filterActive || !noSearchesFound;
+  const showBookmarksSection = !filterActive || bookmarksAvailable;
+  const showFileOpenSection = !filterActive || openedFilesAvailable;
+  const showFileEditSection = !filterActive || editedFilesAvailable;
+  const showFolderOpenSection = !filterActive || openedFoldersAvailable;
+
+  const noMatches =
+    filterActive &&
+    noSearchesFound &&
+    !bookmarksAvailable &&
+    !openedFilesAvailable &&
+    !editedFilesAvailable &&
+    !openedFoldersAvailable;
 
   return (
     <Box
       data-tid="quickAccessArea"
-      style={{
+      sx={{
         display: 'flex',
         flexDirection: 'column',
-        height: '100%',
+        flex: 1,
+        minHeight: 0,
         borderRadius: AppConfig.defaultCSSRadius,
-        marginLeft: 5,
-        marginRight: 0,
+        marginLeft: '5px',
+        marginRight: '5px',
       }}
     >
-      <SidePanelTitle title={t('core:quickAccess')} />
-      <div
-        style={{
+      <SidePanelTitle
+        title={t('core:quickAccess')}
+        titleAdornment={
+          desktopMode ? (
+            <TsIconButton
+              size="small"
+              data-tid="quickAccessFilterTID"
+              tooltip={t('core:filterQuickAccess')}
+              onClick={toggleFilter}
+              sx={{
+                marginTop: '8px',
+                marginLeft: '6px',
+                width: 18,
+                height: 18,
+                padding: '2px',
+                borderRadius: '4px',
+                border: '1px dashed',
+                borderColor: showFilter ? 'text.primary' : 'text.disabled',
+                color: showFilter ? 'text.primary' : 'text.disabled',
+                '&:hover': {
+                  borderColor: 'text.primary',
+                  color: 'text.primary',
+                },
+              }}
+            >
+              <FilterIcon sx={{ fontSize: 13 }} />
+            </TsIconButton>
+          ) : null
+        }
+      />
+      {showFilter && (
+        <TsTextField
+          autoFocus
+          data-tid="quickAccessFilterInputTID"
+          value={filterQuery}
+          updateValue={(value) => setFilterQuery(value)}
+          retrieveValue={() => filterQuery}
+          onChange={(event) => setFilterQuery(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') {
+              event.stopPropagation();
+              toggleFilter();
+            }
+          }}
+          placeholder={t('core:filterQuickAccessPlaceholder')}
+          sx={{
+            marginBottom: '5px',
+            marginLeft: '2px',
+            '& .MuiInputBase-root': {
+              paddingRight: '4px',
+            },
+            '& .MuiInputBase-input': {
+              padding: '5px 8px',
+              fontSize: '0.85rem',
+            },
+          }}
+          slotProps={{
+            input: {
+              endAdornment: filterQuery ? (
+                <InputAdornment position="end">
+                  <TsIconButton
+                    size="small"
+                    data-tid="quickAccessFilterClearTID"
+                    onClick={() => setFilterQuery('')}
+                  >
+                    <CloseIcon fontSize="small" />
+                  </TsIconButton>
+                </InputAdornment>
+              ) : undefined,
+            },
+          }}
+        />
+      )}
+      <Box
+        sx={{
           paddingTop: 0,
           marginTop: 0,
-          height: 'calc(100% - ' + reduceHeightBy + 'px)',
-          width: 305,
+          flex: 1,
+          minHeight: 0,
+          width: '100%',
           overflowY: 'auto',
           overflowX: 'hidden',
         }}
       >
-        <Grid container direction="row">
-          <Grid size={10} style={{ alignSelf: 'center' }}>
-            <TsIconButton
-              data-tid={
-                props.storedSearchesVisible
-                  ? 'storedSearchesVisibleTID'
-                  : 'storedSearchesHiddenTID'
-              }
-              style={{ minWidth: 'auto', padding: 7 }}
-              onClick={() =>
-                props.setStoredSearchesVisible(!props.storedSearchesVisible)
-              }
-            >
-              {props.storedSearchesVisible ? (
-                <SmallArrowDownIcon />
-              ) : (
-                <SmallArrowRightIcon />
-              )}
-            </TsIconButton>
-            <Typography
-              variant="inherit"
-              style={{ display: 'inline' }}
-              noWrap
-              onClick={() =>
-                props.setStoredSearchesVisible(!props.storedSearchesVisible)
-              }
-            >
-              {t('core:savedSearchesTitle')}
-            </Typography>
+        {noMatches && (
+          <Box
+            data-tid="quickAccessFilterNoMatch"
+            sx={{
+              padding: '16px',
+              textAlign: 'center',
+              color: 'text.secondary',
+            }}
+          >
+            <Typography variant="body2">{t('core:noMatchesFound')}</Typography>
+          </Box>
+        )}
+        {showSearchesSection && (
+          <Grid container direction="row">
+            <Grid size={10} sx={{ alignSelf: 'center' }}>
+              <TsIconButton
+                data-tid={
+                  props.storedSearchesVisible
+                    ? 'storedSearchesVisibleTID'
+                    : 'storedSearchesHiddenTID'
+                }
+                sx={{ minWidth: 'auto', padding: '7px' }}
+                onClick={() =>
+                  props.setStoredSearchesVisible(!props.storedSearchesVisible)
+                }
+              >
+                {searchesExpanded ? (
+                  <SmallArrowDownIcon />
+                ) : (
+                  <SmallArrowRightIcon />
+                )}
+              </TsIconButton>
+              <Typography
+                variant="inherit"
+                sx={{ display: 'inline' }}
+                noWrap
+                onClick={() =>
+                  props.setStoredSearchesVisible(!props.storedSearchesVisible)
+                }
+              >
+                {t('core:savedSearchesTitle')}
+              </Typography>
+            </Grid>
+            <Grid size={2} sx={{ textAlign: 'right' }}>
+              <SearchMenu
+                anchorEl={searchMenuAnchorEl}
+                open={Boolean(searchMenuAnchorEl)}
+                onClose={handleCloseSearchMenu}
+                exportSearches={() => {
+                  openSettingsDialog(SettingsTab.BackupRestore, {
+                    mode: 'export',
+                    scope: 'searches',
+                  });
+                }}
+                importSearches={() => {
+                  fileInputRef.current.click();
+                }}
+              />
+              <TsIconButton
+                size="small"
+                data-tid="StoredSearchesMenuTID"
+                onClick={handleSearchMenu}
+              >
+                <MoreMenuIcon />
+              </TsIconButton>
+            </Grid>
           </Grid>
-          <Grid size={2} style={{ textAlign: 'right' }}>
-            <SearchMenu
-              anchorEl={searchMenuAnchorEl}
-              open={Boolean(searchMenuAnchorEl)}
-              onClose={handleCloseSearchMenu}
-              exportSearches={() => {
-                setExportSearchesDialogOpened(true);
-              }}
-              importSearches={() => {
-                fileInputRef.current.click();
-              }}
-            />
-            <TsIconButton
-              data-tid="StoredSearchesMenuTID"
-              onClick={handleSearchMenu}
-            >
-              <MoreMenuIcon />
-            </TsIconButton>
-          </Grid>
-        </Grid>
+        )}
         <Grid container direction="row">
-          {props.storedSearchesVisible && noSearchesFound && (
-            <Grid size={12} style={{ textAlign: 'center' }}>
+          {!filterActive && searchesExpanded && noSearchesFound && (
+            <Grid size={12} sx={{ textAlign: 'center' }}>
               <Typography variant="caption">{t('noSavedSearches')}</Typography>
             </Grid>
           )}
         </Grid>
         <Grid>
-          {props.storedSearchesVisible &&
-            searches.map((search) => (
+          {searchesExpanded &&
+            filteredSearches.map((search) => (
               <Grid container direction="row" key={search.uuid}>
                 <Grid size={10}>
                   <TsButton
@@ -227,25 +369,29 @@ function StoredSearches(props: Props) {
                       search.title.trim().replaceAll(/\s+/g, '-')
                     }
                     variant="text"
-                    style={{
+                    sx={{
                       textTransform: 'none',
                       fontWeight: 'normal',
                       justifyContent: 'start',
+                      width: '100%',
+                      minWidth: 0,
                     }}
                     onClick={() => findFromSavedSearch(search.uuid)}
                   >
                     <SearchIcon />
                     &nbsp;
-                    <span
-                      style={{
+                    <Box
+                      sx={{
                         whiteSpace: 'nowrap',
                         textOverflow: 'ellipsis',
                         overflow: 'hidden',
-                        maxWidth: 220,
+                        flex: 1,
+                        minWidth: 0,
+                        textAlign: 'left',
                       }}
                     >
                       {search.title}
-                    </span>
+                    </Box>
                   </TsButton>
                 </Grid>
                 <Grid size={2}>
@@ -261,196 +407,208 @@ function StoredSearches(props: Props) {
               </Grid>
             ))}
         </Grid>
-        <Grid container direction="row">
-          <Grid size={10} style={{ alignSelf: 'center' }}>
-            <TsIconButton
-              data-tid="BookmarksTID"
-              style={{ minWidth: 'auto', padding: 7 }}
-              onClick={() => props.setShowBookmarks(!props.showBookmarks)}
-            >
-              {props.showBookmarks ? (
-                <SmallArrowDownIcon />
-              ) : (
-                <SmallArrowRightIcon />
-              )}
-            </TsIconButton>
-            <Typography
-              variant="inherit"
-              style={{ display: 'inline' }}
-              noWrap
-              onClick={() => props.setShowBookmarks(!props.showBookmarks)}
-            >
-              {t('core:showBookmarks')}
-            </Typography>
+        {showBookmarksSection && (
+          <Grid container direction="row">
+            <Grid size={10} sx={{ alignSelf: 'center' }}>
+              <TsIconButton
+                data-tid="BookmarksTID"
+                sx={{ minWidth: 'auto', padding: '7px' }}
+                onClick={() => props.setShowBookmarks(!props.showBookmarks)}
+              >
+                {bookmarksExpanded ? (
+                  <SmallArrowDownIcon />
+                ) : (
+                  <SmallArrowRightIcon />
+                )}
+              </TsIconButton>
+              <Typography
+                variant="inherit"
+                sx={{ display: 'inline' }}
+                noWrap
+                onClick={() => props.setShowBookmarks(!props.showBookmarks)}
+              >
+                {t('core:showBookmarks')}
+              </Typography>
+            </Grid>
+            <Grid size={2} sx={{ textAlign: 'right' }}>
+              <TsIconButton
+                data-tid="BookmarksMenuTID"
+                onClick={(event: any) => {
+                  menuHistoryKey.current = historyKeys.fileOpenKey;
+                  setBookmarksMenuAnchorEl(event.currentTarget);
+                }}
+                size="small"
+              >
+                <MoreMenuIcon />
+              </TsIconButton>
+            </Grid>
           </Grid>
-          <Grid size={2} style={{ textAlign: 'right' }}>
-            <TsIconButton
-              data-tid="BookmarksMenuTID"
-              onClick={(event: any) => {
-                menuHistoryKey.current = historyKeys.fileOpenKey;
-                setBookmarksMenuAnchorEl(event.currentTarget);
-              }}
-            >
-              <MoreMenuIcon />
-            </TsIconButton>
-          </Grid>
-        </Grid>
+        )}
         <Grid container direction="row">
-          {props.showBookmarks && !bookmarksAvailable && (
-            <Grid size={12} style={{ textAlign: 'center' }}>
+          {!filterActive && bookmarksExpanded && !bookmarksAvailable && (
+            <Grid size={12} sx={{ textAlign: 'center' }}>
               <Typography variant="caption">{t('noItems')}</Typography>
             </Grid>
           )}
         </Grid>
-        {Pro && props.showBookmarks && (
+        {Pro && bookmarksExpanded && (
           <RenderHistory
             historyKey={Pro.keys.bookmarksKey}
-            items={bookmarkItems}
+            items={filteredBookmarks}
             update={forceUpdate}
           />
         )}
-        <Grid container direction="row">
-          <Grid size={10} style={{ alignSelf: 'center' }}>
-            <TsIconButton
-              data-tid={
-                props.fileOpenHistory
-                  ? 'fileCloseHistoryTID'
-                  : 'fileOpenHistoryTID'
-              }
-              style={{ minWidth: 'auto', padding: 7 }}
-              onClick={() => props.setFileOpenHistory(!props.fileOpenHistory)}
-            >
-              {props.fileOpenHistory ? (
-                <SmallArrowDownIcon />
-              ) : (
-                <SmallArrowRightIcon />
-              )}
-            </TsIconButton>
-            <Typography
-              variant="inherit"
-              style={{ display: 'inline' }}
-              noWrap
-              onClick={() => props.setFileOpenHistory(!props.fileOpenHistory)}
-            >
-              {t('core:fileOpenHistory')}
-            </Typography>
+        {showFileOpenSection && (
+          <Grid container direction="row">
+            <Grid size={10} sx={{ alignSelf: 'center' }}>
+              <TsIconButton
+                data-tid={
+                  props.fileOpenHistory
+                    ? 'fileCloseHistoryTID'
+                    : 'fileOpenHistoryTID'
+                }
+                sx={{ minWidth: 'auto', padding: '7px' }}
+                onClick={() => props.setFileOpenHistory(!props.fileOpenHistory)}
+              >
+                {fileOpenExpanded ? (
+                  <SmallArrowDownIcon />
+                ) : (
+                  <SmallArrowRightIcon />
+                )}
+              </TsIconButton>
+              <Typography
+                variant="inherit"
+                sx={{ display: 'inline' }}
+                noWrap
+                onClick={() => props.setFileOpenHistory(!props.fileOpenHistory)}
+              >
+                {t('core:fileOpenHistory')}
+              </Typography>
+            </Grid>
+            <Grid size={2} sx={{ textAlign: 'right' }}>
+              <TsIconButton
+                data-tid="fileOpenMenuTID"
+                onClick={(event: any) => {
+                  menuHistoryKey.current = historyKeys.fileOpenKey;
+                  setHistoryMenuAnchorEl(event.currentTarget);
+                }}
+                size="small"
+              >
+                <MoreMenuIcon />
+              </TsIconButton>
+            </Grid>
           </Grid>
-          <Grid size={2} style={{ textAlign: 'right' }}>
-            <TsIconButton
-              data-tid="fileOpenMenuTID"
-              onClick={(event: any) => {
-                menuHistoryKey.current = historyKeys.fileOpenKey;
-                setHistoryMenuAnchorEl(event.currentTarget);
-              }}
-            >
-              <MoreMenuIcon />
-            </TsIconButton>
-          </Grid>
-        </Grid>
+        )}
         <Grid container direction="row">
-          {props.fileOpenHistory && !openedFilesAvailable && (
-            <Grid size={12} style={{ textAlign: 'center' }}>
+          {!filterActive && fileOpenExpanded && !openedFilesAvailable && (
+            <Grid size={12} sx={{ textAlign: 'center' }}>
               <Typography variant="caption">{t('noItems')}</Typography>
             </Grid>
           )}
         </Grid>
-        {props.fileOpenHistory && (
+        {fileOpenExpanded && (
           <RenderHistory
             historyKey={historyKeys.fileOpenKey}
-            items={fileOpenHistory}
+            items={filteredFileOpen}
             update={forceUpdate}
           />
         )}
-        <Grid container direction="row">
-          <Grid size={10} style={{ alignSelf: 'center' }}>
-            <TsIconButton
-              data-tid="fileEditHistoryTID"
-              style={{ minWidth: 'auto', padding: 7 }}
-              onClick={() => props.setFileEditHistory(!props.fileEditHistory)}
-            >
-              {props.fileEditHistory ? (
-                <SmallArrowDownIcon />
-              ) : (
-                <SmallArrowRightIcon />
-              )}
-            </TsIconButton>
-            <Typography
-              variant="inherit"
-              style={{ display: 'inline' }}
-              noWrap
-              onClick={() => props.setFileEditHistory(!props.fileEditHistory)}
-            >
-              {t('core:fileEditHistory')}
-            </Typography>
+        {showFileEditSection && (
+          <Grid container direction="row">
+            <Grid size={10} sx={{ alignSelf: 'center' }}>
+              <TsIconButton
+                data-tid="fileEditHistoryTID"
+                sx={{ minWidth: 'auto', padding: '7px' }}
+                onClick={() => props.setFileEditHistory(!props.fileEditHistory)}
+              >
+                {fileEditExpanded ? (
+                  <SmallArrowDownIcon />
+                ) : (
+                  <SmallArrowRightIcon />
+                )}
+              </TsIconButton>
+              <Typography
+                variant="inherit"
+                sx={{ display: 'inline' }}
+                noWrap
+                onClick={() => props.setFileEditHistory(!props.fileEditHistory)}
+              >
+                {t('core:fileEditHistory')}
+              </Typography>
+            </Grid>
+            <Grid size={2} sx={{ textAlign: 'right' }}>
+              <TsIconButton
+                data-tid="FileEditedMenuTID"
+                onClick={(event: any) => {
+                  menuHistoryKey.current = historyKeys.fileEditKey;
+                  setHistoryMenuAnchorEl(event.currentTarget);
+                }}
+                size="small"
+              >
+                <MoreMenuIcon />
+              </TsIconButton>
+            </Grid>
           </Grid>
-          <Grid size={2} style={{ textAlign: 'right' }}>
-            <TsIconButton
-              data-tid="FileEditedMenuTID"
-              onClick={(event: any) => {
-                menuHistoryKey.current = historyKeys.fileEditKey;
-                setHistoryMenuAnchorEl(event.currentTarget);
-              }}
-            >
-              <MoreMenuIcon />
-            </TsIconButton>
-          </Grid>
-        </Grid>
+        )}
         <Grid container direction="row">
-          {props.fileEditHistory && !editedFilesAvailable && (
-            <Grid size={12} style={{ textAlign: 'center' }}>
+          {!filterActive && fileEditExpanded && !editedFilesAvailable && (
+            <Grid size={12} sx={{ textAlign: 'center' }}>
               <Typography variant="caption">{t('noItems')}</Typography>
             </Grid>
           )}
         </Grid>
-        {props.fileEditHistory && (
+        {fileEditExpanded && (
           <RenderHistory
             historyKey={historyKeys.fileEditKey}
-            items={fileEditHistory}
+            items={filteredFileEdit}
             update={forceUpdate}
           />
         )}
-        <Grid container direction="row">
-          <Grid size={10} style={{ alignSelf: 'center' }}>
-            <TsIconButton
-              data-tid={
-                props.folderOpenHistory
-                  ? 'folderCloseHistoryTID'
-                  : 'folderOpenHistoryTID'
-              }
-              style={{ minWidth: 'auto', padding: 7 }}
-              onClick={() =>
-                props.setFolderOpenHistory(!props.folderOpenHistory)
-              }
-            >
-              {props.folderOpenHistory ? (
-                <SmallArrowDownIcon />
-              ) : (
-                <SmallArrowRightIcon />
-              )}
-            </TsIconButton>
-            <Typography
-              variant="inherit"
-              style={{ display: 'inline' }}
-              noWrap
-              onClick={() =>
-                props.setFolderOpenHistory(!props.folderOpenHistory)
-              }
-            >
-              {t('core:folderOpenHistory')}
-            </Typography>
+        {showFolderOpenSection && (
+          <Grid container direction="row">
+            <Grid size={10} sx={{ alignSelf: 'center' }}>
+              <TsIconButton
+                data-tid={
+                  props.folderOpenHistory
+                    ? 'folderCloseHistoryTID'
+                    : 'folderOpenHistoryTID'
+                }
+                sx={{ minWidth: 'auto', padding: '7px' }}
+                onClick={() =>
+                  props.setFolderOpenHistory(!props.folderOpenHistory)
+                }
+              >
+                {folderOpenExpanded ? (
+                  <SmallArrowDownIcon />
+                ) : (
+                  <SmallArrowRightIcon />
+                )}
+              </TsIconButton>
+              <Typography
+                variant="inherit"
+                sx={{ display: 'inline' }}
+                noWrap
+                onClick={() =>
+                  props.setFolderOpenHistory(!props.folderOpenHistory)
+                }
+              >
+                {t('core:folderOpenHistory')}
+              </Typography>
+            </Grid>
+            <Grid size={2} sx={{ textAlign: 'right' }}>
+              <TsIconButton
+                size="small"
+                data-tid="FolderOpenMenuTID"
+                onClick={(event: any) => {
+                  menuHistoryKey.current = historyKeys.folderOpenKey;
+                  setHistoryMenuAnchorEl(event.currentTarget);
+                }}
+              >
+                <MoreMenuIcon />
+              </TsIconButton>
+            </Grid>
           </Grid>
-          <Grid size={2} style={{ textAlign: 'right' }}>
-            <TsIconButton
-              data-tid="FolderOpenMenuTID"
-              onClick={(event: any) => {
-                menuHistoryKey.current = historyKeys.folderOpenKey;
-                setHistoryMenuAnchorEl(event.currentTarget);
-              }}
-            >
-              <MoreMenuIcon />
-            </TsIconButton>
-          </Grid>
-        </Grid>
+        )}
         <HistoryMenu
           anchorEl={historyMenuAnchorEl}
           open={Boolean(historyMenuAnchorEl)}
@@ -474,42 +632,28 @@ function StoredSearches(props: Props) {
           }}
         />
         <Grid container direction="row">
-          {props.folderOpenHistory && !openedFoldersAvailable && (
-            <Grid size={12} style={{ textAlign: 'center' }}>
+          {!filterActive && folderOpenExpanded && !openedFoldersAvailable && (
+            <Grid size={12} sx={{ textAlign: 'center' }}>
               <Typography variant="caption">{t('noItems')}</Typography>
             </Grid>
           )}
         </Grid>
-        {props.folderOpenHistory && (
+        {folderOpenExpanded && (
           <RenderHistory
             historyKey={historyKeys.folderOpenKey}
-            items={folderOpenHistory}
+            items={filteredFolderOpen}
             update={forceUpdate}
           />
         )}
-      </div>
+      </Box>
       <input
         style={{ display: 'none' }}
         ref={fileInputRef}
         accept="*"
         type="file"
+        data-tid="searchImportFileInput"
         onChange={handleFileInputChange}
       />
-      {ExportSearchesDialog && isExportSearchesDialogOpened && (
-        <ExportSearchesDialog
-          open={isExportSearchesDialogOpened}
-          onClose={() => setExportSearchesDialogOpened(false)}
-          searches={searches}
-        />
-      )}
-      {ImportSearchesDialog && importFile && (
-        <ImportSearchesDialog
-          open={Boolean(importFile)}
-          onClose={() => setImportFile(undefined)}
-          importFile={importFile}
-          searches={searches}
-        />
-      )}
     </Box>
   );
 }

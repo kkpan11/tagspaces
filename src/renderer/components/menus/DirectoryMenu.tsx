@@ -18,21 +18,19 @@
 
 import React, { useContext } from 'react';
 import { Menu } from '@mui/material';
-import { formatDateTime4Tag } from '@tagspaces/tagspaces-common/misc';
 import AppConfig from '-/AppConfig';
 import {
   extractParentDirectoryPath,
   extractDirectoryName,
   getThumbFileLocationForDirectory,
   normalizePath,
-  generateSharingLink,
 } from '@tagspaces/tagspaces-common/paths';
 import { Pro } from '-/pro';
 import {
+  buildSharingLinkForEntry,
   createNewInstance,
   getRelativeEntryPath,
   openDirectoryMessage,
-  readMacOSTags,
 } from '-/services/utils-io';
 import { PerspectiveIDs } from '-/perspectives';
 import TsMenuList from '-/components/TsMenuList';
@@ -84,13 +82,14 @@ function DirectoryMenu(props: Props) {
   const { openEntry } = useOpenedEntryContext();
   const { selectedEntries, setSelectedEntries } = useSelectedEntriesContext();
   const { addTags } = useTaggingActionsContext();
-  const { openProgressDialog } = useProgressDialogContext();
+  const { openProgressDialog, closeProgressDialog } =
+    useProgressDialogContext();
   const { openNewFileDialog } = useNewFileDialogContext();
   const { currentLocation, getLocationPath, findLocation } =
     useCurrentLocationContext();
   const { setThumbnailImageChange, getMetadataID } = useIOActionsContext();
   const { showNotification } = useNotificationContext();
-  const { openFileUpload } = useFileUploadContext();
+  const { openFileUpload, openCameraCapture } = useFileUploadContext();
   const { openCreateDirectoryDialog } = useCreateDirectoryDialogContext();
   const {
     openDirectory,
@@ -107,6 +106,13 @@ function DirectoryMenu(props: Props) {
   const { openProTeaserDialog } = useProTeaserDialogContext();
   const { openDeleteMultipleEntriesDialog } =
     useDeleteMultipleEntriesDialogContext();
+
+  const extractTagsDialogContext = Pro?.contextProviders
+    ?.ExtractTagsDialogContext
+    ? useContext<TS.ExtractTagsDialogContextData>(
+        Pro.contextProviders.ExtractTagsDialogContext,
+      )
+    : undefined;
 
   const thumbDialogContext = Pro?.contextProviders?.ThumbDialogContext
     ? useContext<TS.ThumbDialogContextData>(
@@ -133,29 +139,43 @@ function DirectoryMenu(props: Props) {
   const directoryPath = props.directoryPath || currentDirectoryPath;
 
   function generateFolderLink(): Promise<any> {
-    let locationID = undefined;
-    let entryPath = currentDirectoryPath;
-    if (selectedEntries && selectedEntries.length > 0) {
-      if (selectedEntries[0]['locationID']) {
-        locationID = selectedEntries[0]['locationID'];
-      }
-      entryPath = selectedEntries[0].path;
-    }
+    const entry = selectedEntries?.[0];
+    const entryPath = entry?.path || currentDirectoryPath;
+    const tmpLoc = findLocation(entry?.['locationID']);
+    const folderName = extractDirectoryName(
+      entry ? entry.name : currentDirectoryPath,
+      currentLocation?.getDirSeparator(),
+    );
+    const folderEntry: TS.FileSystemEntry = entry
+      ? ({ ...entry, isFile: false } as TS.FileSystemEntry)
+      : ({
+          uuid: '',
+          name: folderName,
+          isFile: false,
+          path: entryPath,
+          extension: '',
+          tags: [],
+          size: 0,
+          lmdt: 0,
+        } as TS.FileSystemEntry);
+    return buildSharingLinkForEntry(folderEntry, tmpLoc, getMetadataID).then(
+      (url) => ({ url, name: folderName }),
+    );
+  }
+
+  function copyRelativePath() {
+    onClose();
+    const entryPath =
+      selectedEntries?.length > 0
+        ? selectedEntries[0].path
+        : currentDirectoryPath;
+    const locationID = selectedEntries?.[0]?.locationID;
     const tmpLoc = findLocation(locationID);
-    return getLocationPath(tmpLoc).then((locationPath) => {
+    getLocationPath(tmpLoc).then((locationPath) => {
       const relativePath = getRelativeEntryPath(locationPath, entryPath);
-      const folderName = extractDirectoryName(
-        selectedEntries[0] ? selectedEntries[0].name : currentDirectoryPath,
-        currentLocation?.getDirSeparator(),
-      );
-      return getMetadataID(entryPath, selectedEntries[0]?.uuid, tmpLoc).then(
-        (id) => {
-          return {
-            url: generateSharingLink(locationID, undefined, relativePath, id),
-            name: folderName,
-          };
-        },
-      );
+      navigator.clipboard.writeText(relativePath).then(() => {
+        showNotification(t('core:pathCopied'));
+      });
     });
   }
 
@@ -212,6 +232,18 @@ function DirectoryMenu(props: Props) {
     openDeleteMultipleEntriesDialog();
   }
 
+  function showAddRemoveTagsDialog() {
+    // Opened from the directory menu, so the action targets the current
+    // folder. Fall back to it when it isn't already part of the selection,
+    // otherwise the tagging dialog would open with nothing preselected.
+    const entries = selectedEntries.some(
+      (entry) => entry.path === directoryPath,
+    )
+      ? selectedEntries
+      : [currentLocation.toFsEntry(directoryPath, false)];
+    openAddRemoveTagsDialog(entries);
+  }
+
   function createNewFile(entryType?: TS.FileType) {
     openNewFileDialog(entryType);
   }
@@ -240,135 +272,18 @@ function DirectoryMenu(props: Props) {
     openFileUpload(directoryPath);
   }
 
-  function importMacTags() {
-    if (Pro && Pro.MacTagsImport && Pro.MacTagsImport.importTags) {
-      if (
-        !confirm(`Experimental feature\n
-Depending on how many tags you have in your current directory, the tag extraction process may take a long time in which the application's user interface may appear as blocked.\n
-Do you want to continue?`)
-      ) {
-        return false;
-      }
-      openProgressDialog();
-
-      const entryCallback = (entry) => {
-        readMacOSTags(entry.path)
-          .then((tags) => {
-            if (tags.length > 0) {
-              addTags([entry.path], tags);
-            }
-            return tags;
-          })
-          .catch((err) => {
-            console.log('Error creating tags: ' + err);
-          });
-      };
-      Pro.MacTagsImport.importTags(
-        directoryPath,
-        currentLocation.listDirectoryPromise,
-        entryCallback,
-      )
-        .then(() => {
-          openProgressDialog();
-          console.log('Import tags succeeded ' + directoryPath);
-          showNotification(
-            'Tags from ' + directoryPath + ' are imported successfully.',
-            'default',
-            true,
-          );
-          return true;
-        })
-        .catch((err) => {
-          console.log('Error importing tags: ' + err);
-          openProgressDialog();
-        });
-    } else {
-      showNotification(
-        t('core:thisFunctionalityIsAvailableInPro'),
-        'default',
-        true,
-      );
-      return true;
-    }
-  }
-
-  function onFail(message) {
-    console.log('Camera Failed: ' + message);
-  }
-
-  function onCameraSuccess(imageURL) {
-    window.resolveLocalFileSystemURL(
-      imageURL,
-      (fp) => {
-        moveFile(fp.nativeURL);
-      },
-      () => {
-        console.log('Failed to get filesystem url');
-      },
-    );
-  }
-
-  function moveFile(filePath) {
-    const fileName =
-      'IMG_TS' +
-      AppConfig.beginTagContainer +
-      formatDateTime4Tag(new Date(), true) +
-      AppConfig.endTagContainer +
-      '.jpg';
-    const newFilePath =
-      normalizePath(directoryPath) +
-      currentLocation.getDirSeparator() +
-      fileName;
-
-    renameFilePromise(
-      filePath,
-      newFilePath,
-      currentLocation.uuid,
-      undefined,
-      false,
-    )
-      .then((newEntry) => {
-        setReflectActions({
-          action: 'add',
-          entry: newEntry,
-        });
-        showNotification(
-          'File ' + newFilePath + ' successfully imported.',
-          'default',
-          true,
-        );
-        return true;
-      })
-      .catch((error) => {
-        // TODO showAlertDialog("Saving " + filePath + " failed.");
-        console.log('Save to file ' + newFilePath + ' failed ' + error);
-        showNotification(
-          'Importing file ' + newFilePath + ' failed.',
-          'error',
-          true,
-        );
-        return true;
-      });
-  }
-
-  // function loadImageLocal() {
-  //   onClose();
-  //   navigator.camera.getPicture(onCameraSuccess, onFail, {
-  //     destinationType: Camera.DestinationType.FILE_URI,
-  //     sourceType: Camera.PictureSourceType.PHOTOLIBRARY
-  //   });
-  // }
-
+  // Android WebView's file chooser behind "Add files" can't open the camera,
+  // so on Capacitor Android we offer a dedicated "Take picture" entry that
+  // drives the native camera plugin and feeds the photo into the same upload
+  // pipeline. Not offered on iOS: WKWebView's file chooser already includes
+  // "Take Photo", and the camera plugin's native presentation leaves the
+  // WKWebView shifted after dismissal (same bug family as native fullscreen).
   function cameraTakePicture() {
-    // @ts-ignore
-    navigator.camera.getPicture(onCameraSuccess, onFail, {
-      // quality: 50,
-      // @ts-ignore
-      destinationType: Camera.DestinationType.FILE_URI, // DATA_URL, // Return base64 encoded string
-      // encodingType: Camera.EncodingType.JPEG,
-      // @ts-ignore
-      mediaType: Camera.MediaType.PICTURE, // ALLMEDIA
-    });
+    openCameraCapture(directoryPath);
+  }
+
+  function extractTags() {
+    extractTagsDialogContext?.openExtractTagsDialog(directoryPath);
   }
 
   function setFolderThumbnail() {
@@ -404,14 +319,14 @@ Do you want to continue?`)
           meta: { id: entry.uuid, thumbPath: targetThumbPath },
         });
         showNotification(
-          'Thumbnail created for: ' + parentDirectoryPath,
+          t('core:thumbnailCreatedFor', { path: parentDirectoryPath }),
           'default',
           true,
         );
         return true;
       })
       .catch((error) => {
-        showNotification('Thumbnail creation failed.', 'default', true);
+        showNotification(t('core:thumbnailCreationFailed'), 'default', true);
         console.log('Error setting Thumb for entry: ' + directoryPath, error);
         return true;
       });
@@ -468,11 +383,12 @@ Do you want to continue?`)
         addExistingFile,
         setFolderThumbnail,
         copySharingLink,
-        importMacTags,
+        copyRelativePath,
+        extractTags,
         switchPerspectives ? perspectiveSwitch : undefined,
         showProperties,
-        cameraTakePicture,
-        openAddRemoveTagsDialog,
+        AppConfig.isCapacitorAndroid ? cameraTakePicture : undefined,
+        showAddRemoveTagsDialog,
         openInNewWindow,
         changeFolderThumbnail,
         changeFolderBackground,

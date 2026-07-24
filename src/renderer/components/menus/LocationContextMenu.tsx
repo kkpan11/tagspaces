@@ -30,6 +30,7 @@ import TsMenuList from '-/components/TsMenuList';
 import { useCreateEditLocationDialogContext } from '-/components/dialogs/hooks/useCreateEditLocationDialogContext';
 import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
 import { useLocationIndexContext } from '-/hooks/useLocationIndexContext';
+import { useNotificationContext } from '-/hooks/useNotificationContext';
 import { createNewInstance, openDirectoryMessage } from '-/services/utils-io';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import OpenFolderNativelyIcon from '@mui/icons-material/Launch';
@@ -43,17 +44,9 @@ import { generateSharingLink } from '@tagspaces/tagspaces-common/paths';
 import { getUuid } from '@tagspaces/tagspaces-common/utils-io';
 import { useTranslation } from 'react-i18next';
 
-interface Props {
-  //setEditLocationDialogOpened: (open: boolean) => void;
-  setDeleteLocationDialogOpened: (open: boolean) => void;
-  //closeLocationTree: () => void;
-}
+interface Props {}
 
 function LocationContextMenu(props: Props) {
-  const {
-    setDeleteLocationDialogOpened,
-    //closeLocationTree
-  } = props;
   const { t } = useTranslation();
 
   const {
@@ -66,7 +59,9 @@ function LocationContextMenu(props: Props) {
     locationDirectoryContextMenuAnchorEl,
     setLocationDirectoryContextMenuAnchorEl,
     getLocationPath,
+    deleteLocation,
   } = useCurrentLocationContext();
+  const { openConfirmDialog } = useNotificationContext();
   const { createLocationIndex } = useLocationIndexContext();
   const { openCreateEditLocationDialog } = useCreateEditLocationDialogContext();
   //const dispatch: AppDispatch = useDispatch();
@@ -81,7 +76,7 @@ function LocationContextMenu(props: Props) {
 
   const indexLocation = () => {
     setLocationDirectoryContextMenuAnchorEl(null);
-    createLocationIndex(selectedLocation);
+    createLocationIndex(selectedLocation, true);
   };
 
   const showEditLocationDialog = () => {
@@ -120,7 +115,19 @@ function LocationContextMenu(props: Props) {
 
   const showDeleteLocationDialog = () => {
     setLocationDirectoryContextMenuAnchorEl(null);
-    setDeleteLocationDialogOpened(true);
+    openConfirmDialog(
+      t('core:removeLocation'),
+      t('core:deleteLocationContentAlert', {
+        locationName: selectedLocation ? selectedLocation.name : '',
+      }),
+      (result) => {
+        if (result && selectedLocation) {
+          deleteLocation(selectedLocation.uuid);
+        }
+      },
+      'cancelDeleteLocationDialog',
+      'confirmDeleteLocationDialog',
+    );
   };
 
   const showInFileManagerInt = () => {
@@ -147,7 +154,7 @@ function LocationContextMenu(props: Props) {
   };
 
   const menuItems = [];
-  if (!AppConfig.locationsReadOnly && !selectedLocation.isNotEditable) {
+  if (!AppConfig.ExtLocationsReadOnly && !selectedLocation.isNotEditable) {
     menuItems.push(
       <MenuItem
         key="editLocation"
@@ -188,18 +195,20 @@ function LocationContextMenu(props: Props) {
     );
   }
   menuItems.push(<Divider />);
-  menuItems.push(
-    <MenuItem
-      key="duplicateLocation"
-      data-tid="duplicateLocationTID"
-      onClick={duplicateLocation}
-    >
-      <ListItemIcon>
-        <ContentCopyIcon />
-      </ListItemIcon>
-      <ListItemText primary={t('core:duplicateLocationTitle')} />
-    </MenuItem>,
-  );
+  if (!AppConfig.ExtLocationsReadOnly) {
+    menuItems.push(
+      <MenuItem
+        key="duplicateLocation"
+        data-tid="duplicateLocationTID"
+        onClick={duplicateLocation}
+      >
+        <ListItemIcon>
+          <ContentCopyIcon />
+        </ListItemIcon>
+        <ListItemText primary={t('core:duplicateLocationTitle')} />
+      </MenuItem>,
+    );
+  }
   menuItems.push(
     <MenuItem
       key="indexLocation"
@@ -212,7 +221,7 @@ function LocationContextMenu(props: Props) {
       <ListItemText primary={t('core:indexLocation')} />
     </MenuItem>,
   );
-  if (!AppConfig.locationsReadOnly) {
+  if (!AppConfig.ExtLocationsReadOnly) {
     menuItems.push(<Divider />);
     menuItems.push(
       <MenuItem
@@ -252,18 +261,19 @@ function LocationContextMenu(props: Props) {
       </MenuItem>,
     );
   }
-  menuItems.push(
-    <MenuItem
-      key="closeLocationTID"
-      data-tid="closeLocationTID"
-      onClick={closeLocationInt}
-    >
-      <ListItemIcon>
-        <CloseIcon />
-      </ListItemIcon>
-      <ListItemText primary={t('core:closeLocation')} />
-    </MenuItem>,
-  );
+  if (!AppConfig.ExtLocationsReadOnly)
+    menuItems.push(
+      <MenuItem
+        key="closeLocationTID"
+        data-tid="closeLocationTID"
+        onClick={closeLocationInt}
+      >
+        <ListItemIcon>
+          <CloseIcon />
+        </ListItemIcon>
+        <ListItemText primary={t('core:closeLocation')} />
+      </MenuItem>,
+    );
 
   return (
     <Menu

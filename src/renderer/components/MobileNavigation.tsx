@@ -20,6 +20,7 @@ import AppConfig from '-/AppConfig';
 import {
   AccountIcon,
   AddExistingFileIcon,
+  ArrowDropDownIcon,
   AudioFileIcon,
   CreateFileIcon,
   DownloadIcon,
@@ -35,11 +36,14 @@ import {
   RecentThingsIcon,
   SettingsIcon,
   TagLibraryIcon,
+  TakePictureIcon,
+  TemplateFileIcon,
   ThemingIcon,
+  WorkspacesIcon,
 } from '-/components/CommonIcons';
 import CustomLogo from '-/components/CustomLogo';
 import HelpFeedbackPanel from '-/components/HelpFeedbackPanel';
-import { ProLabel } from '-/components/HelperComponents';
+import { BetaLabel, ProLabel } from '-/components/HelperComponents';
 import InfoIcon from '-/components/InfoIcon';
 import LocationManager from '-/components/LocationManager';
 import ProTeaser from '-/components/ProTeaser';
@@ -66,10 +70,11 @@ import {
   actions as SettingsActions,
   getKeyBindingObject,
   isDesktopMode,
+  isHideProFeatures,
 } from '-/reducers/settings';
 import { createNewInstance } from '-/services/utils-io';
-import { ClickAwayListener } from '@mui/base/ClickAwayListener';
-import { Divider, Popover } from '@mui/material';
+import { TS } from '-/tagspaces.namespace';
+import { ClickAwayListener, Divider, Popover } from '@mui/material';
 import Box from '@mui/material/Box';
 import ButtonGroup from '@mui/material/ButtonGroup';
 import Grow from '@mui/material/Grow';
@@ -79,7 +84,13 @@ import MenuItem from '@mui/material/MenuItem';
 import Paper from '@mui/material/Paper';
 import Popper from '@mui/material/Popper';
 import { alpha, useTheme } from '@mui/material/styles';
-import React, { useState } from 'react';
+import React, {
+  useCallback,
+  useContext,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { useTranslation } from 'react-i18next';
 import { useDispatch, useSelector } from 'react-redux';
 import TsIconButton from './TsIconButton';
@@ -88,6 +99,7 @@ import UserDetailsPopover from './UserDetailsPopover';
 interface Props {
   hideDrawer?: () => void;
   width?: number;
+  widthVar?: string;
 }
 
 function MobileNavigation(props: Props) {
@@ -95,9 +107,10 @@ function MobileNavigation(props: Props) {
   const theme = useTheme();
   const desktopMode = useSelector(isDesktopMode);
   const dispatch: AppDispatch = useDispatch();
-  const { setSelectedLocation, findLocation } = useCurrentLocationContext();
+  const { setSelectedLocation, currentLocation, locations } =
+    useCurrentLocationContext();
   const { currentDirectoryPath } = useDirectoryContentContext();
-  const { openFileUpload } = useFileUploadContext();
+  const { openFileUpload, openCameraCapture } = useFileUploadContext();
   const { openCreateEditLocationDialog } = useCreateEditLocationDialogContext();
   const { openCreateDirectoryDialog } = useCreateDirectoryDialogContext();
   const { openNewFileDialog } = useNewFileDialogContext();
@@ -107,67 +120,141 @@ function MobileNavigation(props: Props) {
   const { currentOpenedPanel, showPanel } = usePanelsContext();
   const { openDownloadUrl } = useDownloadUrlDialogContext();
   const keyBindings = useSelector(getKeyBindingObject);
+  const hideProFeatures: boolean = useSelector(isHideProFeatures);
   const { currentUser } = useUserContext();
-  const [showTeaserBanner, setShowTeaserBanner] = useState<boolean>(true);
+  const [showTeaserBanner, setShowTeaserBanner] = useState(true);
   const [anchorUser, setAnchorUser] = useState<HTMLButtonElement | null>(null);
-  const showProTeaser = !Pro && showTeaserBanner;
-  const { hideDrawer, width } = props;
-  const switchTheme = () => dispatch(SettingsActions.switchTheme());
-  const [openedCreateMenu, setOpenCreateMenu] = React.useState(false);
-  const anchorRef = React.useRef<HTMLDivElement>(null);
-  const currentLocation = findLocation();
+  const showProTeaser = !hideProFeatures && !Pro && showTeaserBanner;
+  const { hideDrawer, width, widthVar } = props;
+  const widthValue = widthVar
+    ? `var(${widthVar}, ${width || 320}px)`
+    : width || 320;
+  const switchTheme = useCallback(
+    () => dispatch(SettingsActions.switchTheme()),
+    [dispatch],
+  );
+  const [openedCreateMenu, setOpenCreateMenu] = useState(false);
+  const [openedWorkSpaceMenu, setOpenWorkSpaceMenu] = useState(false);
+  const anchorWSpaceRef = useRef<HTMLButtonElement>(null);
+  const anchorRef = useRef<HTMLButtonElement>(null);
 
-  const handleToggle = () => {
-    setOpenCreateMenu((prevOpen) => !prevOpen);
-  };
+  const workSpacesContext = Pro?.contextProviders?.WorkSpacesContext
+    ? useContext<TS.WorkSpacesContextData>(
+        Pro.contextProviders.WorkSpacesContext,
+      )
+    : undefined;
+  const workSpaces: TS.WorkSpace[] = workSpacesContext?.getWorkSpaces() ?? [];
 
-  const handleClose = (event: Event) => {
+  const handleToggle = useCallback(
+    () => setOpenCreateMenu((prev) => !prev),
+    [],
+  );
+  const handleToggleWorkSpaces = useCallback(
+    () => setOpenWorkSpaceMenu((prev) => !prev),
+    [],
+  );
+  const handleClose = useCallback((event: Event) => {
     if (
       anchorRef.current &&
       anchorRef.current.contains(event.target as HTMLElement)
-    ) {
+    )
       return;
-    }
     setOpenCreateMenu(false);
-  };
+  }, []);
+  const handleCloseWSpace = useCallback((event: Event) => {
+    if (
+      anchorWSpaceRef.current &&
+      anchorWSpaceRef.current.contains(event.target as HTMLElement)
+    )
+      return;
+    setOpenWorkSpaceMenu(false);
+  }, []);
+
+  // Memoize workspace menu items for performance
+  const workspaceMenuItems = useMemo(
+    () => [
+      <MenuItem
+        key="allWSpace"
+        data-tid={'wSpaceAllTID'}
+        onClick={() => {
+          workSpacesContext?.setCurrentWorkSpaceId(undefined);
+          setOpenWorkSpaceMenu(false);
+        }}
+      >
+        <ListItemIcon>
+          <WorkspacesIcon />
+        </ListItemIcon>
+        <ListItemText primary={t('all')} />
+      </MenuItem>,
+      ...workSpaces.map((wSpace) => (
+        <MenuItem
+          key={wSpace.uuid}
+          data-tid={'wSpace' + wSpace.shortName + 'TID'}
+          onClick={() => {
+            workSpacesContext?.setCurrentWorkSpaceId(wSpace.uuid);
+            setOpenWorkSpaceMenu(false);
+          }}
+        >
+          <ListItemIcon>
+            <WorkspacesIcon />
+          </ListItemIcon>
+          <ListItemText primary={`${wSpace.fullName} - ${wSpace.shortName}`} />
+        </MenuItem>
+      )),
+    ],
+    [workSpaces, t, workSpacesContext],
+  );
 
   return (
     <Box
-      style={{
+      sx={{
         background: alpha(theme.palette.background.default, 0.85),
         backdropFilter: 'blur(5px)',
         height: '100%',
         overflow: 'hidden',
-        width: width || 320,
-        maxWidth: width || 320,
+        display: 'flex',
+        flexDirection: 'column',
+        width: widthValue,
+        maxWidth: widthValue,
+        // The drawer paper is position:fixed at the viewport top, so it ignores
+        // the body's safe-area padding and would render under the notch. Inset
+        // it ourselves. Use the --sat variable (kept correct by io-capacitor's
+        // recovery on iOS) rather than env() directly, so it survives the
+        // WKWebView env(safe-area-inset-top) collapse after the in-app browser.
+        paddingTop: 'var(--sat, env(safe-area-inset-top, 0px))',
+        boxSizing: 'border-box',
       }}
     >
       <Box
-        style={{
+        sx={{
           overflow: 'hidden',
-          height: showProTeaser ? 'calc(100% - 190px)' : 'calc(100% - 55px)',
+          flex: 1,
+          minHeight: 0,
+          display: 'flex',
+          flexDirection: 'column',
         }}
       >
-        <Box>
+        <Box sx={{ flexShrink: 0 }}>
           <CustomLogo />
           <Box
-            style={{
+            sx={{
               width: '100%',
               justifyContent: 'center',
+              paddingLeft: '10px',
               display: 'flex',
               alignItems: 'center',
             }}
           >
             <ButtonGroup
-              ref={anchorRef}
               aria-label="split button"
-              style={{
+              sx={{
                 textAlign: 'center',
-                marginLeft: 5,
-                marginRight: 5,
+                marginLeft: '5px',
+                marginRight: '5px',
               }}
             >
               <TsButton
+                ref={anchorRef}
                 aria-controls={
                   openedCreateMenu ? 'split-button-menu' : undefined
                 }
@@ -176,46 +263,62 @@ function MobileNavigation(props: Props) {
                 data-tid="createNewDropdownButtonTID"
                 onClick={handleToggle}
                 startIcon={<CreateFileIcon />}
-                style={{
+                endIcon={<ArrowDropDownIcon />}
+                sx={{
                   borderRadius: 'unset',
                   borderTopLeftRadius: AppConfig.defaultCSSRadius,
                   borderBottomLeftRadius: AppConfig.defaultCSSRadius,
                 }}
               >
                 <Box
-                  style={{
+                  sx={{
                     textOverflow: 'ellipsis',
                     whiteSpace: 'nowrap',
                     overflow: 'hidden',
                     maxWidth: 100,
                   }}
                 >
-                  {t('core:createNew')}
+                  {t('core:new')}
                 </Box>
               </TsButton>
+              {workSpaces && workSpaces.length > 0 && (
+                <TsButton
+                  ref={anchorWSpaceRef}
+                  tooltip={t('currentWorkspace')}
+                  aria-controls={
+                    openedWorkSpaceMenu ? 'create-wspace-menu' : undefined
+                  }
+                  aria-expanded={openedWorkSpaceMenu ? 'true' : undefined}
+                  aria-haspopup="menu"
+                  data-tid="openedWorkSpaceMenuButtonTID"
+                  onClick={handleToggleWorkSpaces}
+                  endIcon={<ArrowDropDownIcon />}
+                  sx={{ borderRadius: 'unset' }}
+                >
+                  <Box
+                    sx={{
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      maxWidth: 100,
+                    }}
+                  >
+                    {workSpacesContext?.getCurrentWorkSpace()?.shortName ||
+                      t('core:all')}
+                  </Box>
+                </TsButton>
+              )}
               <TsButton
                 tooltip={t('core:openSharingLink')}
                 data-tid="openLinkNavigationTID"
-                onClick={() => {
-                  openLinkDialog();
-                }}
-                style={{
+                onClick={openLinkDialog}
+                sx={{
                   borderRadius: 'unset',
                   borderTopRightRadius: AppConfig.defaultCSSRadius,
                   borderBottomRightRadius: AppConfig.defaultCSSRadius,
                 }}
-                startIcon={<OpenLinkIcon />}
               >
-                <Box
-                  style={{
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                    overflow: 'hidden',
-                    maxWidth: 100,
-                  }}
-                >
-                  {t('core:openLink')}
-                </Box>
+                <OpenLinkIcon />
               </TsButton>
             </ButtonGroup>
             {currentUser ? (
@@ -257,12 +360,37 @@ function MobileNavigation(props: Props) {
             )}
           </Box>
         </Box>
-
+        {workSpaces && workSpaces.length > 0 && (
+          <ClickAwayListener onClickAway={handleCloseWSpace}>
+            <Popper
+              anchorEl={anchorWSpaceRef.current}
+              sx={{ zIndex: 1 }}
+              open={openedWorkSpaceMenu}
+              role={undefined}
+              transition
+              disablePortal
+            >
+              {({ TransitionProps, placement }) => (
+                <Grow
+                  {...TransitionProps}
+                  style={{
+                    transformOrigin:
+                      placement === 'bottom' ? 'center top' : 'center bottom',
+                  }}
+                >
+                  <Paper>
+                    <TsMenuList id="create-file-menu" autoFocusItem>
+                      {workspaceMenuItems}
+                    </TsMenuList>
+                  </Paper>
+                </Grow>
+              )}
+            </Popper>
+          </ClickAwayListener>
+        )}
         <ClickAwayListener onClickAway={handleClose}>
           <Popper
-            sx={{
-              zIndex: 1,
-            }}
+            sx={{ zIndex: 1 }}
             open={openedCreateMenu}
             anchorEl={anchorRef.current}
             role={undefined}
@@ -278,16 +406,14 @@ function MobileNavigation(props: Props) {
                 }}
               >
                 <Paper>
-                  <TsMenuList id="split-button-menu" autoFocusItem>
+                  <TsMenuList id="nav-create-menu" autoFocusItem>
                     <MenuItem
                       key="navCreateNewTextFile"
                       data-tid="navCreateNewTextFileTID"
                       onClick={() => {
                         openNewFileDialog('txt');
                         setOpenCreateMenu(false);
-                        if (hideDrawer) {
-                          hideDrawer();
-                        }
+                        hideDrawer?.();
                       }}
                     >
                       <ListItemIcon>
@@ -301,9 +427,7 @@ function MobileNavigation(props: Props) {
                       onClick={() => {
                         openNewFileDialog('md');
                         setOpenCreateMenu(false);
-                        if (hideDrawer) {
-                          hideDrawer();
-                        }
+                        hideDrawer?.();
                       }}
                     >
                       <ListItemIcon>
@@ -318,9 +442,7 @@ function MobileNavigation(props: Props) {
                       onClick={() => {
                         openNewFileDialog('html');
                         setOpenCreateMenu(false);
-                        if (hideDrawer) {
-                          hideDrawer();
-                        }
+                        hideDrawer?.();
                       }}
                     >
                       <ListItemIcon>
@@ -335,9 +457,7 @@ function MobileNavigation(props: Props) {
                       onClick={() => {
                         openNewFileDialog('url');
                         setOpenCreateMenu(false);
-                        if (hideDrawer) {
-                          hideDrawer();
-                        }
+                        hideDrawer?.();
                       }}
                     >
                       <ListItemIcon>
@@ -345,30 +465,54 @@ function MobileNavigation(props: Props) {
                       </ListItemIcon>
                       <ListItemText primary={t('core:createLinkFile')} />
                     </MenuItem>
-                    <MenuItem
-                      key="navCreateNewAudio"
-                      data-tid="navCreateNewAudioTID"
-                      disabled={!Pro}
-                      onClick={() => {
-                        openNewAudioDialog();
-                        setOpenCreateMenu(false);
-                        if (hideDrawer) {
-                          hideDrawer();
-                        }
-                      }}
-                    >
-                      <ListItemIcon>
-                        <AudioFileIcon />
-                      </ListItemIcon>
-                      <ListItemText
-                        primary={
-                          <>
-                            {t('core:newAudioRecording')}
-                            {!Pro && <ProLabel />}
-                          </>
-                        }
-                      />
-                    </MenuItem>
+                    {(Pro || !hideProFeatures) && (
+                      <MenuItem
+                        key="navCreateNewAudio"
+                        data-tid="navCreateNewAudioTID"
+                        disabled={!Pro}
+                        onClick={() => {
+                          openNewAudioDialog();
+                          setOpenCreateMenu(false);
+                          hideDrawer?.();
+                        }}
+                      >
+                        <ListItemIcon>
+                          <AudioFileIcon />
+                        </ListItemIcon>
+                        <ListItemText
+                          primary={
+                            <>
+                              {t('core:newAudioRecording')}
+                              {!Pro && <ProLabel />}
+                            </>
+                          }
+                        />
+                      </MenuItem>
+                    )}
+                    {(Pro || !hideProFeatures) && (
+                      <MenuItem
+                        key="navCreateFileFromTemplate"
+                        data-tid="navCreateFileFromTemplateTID"
+                        disabled={!Pro}
+                        onClick={() => {
+                          openNewFileDialog();
+                          setOpenCreateMenu(false);
+                          hideDrawer?.();
+                        }}
+                      >
+                        <ListItemIcon>
+                          <TemplateFileIcon />
+                        </ListItemIcon>
+                        <ListItemText
+                          primary={
+                            <>
+                              {t('core:createNewFromTemplate')}
+                              {!Pro && <ProLabel />}
+                            </>
+                          }
+                        />
+                      </MenuItem>
+                    )}
                     <Divider />
                     <MenuItem
                       key="addUploadFiles"
@@ -376,9 +520,7 @@ function MobileNavigation(props: Props) {
                       onClick={() => {
                         openFileUpload(currentDirectoryPath);
                         setOpenCreateMenu(false);
-                        if (hideDrawer) {
-                          hideDrawer();
-                        }
+                        hideDrawer?.();
                       }}
                     >
                       <ListItemIcon>
@@ -386,24 +528,54 @@ function MobileNavigation(props: Props) {
                       </ListItemIcon>
                       <ListItemText primary={t('core:addFiles')} />
                     </MenuItem>
-                    {AppConfig.isElectron &&
-                      !currentLocation?.haveObjectStoreSupport() && (
+                    {/* Capacitor Android only: its WebView file chooser can't
+                        open the camera, so offer a dedicated trigger for the
+                        native camera plugin. On iOS the file chooser behind
+                        "Add files" already includes "Take Photo", and the
+                        camera plugin's native presentation leaves the
+                        WKWebView shifted after dismissal. */}
+                    {AppConfig.isCapacitorAndroid && (
+                      <MenuItem
+                        key="cameraTakePicture"
+                        data-tid="cameraTakePictureTID"
+                        onClick={() => {
+                          openCameraCapture(currentDirectoryPath);
+                          setOpenCreateMenu(false);
+                          hideDrawer?.();
+                        }}
+                      >
+                        <ListItemIcon>
+                          <TakePictureIcon />
+                        </ListItemIcon>
+                        <ListItemText primary={t('core:cameraTakePicture')} />
+                      </MenuItem>
+                    )}
+                    {/* Web can't bypass browser CORS/CSP — only show the URL
+                        download where it saves into the location. Pro feature:
+                        enabled on Pro (BETA), disabled with a PRO badge on Lite,
+                        hidden on Lite when Pro teasers are hidden. */}
+                    {(AppConfig.isElectron || AppConfig.isNativeMobile) &&
+                      (Pro || !hideProFeatures) && (
                         <MenuItem
                           key="newFromDownloadURL"
                           data-tid="newFromDownloadURLTID"
+                          disabled={!Pro}
                           onClick={() => {
                             openDownloadUrl();
                             setOpenCreateMenu(false);
-                            if (hideDrawer) {
-                              hideDrawer();
-                            }
+                            hideDrawer?.();
                           }}
                         >
                           <ListItemIcon>
                             <DownloadIcon />
                           </ListItemIcon>
                           <ListItemText
-                            primary={t('core:newFromDownloadURL')}
+                            primary={
+                              <>
+                                {t('core:newFromDownloadURL')}
+                                {Pro ? <BetaLabel /> : <ProLabel />}
+                              </>
+                            }
                           />
                         </MenuItem>
                       )}
@@ -414,9 +586,7 @@ function MobileNavigation(props: Props) {
                       onClick={() => {
                         openCreateDirectoryDialog();
                         setOpenCreateMenu(false);
-                        if (hideDrawer) {
-                          hideDrawer();
-                        }
+                        hideDrawer?.();
                       }}
                     >
                       <ListItemIcon>
@@ -425,41 +595,37 @@ function MobileNavigation(props: Props) {
                       <ListItemText primary={t('core:createDirectory')} />
                     </MenuItem>
                     <Divider />
-                    <MenuItem
-                      key="createNewLocation"
-                      data-tid="createNewLocationTID"
-                      onClick={() => {
-                        setSelectedLocation(undefined);
-                        openCreateEditLocationDialog();
-                        setOpenCreateMenu(false);
-                        if (hideDrawer) {
-                          hideDrawer();
-                        }
-                      }}
-                    >
-                      <ListItemIcon>
-                        <LocalLocationIcon />
-                      </ListItemIcon>
-                      <ListItemText primary={t('core:createLocation')} />
-                    </MenuItem>
-                    {!AppConfig.isCordova && (
-                      <>
-                        <MenuItem
-                          key="createWindow"
-                          data-tid="createWindowTID"
-                          onClick={() => {
-                            createNewInstance();
-                            setOpenCreateMenu(false);
-                          }}
-                        >
-                          <ListItemIcon>
-                            <OpenNewWindowIcon />
-                          </ListItemIcon>
-                          <ListItemText
-                            primary={t('core:newWindow')}
-                          ></ListItemText>
-                        </MenuItem>
-                      </>
+                    {!AppConfig.ExtLocationsReadOnly && (
+                      <MenuItem
+                        key="createNewLocation"
+                        data-tid="createNewLocationTID"
+                        onClick={() => {
+                          setSelectedLocation(undefined);
+                          openCreateEditLocationDialog();
+                          setOpenCreateMenu(false);
+                          hideDrawer?.();
+                        }}
+                      >
+                        <ListItemIcon>
+                          <LocalLocationIcon />
+                        </ListItemIcon>
+                        <ListItemText primary={t('core:createLocation')} />
+                      </MenuItem>
+                    )}
+                    {!AppConfig.isNativeMobile && (
+                      <MenuItem
+                        key="createWindow"
+                        data-tid="createWindowTID"
+                        onClick={() => {
+                          createNewInstance();
+                          setOpenCreateMenu(false);
+                        }}
+                      >
+                        <ListItemIcon>
+                          <OpenNewWindowIcon />
+                        </ListItemIcon>
+                        <ListItemText primary={t('core:newWindow')} />
+                      </MenuItem>
                     )}
                   </TsMenuList>
                 </Paper>
@@ -467,33 +633,31 @@ function MobileNavigation(props: Props) {
             )}
           </Popper>
         </ClickAwayListener>
-        <LocationManager
-          reduceHeightBy={150}
-          show={currentOpenedPanel === 'locationManagerPanel'}
-        />
-        {currentOpenedPanel === 'tagLibraryPanel' && (
-          <TagLibrary reduceHeightBy={140} />
-        )}
-        {currentOpenedPanel === 'searchPanel' && (
-          <StoredSearches reduceHeightBy={140} />
-        )}
-        {currentOpenedPanel === 'helpFeedbackPanel' && (
-          <HelpFeedbackPanel reduceHeightBy={150} />
-        )}
+        <LocationManager show={currentOpenedPanel === 'locationManagerPanel'} />
+        {currentOpenedPanel === 'tagLibraryPanel' && <TagLibrary />}
+        {currentOpenedPanel === 'searchPanel' && <StoredSearches />}
+        {currentOpenedPanel === 'helpFeedbackPanel' && <HelpFeedbackPanel />}
       </Box>
       <Box
-        style={{
+        sx={{
           display: 'flex',
           flexDirection: 'column',
-          marginTop: desktopMode ? -10 : -25,
+          flexShrink: 0,
           backgroundColor: theme.palette.background.default,
+          paddingTop: '5px',
+          // Keep the bottom nav clear of the OS gesture bar / home indicator on
+          // iOS & Android; --sab falls back to env(safe-area-inset-bottom), and
+          // the 8px floor gives a small touch margin on web/desktop where the
+          // inset is 0.
+          paddingBottom:
+            'max(9px, var(--sab, env(safe-area-inset-bottom, 0px)))',
         }}
       >
         {showProTeaser && (
           <ProTeaser setShowTeaserBanner={setShowTeaserBanner} />
         )}
         <Box
-          style={{
+          sx={{
             display: 'flex',
             flexDirection: 'row',
             alignSelf: 'center',
@@ -505,7 +669,7 @@ function MobileNavigation(props: Props) {
             tooltip={t('core:locationManager')}
             keyBinding={keyBindings['showLocationManager']}
             onClick={() => showPanel('locationManagerPanel')}
-            style={{
+            sx={{
               backgroundColor:
                 currentOpenedPanel === 'locationManagerPanel'
                   ? theme.palette.primary.light
@@ -517,11 +681,11 @@ function MobileNavigation(props: Props) {
           </TsToolbarButton>
           <TsToolbarButton
             data-tid="tagLibrary"
-            title={t('core:tagLibrary')}
+            title={t('core:tags')}
             tooltip={t('core:tagLibrary')}
             keyBinding={keyBindings['showTagLibrary']}
             onClick={() => showPanel('tagLibraryPanel')}
-            style={{
+            sx={{
               backgroundColor:
                 currentOpenedPanel === 'tagLibraryPanel'
                   ? theme.palette.primary.light
@@ -535,7 +699,7 @@ function MobileNavigation(props: Props) {
             tooltip={t('core:quickAccess')}
             data-tid="quickAccessButton"
             onClick={() => showPanel('searchPanel')}
-            style={{
+            sx={{
               backgroundColor:
                 currentOpenedPanel === 'searchPanel'
                   ? theme.palette.primary.light
@@ -549,7 +713,7 @@ function MobileNavigation(props: Props) {
             title={t('core:help')}
             data-tid="helpFeedback"
             onClick={() => showPanel('helpFeedbackPanel')}
-            style={{
+            sx={{
               backgroundColor:
                 currentOpenedPanel === 'helpFeedbackPanel'
                   ? theme.palette.primary.light
@@ -562,10 +726,9 @@ function MobileNavigation(props: Props) {
             tooltip={t('core:settings')}
             id="verticalNavButton"
             data-tid="settings"
-            onClick={() => {
-              openSettingsDialog();
-            }}
-            style={{
+            onClick={() => openSettingsDialog()}
+            sx={{
+              marginLeft: '10px',
               backgroundColor: theme.palette.background.default,
             }}
             title={t('core:settings')}
@@ -577,4 +740,5 @@ function MobileNavigation(props: Props) {
     </Box>
   );
 }
+
 export default MobileNavigation;

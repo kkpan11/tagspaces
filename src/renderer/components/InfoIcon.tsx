@@ -16,19 +16,23 @@
  *
  */
 
-import Tooltip from '-/components/Tooltip';
+import { ReactNode } from 'react';
+import TsTooltip from '-/components/TsTooltip';
 import HelpOutlined from '@mui/icons-material/NotListedLocationOutlined';
 
 interface Props {
-  tooltip?: string;
+  tooltip?: ReactNode;
 }
 
 function InfoIcon(props: Props) {
   const { tooltip } = props;
+  if (!tooltip) {
+    return <></>;
+  }
   return (
-    <Tooltip title={tooltip}>
-      <HelpOutlined fontSize="small" style={{ opacity: '0.7' }} />
-    </Tooltip>
+    <TsTooltip title={tooltip}>
+      <HelpOutlined fontSize="small" sx={{ opacity: '0.7' }} />
+    </TsTooltip>
   );
 }
 

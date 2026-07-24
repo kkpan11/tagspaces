@@ -21,74 +21,67 @@ import PageNotification from '-/containers/PageNotification';
 import { FilePropertiesContextProvider } from '-/hooks/FilePropertiesContextProvider';
 import { FullScreenContextProvider } from '-/hooks/FullScreenContextProvider';
 import { useDirectoryContentContext } from '-/hooks/useDirectoryContentContext';
+import useMobileBackHandler from '-/hooks/useMobileBackHandler';
 import { useOpenedEntryContext } from '-/hooks/useOpenedEntryContext';
 import { usePanelsContext } from '-/hooks/usePanelsContext';
 import { useUserContext } from '-/hooks/useUserContext';
+import { CLOSE_ENTRY_REQUEST_EVENT } from '-/services/mobileBackAction';
 import useEventListener from '-/utils/useEventListener';
-import { useMediaQuery } from '@mui/material';
+import { useSwipeBack } from '-/utils/useSwipeBack';
+import { Box, useMediaQuery } from '@mui/material';
 import Drawer from '@mui/material/Drawer';
 import SwipeableDrawer from '@mui/material/SwipeableDrawer';
 import { styled, useTheme } from '@mui/material/styles';
-import { buffer } from '@tagspaces/tagspaces-common/misc';
 import clsx from 'clsx';
-import React, { useEffect, useReducer, useRef, useState } from 'react';
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { GlobalHotKeys } from 'react-hotkeys';
-import { connect, useSelector } from 'react-redux';
-import { bindActionCreators } from 'redux';
-import { Split } from 'ts-react-splitter';
+import { useDispatch, useSelector } from 'react-redux';
 import EntryContainer from '../components/EntryContainer';
 import FolderContainer from '../components/FolderContainer';
 import MobileNavigation from '../components/MobileNavigation';
+import { Splitter, SplitterGutter } from '../components/Splitter';
 import {
   actions as SettingsActions,
   getDesktopMode,
   getKeyBindingObject,
+  getLeftPanelWidth,
   getMainVerticalSplitSize,
 } from '../reducers/settings';
 
-const drawerWidth = 320;
-const body = document.getElementsByTagName('body')[0];
-const bufferedLeftSplitResize = buffer({
-  timeout: 300,
-  id: 'buffered-leftsplit-resize',
-});
-
-const PREFIX = 'MainPage';
+const DRAWER_MIN_WIDTH = 310;
+const DRAWER_MAX_WIDTH = 600;
+const DRAWER_DEFAULT_WIDTH = 320;
+const MOBILE_DRAWER_WIDTH = 320;
+const DRAWER_WIDTH_VAR = '--tagspaces-drawer-width';
 
 const classes = {
-  content: `${PREFIX}-content`,
-  contentShift: `${PREFIX}-contentShift`,
+  content: `MainPage-content`,
+  contentShift: `MainPage-contentShift`,
 };
 
-const Root = styled('div')(({ theme }) => ({
+const Root = styled('div')(() => ({
   height: '100%',
   [`& .${classes.content}`]: {
     height: '100%',
     flexGrow: 1,
     padding: 0,
-    paddingLeft: drawerWidth,
-    transition: theme.transitions.create('margin', {
-      easing: theme.transitions.easing.sharp,
-      duration: theme.transitions.duration.leavingScreen,
-    }),
+    paddingLeft: 'var(--tagspaces-drawer-width, 320px)',
   },
   [`& .${classes.contentShift}`]: {
     height: '100%',
     padding: 0,
-    transition: theme.transitions.create('margin', {
-      easing: theme.transitions.easing.easeOut,
-      duration: theme.transitions.duration.enteringScreen,
-    }),
     marginLeft: 0,
   },
 }));
 
-interface Props {
-  toggleShowUnixHiddenEntries: () => void;
-  setMainVerticalSplitSize: (splitSize: string) => void;
-}
-
-function MainPage(props: Props) {
+function MainPage() {
+  const dispatch = useDispatch();
   const { openLink, openedEntry, isEntryInFullWidth, setEntryInFullWidth } =
     useOpenedEntryContext();
 
@@ -103,20 +96,69 @@ function MainPage(props: Props) {
   } = useDirectoryContentContext();
   const { showPanel } = usePanelsContext();
   const { isLoggedIn } = useUserContext();
-  const percent = useRef<number | undefined>(undefined);
-  const [ignored, forceUpdate] = useReducer((x) => x + 1, 0, undefined);
+  const mainSplitContainerRef = useRef<HTMLDivElement>(null);
+  const [sizePx, setSizePx] = useState<number>(0);
 
   const [drawerOpened, setDrawerOpened] = useState<boolean>(true);
   const isDesktopMode: boolean = useSelector(getDesktopMode);
+  // Same condition as the drawer-variant branch in the JSX below: persistent
+  // Drawer (desktop) vs temporary SwipeableDrawer (mobile/web).
+  const persistentDrawer =
+    isDesktopMode || (AppConfig.ExtIsAmplify && !isLoggedIn());
+
+  // Android hardware back button / system back gesture.
+  useMobileBackHandler(drawerOpened && !persistentDrawer, () =>
+    setDrawerOpened(false),
+  );
+
+  // iOS edge-swipe-back on the full-screen entry overlay. While a drag is in
+  // progress the FolderContainer below is un-hidden so it shows through.
+  const entryOverlayRef = useRef<HTMLDivElement>(null);
+  const [swipeInProgress, setSwipeInProgress] = useState<boolean>(false);
+  const { edgeStripRef, edgeStripStyle } = useSwipeBack({
+    enabled: AppConfig.isCapacitoriOS && smallScreen && !!openedEntry,
+    targetRef: entryOverlayRef,
+    onDragActiveChange: setSwipeInProgress,
+    // dispatchEvent returns false when EntryContainer preventDefault()s,
+    // i.e. an unsaved-changes confirm dialog appears instead of a close.
+    onCommitRequest: () =>
+      window.dispatchEvent(
+        new CustomEvent(CLOSE_ENTRY_REQUEST_EVENT, { cancelable: true }),
+      ),
+  });
   const keyBindings = useSelector(getKeyBindingObject);
   const mainSplitSize = useSelector(getMainVerticalSplitSize);
+  const drawerWidth = useSelector(getLeftPanelWidth);
+
+  // Redux actions as callbacks
+  const toggleShowUnixHiddenEntries = useCallback(
+    () => dispatch(SettingsActions.toggleShowUnixHiddenEntries()),
+    [dispatch],
+  );
+  const setMainVerticalSplitSize = useCallback(
+    (splitSize: string) =>
+      dispatch(SettingsActions.setMainVerticalSplitSize(splitSize)),
+    [dispatch],
+  );
+  const setLeftPanelWidth = useCallback(
+    (w: number) => dispatch(SettingsActions.setLeftPanelWidth(w)),
+    [dispatch],
+  );
 
   useEventListener('message', (e) => {
+    // Only accept messages from same-origin frames or sandboxed extension
+    // iframes (origin 'null'). Without this, any embedded frame could trigger
+    // openLink() with attacker-controlled URLs.
+    const trusted = e.origin === window.location.origin || e.origin === 'null';
+    if (!trusted) return;
     if (typeof e.data === 'string') {
-      // console.log(e.data);
       try {
         const data = JSON.parse(e.data);
-        if (data.command === 'openLinkExternally') {
+        if (
+          data.command === 'openLinkExternally' &&
+          typeof data.link === 'string' &&
+          data.link.length > 0
+        ) {
           openLink(data.link, { fullWidth: false });
         }
       } catch (ex) {
@@ -129,159 +171,234 @@ function MainPage(props: Props) {
   });
 
   useEffect(() => {
-    if (!AppConfig.isCordova) {
+    if (!AppConfig.isNativeMobile) {
       updateDimensions();
     }
+    // eslint-disable-next-line
   }, []);
 
   useEffect(() => {
     if (isEntryInFullWidth) {
-      setDrawerOpened(false); // !props.isEntryInFullWidth);
+      setDrawerOpened(false);
     }
   }, [isEntryInFullWidth]);
 
+  // Expose desktop drawer width to CSS so the main content's paddingLeft
+  // tracks the drawer size without re-creating the styled component on every drag.
+  // The .contentShift class zeroes padding when the drawer is closed, so the
+  // var stays at the live width regardless of drawerOpened. The drag handler
+  // also writes this var directly during drag — keep it consistent on commit.
+  useEffect(() => {
+    if (!isDesktopMode) {
+      document.documentElement.style.removeProperty(DRAWER_WIDTH_VAR);
+      return;
+    }
+    document.documentElement.style.setProperty(
+      DRAWER_WIDTH_VAR,
+      drawerWidth + 'px',
+    );
+  }, [drawerWidth, isDesktopMode]);
+
   useEffect(() => {
     updateDimensions();
+    // eslint-disable-next-line
   }, [openedEntry]);
 
+  // Tracks whether the current full-width state was switched on automatically
+  // by the resize handler (vs. a manual expand-button / openLink toggle), so a
+  // later resize only undoes its own automatic change.
+  const autoFullWidth = useRef(false);
+
   useEventListener('resize', () => {
-    if (!AppConfig.isCordova) {
+    if (!AppConfig.isNativeMobile) {
       updateDimensions();
     }
   });
 
-  const updateDimensions = () => {
+  const updateDimensions = useCallback(() => {
     const w =
       window.innerWidth ||
       document.documentElement.clientWidth ||
-      body.clientWidth;
+      document.body.clientWidth;
     const h =
       window.innerHeight ||
       document.documentElement.clientHeight ||
-      body.clientHeight;
+      document.body.clientHeight;
 
-    // console.log('Width: ' + width + ' Height: ' + height);
-    //setDimensions({ width: w, height: h });
+    if (!openedEntry) return;
 
-    if (openedEntry && !isEntryInFullWidth) {
-      const isFillWidth = h > w;
-      if (isFillWidth !== isEntryInFullWidth) {
-        setEntryInFullWidth(isFillWidth);
-      }
+    // Only the resize logic may undo what the resize logic did. Narrowing
+    // (h > w) auto-enables full-width and records that it was automatic;
+    // widening only switches it back off when *we* turned it on. This keeps a
+    // manually-toggled full-width (expand button / openLink) from being killed
+    // by a resize in a normal landscape window where h <= w.
+    const isFillWidth = h > w;
+    if (isFillWidth && !isEntryInFullWidth) {
+      autoFullWidth.current = true;
+      setEntryInFullWidth(true);
+    } else if (!isFillWidth && isEntryInFullWidth && autoFullWidth.current) {
+      autoFullWidth.current = false;
+      setEntryInFullWidth(false);
     }
-  };
+  }, [openedEntry, isEntryInFullWidth, setEntryInFullWidth]);
 
-  const toggleDrawer = () => {
+  const toggleDrawer = useCallback(() => {
     setDrawerOpened((prevOpen) => !prevOpen);
-  };
+  }, []);
 
-  const keyBindingHandlers = {
-    openParentDirectory: loadParentDirectoryContent,
-    toggleShowHiddenEntries: props.toggleShowUnixHiddenEntries,
-    showLocationManager: () => {
-      showPanel('locationManagerPanel');
-      setDrawerOpened(true);
-    },
-    showTagLibrary: () => {
-      showPanel('tagLibraryPanel');
-      setDrawerOpened(true);
-    },
-    openSearch: () => {
-      if (!isEntryInFullWidth) {
-        enterSearchMode();
+  const keyBindingHandlers = useMemo(
+    () => ({
+      openParentDirectory: loadParentDirectoryContent,
+      toggleShowHiddenEntries: toggleShowUnixHiddenEntries,
+      showLocationManager: () => {
+        showPanel('locationManagerPanel');
+        setDrawerOpened(true);
+      },
+      showTagLibrary: () => {
+        showPanel('tagLibraryPanel');
+        setDrawerOpened(true);
+      },
+      openSearch: () => {
+        if (!isEntryInFullWidth) {
+          enterSearchMode();
+        }
+      },
+      closeSearch: () => {
+        exitSearchMode();
+        openCurrentDirectory();
+      },
+      showHelp: () => {
+        showPanel('helpFeedbackPanel');
+        setDrawerOpened(true);
+      },
+    }),
+    [
+      loadParentDirectoryContent,
+      toggleShowUnixHiddenEntries,
+      showPanel,
+      setDrawerOpened,
+      isEntryInFullWidth,
+      enterSearchMode,
+      exitSearchMode,
+      openCurrentDirectory,
+    ],
+  );
+
+  const keyMap = useMemo(
+    () => ({
+      openParentDirectory: keyBindings.openParentDirectory,
+      toggleShowHiddenEntries: keyBindings.toggleShowHiddenEntries,
+      showLocationManager: keyBindings.showLocationManager,
+      showTagLibrary: keyBindings.showTagLibrary,
+      openSearch: keyBindings.openSearch,
+      closeSearch: keyBindings.Escape,
+      showHelp: keyBindings.showHelp,
+    }),
+    [keyBindings],
+  );
+
+  const hideSplit = !openedEntry || isEntryInFullWidth;
+
+  // Keep sizePx in sync with persisted percentage and container width.
+  useEffect(() => {
+    const el = mainSplitContainerRef.current;
+    if (!el || hideSplit) return;
+    const pct = parseFloat(mainSplitSize);
+    if (!isFinite(pct)) return;
+    const next = Math.round((el.clientWidth * pct) / 100);
+    setSizePx(next);
+  }, [mainSplitSize, hideSplit]);
+
+  // Recompute sizePx on window resize to preserve the persisted percentage.
+  useEventListener('resize', () => {
+    const el = mainSplitContainerRef.current;
+    if (!el || hideSplit) return;
+    const pct = parseFloat(mainSplitSize);
+    if (!isFinite(pct)) return;
+    setSizePx(Math.round((el.clientWidth * pct) / 100));
+  });
+
+  const onMainSplitChange = useCallback(
+    (px: number) => {
+      setSizePx(px);
+      const el = mainSplitContainerRef.current;
+      if (!el || el.clientWidth === 0) return;
+      const pct = Math.round((px / el.clientWidth) * 100);
+      const next = pct + '%';
+      if (mainSplitSize !== next) {
+        setMainVerticalSplitSize(next);
       }
     },
-    closeSearch: () => {
-      exitSearchMode();
-      openCurrentDirectory();
-    },
-    showHelp: () => {
-      showPanel('helpFeedbackPanel');
-      setDrawerOpened(true);
-    },
-  };
-
-  const keyMap = {
-    openParentDirectory: keyBindings.openParentDirectory,
-    toggleShowHiddenEntries: keyBindings.toggleShowHiddenEntries,
-    showLocationManager: keyBindings.showLocationManager,
-    showTagLibrary: keyBindings.showTagLibrary,
-    openSearch: keyBindings.openSearch,
-    closeSearch: keyBindings.Escape,
-    showHelp: keyBindings.showHelp,
-  };
-
-  const setPercent = (p: number | undefined) => {
-    percent.current = p;
-    if (p !== undefined) {
-      bufferedLeftSplitResize(() => {
-        if (mainSplitSize !== p + '%') {
-          props.setMainVerticalSplitSize(p + '%');
-        }
-      });
-    }
-    forceUpdate();
-  };
+    [mainSplitSize, setMainVerticalSplitSize],
+  );
 
   function renderContainers() {
-    let initialPrimarySize = mainSplitSize;
-    let minPrimarySize = '250px';
-    let minSecondarySize = '250px';
-    let renderSplitter;
+    const entryContainer = (
+      <FilePropertiesContextProvider>
+        {openedEntry ? (
+          <FullScreenContextProvider>
+            <EntryContainer key="EntryContainerID" />
+          </FullScreenContextProvider>
+        ) : (
+          <div />
+        )}
+      </FilePropertiesContextProvider>
+    );
 
-    if (!openedEntry) {
-      percent.current = undefined;
-      initialPrimarySize = '100%';
-      minSecondarySize = '0%';
-      renderSplitter = function () {
-        return null;
-      };
-    }
-    if (isEntryInFullWidth) {
-      percent.current = undefined;
-      initialPrimarySize = '0%';
-      minPrimarySize = '0%';
-      renderSplitter = function () {
-        return null;
-      };
-    }
-    if (smallScreen && openedEntry) {
+    if (smallScreen) {
+      // On small screens the file viewer is shown full-screen on top of the
+      // folder list (instead of side-by-side via the Splitter). Keep
+      // FolderContainer mounted at a stable tree position — just hidden —
+      // whether or not a file is open, so opening/closing a file does not
+      // remount the perspective and reset its state (pagination, scroll).
       return (
-        <>
+        <Box sx={{ position: 'relative', height: '100%', width: '100%' }}>
           <FolderContainer
-            style={{ display: 'none' }}
+            hidden={!!openedEntry && !swipeInProgress}
             toggleDrawer={toggleDrawer}
             drawerOpened={drawerOpened}
           />
-          <FilePropertiesContextProvider>
-            <FullScreenContextProvider>
-              <EntryContainer key="EntryContainerID" />
-            </FullScreenContextProvider>
-          </FilePropertiesContextProvider>
-        </>
+          {openedEntry && (
+            <Box
+              ref={entryOverlayRef}
+              data-tid="mobileEntryOverlay"
+              sx={{
+                position: 'absolute',
+                inset: 0,
+                backgroundColor: 'background.default',
+              }}
+            >
+              {entryContainer}
+              {AppConfig.isCapacitoriOS && (
+                <div
+                  data-tid="swipeBackStrip"
+                  ref={edgeStripRef}
+                  style={edgeStripStyle}
+                />
+              )}
+            </Box>
+          )}
+        </Box>
       );
     }
     return (
-      <Split
-        initialPrimarySize={initialPrimarySize}
-        minPrimarySize={minPrimarySize}
-        minSecondarySize={minSecondarySize}
-        renderSplitter={renderSplitter}
-        percent={percent.current}
-        setPercent={setPercent}
-      >
-        <FolderContainer
-          toggleDrawer={toggleDrawer}
-          drawerOpened={drawerOpened}
-        />
-        <FilePropertiesContextProvider>
-          {openedEntry && (
-            <FullScreenContextProvider>
-              <EntryContainer key="EntryContainerID" />
-            </FullScreenContextProvider>
-          )}
-        </FilePropertiesContextProvider>
-      </Split>
+      <div ref={mainSplitContainerRef} style={{ height: '100%' }}>
+        <Splitter
+          direction="vertical"
+          size={sizePx}
+          min={400}
+          hidden={hideSplit}
+          hiddenTake={isEntryInFullWidth ? 'secondary' : 'primary'}
+          onChange={onMainSplitChange}
+          ariaLabel="Resize file list and preview"
+        >
+          <FolderContainer
+            toggleDrawer={toggleDrawer}
+            drawerOpened={drawerOpened}
+          />
+          {entryContainer}
+        </Splitter>
+      </div>
     );
   }
 
@@ -289,8 +406,8 @@ function MainPage(props: Props) {
     <Root>
       <GlobalHotKeys handlers={keyBindingHandlers} keyMap={keyMap}>
         <PageNotification />
-        <div
-          style={{
+        <Box
+          sx={{
             backgroundColor: theme.palette.background.default,
             height: '100%',
           }}
@@ -300,38 +417,31 @@ function MainPage(props: Props) {
               body { background-color: ${
                 theme.palette.background.default
               } !important;}
-              .default-splitter {
-                --default-splitter-line-margin: 2px !important;
-                --default-splitter-line-size: 1px !important;
-                --default-splitter-line-color: ${
-                  theme.palette.divider
-                } !important;
-              }
-
-              .react-split .split-container.vertical .splitter {
-                background-color: ${theme.palette.background.default};
-              }
-
-              .react-split .split-container {
-                --react-split-splitter: ${
-                  !openedEntry || isEntryInFullWidth ? '0' : '3px'
-                } !important;
-              }
-              .react-split .secondary .full-content {
-                display: flex;
-                flex-direction: column;
-              }
           `}
           </style>
-          {isDesktopMode || (AppConfig.isAmplify && !isLoggedIn()) ? (
+          {persistentDrawer ? (
             <>
               <Drawer
-                style={{ backgroundColor: 'unset' }}
+                sx={{
+                  backgroundColor: 'unset',
+                  // The DrawerResizeHandle's hit area extends 6.5px past the
+                  // drawer's right edge (SplitterGutter's invisible hit zone).
+                  // Without this, the Paper allows a few pixels of horizontal
+                  // scroll into that empty overflow.
+                  '& .MuiDrawer-paper': { overflowX: 'hidden' },
+                }}
                 variant="persistent"
                 anchor="left"
                 open={drawerOpened}
               >
-                <MobileNavigation width={drawerWidth} />
+                <MobileNavigation
+                  width={drawerWidth}
+                  widthVar={DRAWER_WIDTH_VAR}
+                />
+                <DrawerResizeHandle
+                  width={drawerWidth}
+                  onChange={setLeftPanelWidth}
+                />
               </Drawer>
               <main
                 className={clsx(classes.content, {
@@ -350,29 +460,120 @@ function MainPage(props: Props) {
                 hysteresis={0.1}
                 disableBackdropTransition={!AppConfig.isIOS}
                 disableDiscovery={AppConfig.isIOS}
+                // While an entry overlay covers the screen, the drawer's
+                // fixed left-edge SwipeArea would steal the edge-swipe-back
+                // gesture from the overlay's strip.
+                disableSwipeToOpen={smallScreen && !!openedEntry}
               >
                 <MobileNavigation
-                  width={drawerWidth}
+                  width={MOBILE_DRAWER_WIDTH}
                   hideDrawer={() => setDrawerOpened(false)}
                 />
               </SwipeableDrawer>
               {renderContainers()}
             </>
           )}
-        </div>
+        </Box>
       </GlobalHotKeys>
     </Root>
   );
 }
 
-function mapDispatchToProps(dispatch) {
-  return bindActionCreators(
-    {
-      toggleShowUnixHiddenEntries: SettingsActions.toggleShowUnixHiddenEntries,
-      setMainVerticalSplitSize: SettingsActions.setMainVerticalSplitSize,
-    },
-    dispatch,
+interface DrawerResizeHandleProps {
+  width: number;
+  onChange: (w: number) => void;
+}
+
+function DrawerResizeHandle({ width, onChange }: DrawerResizeHandleProps) {
+  const dragRef = useRef<{ sx: number; sw: number } | null>(null);
+  const liveRef = useRef<number>(width);
+  const rafRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    liveRef.current = width;
+  }, [width]);
+
+  const clamp = (v: number) =>
+    Math.max(DRAWER_MIN_WIDTH, Math.min(DRAWER_MAX_WIDTH, v));
+
+  // During drag we bypass Redux entirely and write straight to the CSS var
+  // that both the main content's paddingLeft and MobileNavigation's width
+  // resolve from. This avoids a per-frame store update / re-render of the
+  // (heavy) MobileNavigation tree.
+  const writeLive = (v: number) => {
+    liveRef.current = clamp(v);
+    if (rafRef.current != null) return;
+    rafRef.current = requestAnimationFrame(() => {
+      rafRef.current = null;
+      document.documentElement.style.setProperty(
+        DRAWER_WIDTH_VAR,
+        liveRef.current + 'px',
+      );
+    });
+  };
+
+  const onPointerDown = (e: React.PointerEvent) => {
+    dragRef.current = { sx: e.clientX, sw: liveRef.current };
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  };
+  const onPointerMove = (e: React.PointerEvent) => {
+    const d = dragRef.current;
+    if (!d) return;
+    writeLive(d.sw + (e.clientX - d.sx));
+  };
+  const finish = (e: React.PointerEvent) => {
+    if (!dragRef.current) return;
+    dragRef.current = null;
+    try {
+      (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+    } catch {
+      /* already released */
+    }
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+    onChange(liveRef.current);
+  };
+  const onDoubleClick = () => onChange(DRAWER_DEFAULT_WIDTH);
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    const step = e.shiftKey ? 40 : 8;
+    if (e.key === 'ArrowRight') {
+      onChange(clamp(width + step));
+      e.preventDefault();
+    } else if (e.key === 'ArrowLeft') {
+      onChange(clamp(width - step));
+      e.preventDefault();
+    } else if (e.key === 'Home') {
+      onChange(DRAWER_MIN_WIDTH);
+      e.preventDefault();
+    } else if (e.key === 'End') {
+      onChange(DRAWER_MAX_WIDTH);
+      e.preventDefault();
+    }
+  };
+
+  return (
+    <SplitterGutter
+      direction="vertical"
+      ariaLabel="Resize navigation panel"
+      ariaValueNow={width}
+      ariaValueMin={DRAWER_MIN_WIDTH}
+      ariaValueMax={DRAWER_MAX_WIDTH}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={finish}
+      onDoubleClick={onDoubleClick}
+      onKeyDown={onKeyDown}
+      style={{
+        position: 'absolute',
+        top: 0,
+        right: 0,
+        height: '100%',
+        zIndex: 1300,
+      }}
+    />
   );
 }
 
-export default connect(undefined, mapDispatchToProps)(React.memo(MainPage));
+export default React.memo(MainPage);

@@ -1,8 +1,11 @@
-name: Nightly E2E Tests Lite Electron MacOS
+name: Nightly E2E Electron Lite macOS
 on:
   schedule:
     - cron: '0 2 * * *'
   workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   e2eTestsElectronMac:
@@ -22,10 +25,11 @@ jobs:
       - name: Configure NPM
         uses: actions/setup-node@v4
         with:
-          node-version: '20.x'
+          node-version: '22.x'
       - name: Running npm install, prettier and type checks
         run: |
           npm install
+          npm run prepare-node
           npm run prettier-check
           npm run type-check
       - name: Run Unit tests

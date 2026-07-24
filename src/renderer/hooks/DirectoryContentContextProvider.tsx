@@ -27,37 +27,52 @@ import { PerspectiveIDs } from '-/perspectives';
 import { defaultSettings as defaultGridSettings } from '-/perspectives/grid';
 import { defaultSettings as defaultListSettings } from '-/perspectives/list';
 import { Pro } from '-/pro';
-import { actions as AppActions, AppDispatch } from '-/reducers/app';
+import {
+  actions as AppActions,
+  AppDispatch,
+  isOnline as getIsOnline,
+} from '-/reducers/app';
 import {
   actions as SettingsActions,
   getDefaultPerspective,
+  getShowSymbolicLinks,
   getShowUnixHiddenEntries,
+  getTagDelimiter,
 } from '-/reducers/settings';
 import {
   cleanMetaData,
   executePromisesInBatches,
   instanceId,
+  mergeByPath,
   mergeFsEntryMeta,
+  resolveRelativePath,
   updateFsEntries,
 } from '-/services/utils-io';
 import { TS } from '-/tagspaces.namespace';
 import { CommonLocation } from '-/utils/CommonLocation';
 import { arrayBufferToDataURL, updateHistory } from '-/utils/dom';
-import { useCancelable } from '-/utils/useCancelable';
+import { isOfflineError } from '-/utils/OfflineError';
+import {
+  makeCancelable,
+  useCancelablePerLocation,
+} from '-/utils/useCancelablePerLocation';
 import useFirstRender from '-/utils/useFirstRender';
 import {
   cleanFrontDirSeparator,
   cleanTrailingDirSeparator,
   extractContainingDirectoryPath,
   extractParentDirectoryPath,
+  extractTagsAsObjects,
   getMetaFileLocationForDir,
   getMetaFileLocationForFile,
   getThumbFileLocationForDirectory,
   getThumbFileLocationForFile,
+  isMeta,
 } from '@tagspaces/tagspaces-common/paths';
 import { enhanceEntry, getUuid } from '@tagspaces/tagspaces-common/utils-io';
 import React, {
   createContext,
+  useCallback,
   useEffect,
   useMemo,
   useReducer,
@@ -70,8 +85,11 @@ type DirectoryContentContextData = {
   currentLocationPath: string;
   currentDirectoryEntries: TS.FileSystemEntry[];
   directoryMeta: TS.FileSystemEntryMeta;
-  //currentDirectoryPerspective: TS.PerspectiveType;
+  /**
+   * @deprecated use currentDirectory instead
+   */
   currentDirectoryPath: string;
+  currentDirectory: TS.FileSystemEntry;
   /**
    * used for reorder files in KanBan
    */
@@ -126,9 +144,9 @@ type DirectoryContentContextData = {
   setSearchResults: (entries: TS.FileSystemEntry[]) => void;
   appendSearchResults: (entries: TS.FileSystemEntry[]) => void;
   enterSearchMode: () => void;
-  exitSearchMode: () => void;
+  exitSearchMode: (force?: boolean) => void;
   getDefaultPerspectiveSettings: (perspective: string) => TS.FolderSettings;
-  getPerspective: () => TS.PerspectiveType;
+  currentPerspective: TS.PerspectiveType;
   getAllPropertiesPromise: (
     entryPath: string,
     locationID?: string,
@@ -146,6 +164,7 @@ type DirectoryContentContextData = {
   ) => Promise<TS.FileSystemEntry[]>;
   setThumbnail: (fsEntry: TS.FileSystemEntry) => Promise<TS.FileSystemEntry>;
   getMetaForEntry: (fsEntry: TS.FileSystemEntry) => Promise<TS.FileSystemEntry>;
+  getEnhancedDir: (entry: TS.FileSystemEntry) => Promise<TS.FileSystemEntry>;
 };
 
 export const DirectoryContentContext =
@@ -155,6 +174,7 @@ export const DirectoryContentContext =
     directoryMeta: undefined,
     //currentDirectoryPerspective: undefined,
     currentDirectoryPath: undefined,
+    currentDirectory: undefined,
     currentDirectoryFiles: [],
     currentDirectoryDirs: [],
     //isMetaLoaded: undefined,
@@ -167,7 +187,7 @@ export const DirectoryContentContext =
     //removeDirectoryEntries: undefined,
     //reflectRenameEntries: undefined,
     setSearchQuery: () => {},
-    loadParentDirectoryContent: () => {},
+    loadParentDirectoryContent: undefined,
     loadDirectoryContent: undefined,
     enhanceDirectoryContent: undefined,
     openDirectory: undefined,
@@ -187,7 +207,7 @@ export const DirectoryContentContext =
     enterSearchMode: () => {},
     exitSearchMode: () => {},
     getDefaultPerspectiveSettings: undefined,
-    getPerspective: undefined,
+    currentPerspective: undefined,
     getAllPropertiesPromise: undefined,
     loadCurrentDirMeta: undefined,
     openIsTruncatedConfirmDialog: undefined,
@@ -195,6 +215,7 @@ export const DirectoryContentContext =
     setThumbnails: undefined,
     setThumbnail: undefined,
     getMetaForEntry: undefined,
+    getEnhancedDir: undefined,
   });
 
 export type DirectoryContentContextProviderProps = {
@@ -215,23 +236,29 @@ export const DirectoryContentContextProvider = ({
   const { t } = useTranslation();
   const {
     closeAllLocations,
+    currentLocation,
     currentLocationId,
     findLocation,
     skipInitialDirList,
     getLocationPath,
+    changeLocation,
   } = useCurrentLocationContext();
   const { actions } = useEditedEntryContext();
   const { metaActions, setReflectMetaActions } = useEditedEntryMetaContext();
   const { showNotification, hideNotifications } = useNotificationContext();
   const { selectedEntries, setSelectedEntries } = useSelectedEntriesContext();
-  const { signal, abort } = useCancelable();
 
   const currentLocationPath = useRef<string>('');
   //const useGenerateThumbnails = useSelector(getUseGenerateThumbnails);
   const showUnixHiddenEntries = useSelector(getShowUnixHiddenEntries);
+  const showSymbolicLinks = useSelector(getShowSymbolicLinks);
   const defaultPerspective = useSelector(getDefaultPerspective);
+  const tagDelimiter: string = useSelector(getTagDelimiter);
+  const isOnline = useSelector(getIsOnline);
 
   const currentDirectoryEntries = useRef<TS.FileSystemEntry[]>([]);
+  const { signal, abort, cancelAbort } =
+    useCancelablePerLocation(currentLocationId);
   const searchQuery = useRef<TS.SearchQuery>({});
   const isSearchMode = useRef<boolean>(false);
   const manualPerspective = useRef<TS.PerspectiveType>('unspecified');
@@ -243,17 +270,16 @@ export const DirectoryContentContextProvider = ({
    * undefined means no .ts folder exist
    */
   const isMetaLoaded = useRef<boolean>(undefined);
-  const isLoading = useRef<boolean>(false);
+  //const isLoading = useRef<boolean>(false);
   //const isMetaFolderExist = useRef<boolean>(undefined);
-  const currentDirectoryPath = useRef<string>(undefined);
+  const currentDirectory = useRef<TS.FileSystemEntry>(undefined);
   const currentDirectoryFiles = useRef<TS.OrderVisibilitySettings[]>([]);
-  const currentDirectoryDirs = useRef<TS.OrderVisibilitySettings[]>(undefined);
+  const currentDirectoryDirs = useRef<TS.OrderVisibilitySettings[]>([]);
   const firstRender = useFirstRender();
   const [ignored, forceUpdate] = useReducer((x) => x + 1, 0, undefined);
   const broadcast = new BroadcastChannel('ts-directory-channel');
 
-  const defaultColumnsToShow = 3;
-  const currentLocation = findLocation();
+  const defaultColumnsToShow = 3; //KanBan
 
   useEffect(() => {
     if (AppConfig.isElectron) {
@@ -306,41 +332,65 @@ export const DirectoryContentContextProvider = ({
   }, []);
 
   useEffect(() => {
-    if (currentLocation) {
-      // check for relative path for Location
-      getLocationPath(currentLocation).then((locationPath) => {
-        currentLocationPath.current = locationPath;
-        if (!skipInitialDirList) {
-          if (isLoading.current) {
-            //cancel loading KanBan S3 folders on location-folder change
-            abort();
-          }
-          isLoading.current = true;
-          openDirectory(locationPath)
-            .then((success) => {
-              manualPerspective.current = 'unspecified';
-              isLoading.current = false;
-              return success;
-            })
-            .catch((ex) => {
-              isLoading.current = false;
-              console.log('Error openDirectory:', ex);
-            });
-        }
-      });
-    } else {
+    if (!currentLocation) {
       currentLocationPath.current = '';
       clearDirectoryContent();
       exitSearchMode();
+      return;
     }
-  }, [currentLocationId]);
+    // Latest-wins guard: if the user switches locations before this load
+    // settles, drop the stale resolution so a slow S3/WebDAV response can't
+    // overwrite the newly-active location's state. The AbortController in
+    // useCancelablePerLocation already aborts the inner network calls; this
+    // flag covers the outer chain (getLocationPath → openDirectory).
+    let cancelled = false;
+    getLocationPath(currentLocation).then((locationPath) => {
+      if (cancelled) return;
+      currentLocationPath.current = locationPath;
+      if (skipInitialDirList) return;
+      openDirectory(locationPath)
+        .then((success) => {
+          if (cancelled) return success;
+          manualPerspective.current = 'unspecified';
+          return success;
+        })
+        .catch((ex) => {
+          if (cancelled) return;
+          console.log('Error openDirectory:', ex);
+        });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [currentLocation]);
+
+  // When the device transitions to offline, abort any in-flight directory
+  // listing so the user doesn't sit through the AWS SDK timeout. Per the V1
+  // plan, only listings subscribe to this signal — in-flight saves keep
+  // running (S3 PutObject is atomic; cancelling defensively could discard
+  // work that the SDK's internal retry would have committed).
+  const wasOnline = useRef<boolean>(isOnline);
+  useEffect(() => {
+    if (wasOnline.current && !isOnline) {
+      // Only abort when the current location is remote — local listings
+      // don't care about network state.
+      if (
+        currentLocation &&
+        (currentLocation.haveObjectStoreSupport() ||
+          currentLocation.haveWebDavSupport())
+      ) {
+        abort();
+      }
+    }
+    wasOnline.current = isOnline;
+  }, [isOnline, currentLocation, abort]);
 
   useEffect(() => {
     if (!firstRender && metaActions && metaActions.length > 0) {
       for (const action of metaActions) {
         if (
           action.entry &&
-          cleanTrailingDirSeparator(currentDirectoryPath.current) ===
+          cleanTrailingDirSeparator(currentDirectory.current?.path) ===
             cleanTrailingDirSeparator(action.entry.path)
         ) {
           if (action.action === 'perspectiveChange') {
@@ -368,8 +418,11 @@ export const DirectoryContentContextProvider = ({
 
   useEffect(() => {
     if (!firstRender) {
-      reflectActions(actions).catch(console.error);
-      reflectSelection(actions);
+      reflectActions(actions)
+        .then(() => {
+          reflectSelection(actions);
+        })
+        .catch(console.error);
     }
   }, [actions]);
 
@@ -384,7 +437,20 @@ export const DirectoryContentContextProvider = ({
 
   const reflectActions = async (actions) => {
     if (actions && actions.length > 0) {
+      let updateEntries = undefined;
       for (const action of actions) {
+        const pathParts = action.entry?.path?.split(
+          currentLocation.getDirSeparator(),
+        );
+        if (
+          updateEntries === undefined &&
+          pathParts.includes(AppConfig.metaFolder)
+        ) {
+          // skip metaFolder changes
+          updateEntries = false;
+        } else {
+          updateEntries = true;
+        }
         if (action.action === 'add') {
           await reflectAddAction(action.entry);
         } else if (action.action === 'delete') {
@@ -392,17 +458,27 @@ export const DirectoryContentContextProvider = ({
           /// RENAME
         } else if (action.action === 'update') {
           let index = currentDirectoryEntries.current.findIndex(
-            (e) => e.path === action.oldEntryPath,
+            (e) =>
+              cleanTrailingDirSeparator(cleanFrontDirSeparator(e.path)) ===
+              cleanTrailingDirSeparator(
+                cleanFrontDirSeparator(action.oldEntryPath),
+              ),
           );
           if (index !== -1) {
-            currentDirectoryEntries.current[index] = {
+            const merged = {
               ...currentDirectoryEntries.current[index],
               ...action.entry,
             };
+            // The old entry's parsedNameTags would be stale after a rename
+            // (filename-tag add/remove). Always recompute on update — the
+            // shallow merge above would otherwise carry the old value forward
+            // because action.entry doesn't include parsedNameTags.
+            refreshParsedNameTags(merged);
+            currentDirectoryEntries.current[index] = merged;
           }
           if (
             action.entry &&
-            cleanTrailingDirSeparator(currentDirectoryPath.current) ===
+            cleanTrailingDirSeparator(currentDirectory.current?.path) ===
               cleanTrailingDirSeparator(action.entry.path)
           ) {
             directoryMeta.current = {
@@ -418,55 +494,42 @@ export const DirectoryContentContextProvider = ({
           );
         }
       }
-      // create a shallow copy to publish changes
-      currentDirectoryEntries.current = [...currentDirectoryEntries.current];
-      forceUpdate();
+      if (updateEntries) {
+        // create a shallow copy to publish changes
+        currentDirectoryEntries.current = [...currentDirectoryEntries.current];
+        forceUpdate();
+      }
     }
   };
 
   function reflectSelection(actions: TS.EditAction[]) {
     let updated = false;
     if (actions && actions.length > 0) {
-      let selected = [];
+      let selected = [...selectedEntries];
       for (const action of actions) {
         if (
           action.source !== 'fsWatcher' &&
           action.source !== 'upload' &&
           action.source !== 'thumbgen' &&
           action.entry &&
-          action.entry.path &&
-          action.entry.path.indexOf(
-            currentLocation?.getDirSeparator() + AppConfig.metaFolder,
-          ) === -1
+          !isMeta(action.entry.path)
         ) {
           if (action.action === 'add') {
             if (
               currentDirectoryEntries.current.some(
                 (entry) => entry.path === action.entry.path,
-              )
+              ) &&
+              !action.skipSelection
             ) {
-              selected.push(action.entry);
+              selected = [action.entry];
               updated = true;
-              /*if (
-                !selectedEntries.some(
-                  (entry) => entry.path === action.entry.path,
-                )
-              ) {
-                if (selectedEntries.length > 0) {
-                  selected = [...selectedEntries, action.entry];
-                } else {
-                  selected.push(action.entry);
-                }
-                updated = true;
-              }*/
             }
           } else if (action.action === 'delete') {
             let index = selectedEntries.findIndex(
               (e) => e.path === action.entry.path,
             );
             if (index !== -1) {
-              selectedEntries.splice(index, 1);
-              selected = [...selectedEntries];
+              selected.splice(index, 1);
               updated = true;
             }
           } else if (action.action === 'update') {
@@ -474,14 +537,14 @@ export const DirectoryContentContextProvider = ({
               (e) => e.path === action.oldEntryPath,
             );
             if (index !== -1) {
-              selectedEntries[index] = action.entry;
-              selected = [...selectedEntries];
+              selected[index] = action.entry;
               updated = true;
             }
           }
         }
       }
       if (updated) {
+        setSelectedEntries([]);
         setSelectedEntries(selected);
       }
     }
@@ -567,7 +630,7 @@ export const DirectoryContentContextProvider = ({
       );
       if (
         cleanTrailingDirSeparator(
-          cleanFrontDirSeparator(currentDirectoryPath.current),
+          cleanFrontDirSeparator(currentDirectory.current?.path),
         ) === cleanTrailingDirSeparator(cleanFrontDirSeparator(dirPath))
       ) {
         currentDirectoryEntries.current.push(entry);
@@ -577,13 +640,15 @@ export const DirectoryContentContextProvider = ({
 
   function reflectDeleteAction(entry: TS.FileSystemEntry) {
     if (!entry.isFile) {
-      if (entry.path === currentDirectoryPath.current) {
+      if (entry.path === currentDirectory.current?.path) {
         loadParentDirectoryContent();
         return;
       }
     }
     let index = currentDirectoryEntries.current.findIndex(
-      (e) => e.path === entry.path,
+      (e) =>
+        cleanTrailingDirSeparator(e.path) ===
+        cleanTrailingDirSeparator(entry.path),
     );
     if (index !== -1) {
       currentDirectoryEntries.current.splice(index, 1);
@@ -591,7 +656,6 @@ export const DirectoryContentContextProvider = ({
   }
 
   function getDefaultDirMeta(): TS.FileSystemEntryMeta {
-    // const perspective = getPerspective();
     const settings: TS.PerspectiveSettings = {
       [defaultPerspective]: getDefaultPerspectiveSettings(defaultPerspective),
     };
@@ -606,15 +670,92 @@ export const DirectoryContentContextProvider = ({
       return defaultGridSettings;
     } else if (perspective === PerspectiveIDs.LIST) {
       return defaultListSettings;
-    } else if (perspective === PerspectiveIDs.KANBAN && Pro) {
-      return Pro.Perspectives.KanBanPerspectiveSettings;
+    } else if (Pro) {
+      if (perspective === PerspectiveIDs.GALLERY) {
+        return Pro.Perspectives.GalleryDefaultSettings;
+      } else if (perspective === PerspectiveIDs.STREAM) {
+        return Pro.Perspectives.StreamDefaultSettings;
+      } else if (perspective === PerspectiveIDs.MAPIQUE) {
+        return Pro.Perspectives.MapiqueDefaultSettings;
+      } else if (perspective === PerspectiveIDs.CALENDAR) {
+        return Pro.Perspectives.CalendarDefaultSettings;
+      } else if (perspective === PerspectiveIDs.FOLDERVIZ) {
+        return Pro.Perspectives.FolderVizDefaultSettings;
+      } else if (perspective === PerspectiveIDs.KANBAN) {
+        return Pro.Perspectives.KanBanPerspectiveSettings;
+      }
     }
     return defaultGridSettings;
   }
 
+  // Parse filename-encoded tags once per entry at load time. Cells used to
+  // call extractTagsAsObjects() in their render path; doing it here means
+  // 100 rendered cells skip 100 regex passes per re-render cycle.
+  function parseEntryNameTags(entry: TS.FileSystemEntry): TS.Tag[] {
+    if (!entry.isFile) return [];
+    const loc = entry.locationID ? findLocation(entry.locationID) : undefined;
+    const dirSep = loc?.getDirSeparator() ?? AppConfig.dirSeparator;
+    try {
+      return extractTagsAsObjects(entry.name, tagDelimiter, dirSep);
+    } catch {
+      return [];
+    }
+  }
+
+  // Set/refresh parsedNameTags on a single entry. Always recomputes — used
+  // when an entry's `name` may have changed (rename / filename-tag update),
+  // where caching the old value would be stale.
+  function refreshParsedNameTags(entry: TS.FileSystemEntry): void {
+    if (!entry) return;
+    entry.parsedNameTags = parseEntryNameTags(entry);
+  }
+
+  // Enrich an array of entries with parsedNameTags (only computes for entries
+  // that don't have it yet — keep existing values untouched).
+  function ensureParsedNameTags(
+    dirEntries: TS.FileSystemEntry[],
+  ): TS.FileSystemEntry[] {
+    if (!dirEntries || dirEntries.length === 0) return dirEntries;
+    for (const entry of dirEntries) {
+      if (!entry || entry.parsedNameTags !== undefined) continue;
+      entry.parsedNameTags = parseEntryNameTags(entry);
+    }
+    return dirEntries;
+  }
+
+  /**
+   * Layer the previously-loaded sidecar meta (tags, color, description,
+   * thumbnail) of surviving entries onto a fresh directory listing, matched by
+   * path. The fresh entry keeps its own identity/size/timestamps; the
+   * previously-displayed meta wins so the visible state (and crucially the
+   * thumbnail's `thumbPath`/`lastUpdated` cache-bust key) does not change at
+   * this stage — loadCurrentDirMeta re-resolves the authoritative meta right
+   * afterwards. New files stay bare and removed files drop out (membership
+   * follows the fresh listing). Used to avoid a flash where that meta (and the
+   * thumbnails) briefly disappears when reloading the directory already on
+   * screen.
+   */
+  function carryForwardMeta(
+    freshEntries: TS.FileSystemEntry[],
+    prevEntries: TS.FileSystemEntry[],
+  ): TS.FileSystemEntry[] {
+    if (!prevEntries || prevEntries.length === 0) {
+      return freshEntries;
+    }
+    const prevByPath = new Map(prevEntries.map((e) => [e.path, e]));
+    return freshEntries.map((e) => {
+      const prev = prevByPath.get(e.path);
+      if (prev && prev.meta) {
+        return { ...e, meta: { ...(e.meta || {}), ...prev.meta } };
+      }
+      return e;
+    });
+  }
+
   function setCurrentDirectoryEntries(dirEntries: TS.FileSystemEntry[]) {
+    cancelAbort();
     if (dirEntries && dirEntries.length > 0) {
-      currentDirectoryEntries.current = dirEntries; //[...dirEntries];
+      currentDirectoryEntries.current = ensureParsedNameTags(dirEntries);
       forceUpdate();
     } else if (currentDirectoryEntries.current.length > 0) {
       currentDirectoryEntries.current = [];
@@ -622,31 +763,26 @@ export const DirectoryContentContextProvider = ({
     }
   }
 
-  function exitSearchMode() {
+  function exitSearchMode(force = true) {
     isSearchMode.current = false;
     dispatch(AppActions.setSearchFilter(undefined));
-    searchQuery.current = {};
+    if (force) {
+      searchQuery.current = {};
+    }
     forceUpdate();
   }
 
   function enterSearchMode() {
-    isSearchMode.current = true;
-    forceUpdate();
+    searchQuery.current = {};
+    if (!isSearchMode.current) {
+      isSearchMode.current = true;
+      forceUpdate();
+    }
   }
 
   function setSearchResults(searchResults: TS.FileSystemEntry[]) {
     if (isSearchMode.current) {
       setCurrentDirectoryEntries(searchResults);
-      /*setCurrentDirectoryEntries(
-        searchResults.map((sr) => ({
-          ...sr,
-          // @ts-ignore temp fix model in common
-          ...(sr.thumbPath && {
-            // @ts-ignore
-            meta: { ...(sr.meta && sr.meta), thumbPath: sr.thumbPath },
-          }),
-        })),
-      );*/
     }
   }
 
@@ -671,37 +807,37 @@ export const DirectoryContentContextProvider = ({
       return openCurrentDirectory();
     }
 
-    // dispatch(actions.setIsLoading(true));
+    if (currentDirectory.current !== undefined) {
+      const loc = findLocation(currentDirectory.current.locationID);
 
-    if (currentDirectoryPath.current !== undefined) {
-      const parentDirectory = extractParentDirectoryPath(
-        currentDirectoryPath.current,
-        currentLocation?.getDirSeparator(),
-      );
-      console.log(
-        'parentDirectory: ' +
-          parentDirectory +
-          ' - currentLocationPath: ' +
-          currentLocationPath.current,
-      );
-      if (
-        parentDirectory.includes(
-          cleanTrailingDirSeparator(currentLocationPath.current),
-        )
-      ) {
-        openDirectory(parentDirectory);
-      } else {
-        showNotification(t('core:parentDirNotInLocation'), 'warning', true);
-        // dispatch(actions.setIsLoading(false));
+      if (loc) {
+        const parentDirectory = extractParentDirectoryPath(
+          currentDirectory.current.path,
+        );
+        resolveRelativePath(loc.path).then((locationPath) => {
+          const normalizedLocationPath = cleanFrontDirSeparator(
+            cleanTrailingDirSeparator(locationPath),
+          );
+          const normalizedParentDir = cleanFrontDirSeparator(parentDirectory);
+          if (
+            !normalizedLocationPath ||
+            normalizedParentDir.startsWith(normalizedLocationPath)
+          ) {
+            //limit opening only from location
+            return openDirectory(parentDirectory, undefined, loc);
+          } else {
+            // don't open dirs parent to location
+            showNotification(t('core:parentDirNotInLocation'), 'warning', true);
+          }
+        });
       }
     } else {
       showNotification(t('core:firstOpenaFolder'), 'warning', true);
-      // dispatch(actions.setIsLoading(false));
     }
   }
 
   function updateCurrentDirEntry(path: string, entry: any) {
-    if (path === currentDirectoryPath.current) {
+    if (path === currentDirectory.current?.path) {
       directoryMeta.current = directoryMeta.current
         ? { ...directoryMeta.current, ...entry }
         : entry;
@@ -737,76 +873,78 @@ export const DirectoryContentContextProvider = ({
     checkCurrentDir = true,
   ) {
     if (dirEntries) {
-      const entries = dirEntries.filter((e) => e !== undefined);
+      //const entries = dirEntries.filter((e) => e !== undefined);
       const isNotFromCurrentDir =
         checkCurrentDir &&
-        entries.some(
+        dirEntries.some(
           (e) =>
             !cleanFrontDirSeparator(e.path).startsWith(
-              cleanFrontDirSeparator(currentDirectoryPath.current),
+              cleanFrontDirSeparator(currentDirectory.current?.path),
             ),
         );
       if (
-        entries.length > 0 &&
+        dirEntries.length > 0 &&
         !isNotFromCurrentDir //entries[0].path.startsWith(currentDirectoryPath.current)
       ) {
-        //const currDirEntries = currentDirEntries ? currentDirEntries : currentDirectoryEntries;
         if (
           currentDirectoryEntries.current &&
           currentDirectoryEntries.current.length > 0
         ) {
-          /*if (inlineUpdate) {
-            // inline update currentDirectoryEntries
-            let isUpdated = false;
-            for (const oldEntry of currentDirectoryEntries.current) {
-              const entryUpdated = entries.find(
-                (updated) => updated.path === oldEntry.path,
-              );
-              if (entryUpdated) {
-                oldEntry.meta = { ...oldEntry.meta, ...entryUpdated.meta };
-                isUpdated = true;
-              }
-            }
-            if (isUpdated) {
-              forceUpdate();
-            }
-          }*/
           setCurrentDirectoryEntries(
-            currentDirectoryEntries.current.map((e) => {
-              const eUpdated = entries.filter((u) => u.path === e.path);
-              if (eUpdated.length > 0) {
-                const mergedMeta = eUpdated.reduce((merged, obj) => {
-                  return { ...merged, ...obj.meta };
-                }, {});
-                return { ...e, meta: { ...e.meta, ...mergedMeta } };
-              }
-              return e;
-            }),
+            mergeByPath(dirEntries, currentDirectoryEntries.current),
           );
+          /* currentDirectoryEntries.current.map((e) => {
+            const eUpdated = entries.filter((u) => u.path === e.path);
+            if (eUpdated.length > 0) {
+              const mergedMeta = eUpdated.reduce((merged, obj) => {
+                return { ...merged, ...obj.meta };
+              }, {});
+              return { ...e, meta: { ...e.meta, ...mergedMeta } };
+            }
+            return e;
+            })
+          ); */
         } else {
-          setCurrentDirectoryEntries(entries);
+          setCurrentDirectoryEntries(dirEntries);
         }
       }
     }
+  }
+
+  function getDefaultColumnsToShow(
+    entries: TS.FileSystemEntry[],
+  ): TS.OrderVisibilitySettings[] {
+    return entries
+      .filter((entry) => entry && !entry.isFile)
+      .slice(0, defaultColumnsToShow)
+      .map((dir) => ({
+        uuid: dir.uuid,
+        name: dir.name,
+      }));
   }
 
   async function loadMetaDirectoryContent(
     directoryPath: string,
     location: CommonLocation,
     showHiddenEntries: boolean | undefined = undefined,
+    reloadMeta = false,
   ): Promise<TS.FileSystemEntry[]> {
     // Ensure selectedEntries is cleared if not empty
     if (selectedEntries.length > 0) {
       setSelectedEntries([]);
     }
 
-    // Fetch directory metadata
-    const meta = await getDirMeta(directoryPath, location);
-    // Update directory metadata
-    if (meta) {
-      directoryMeta.current = meta;
-      currentDirectoryDirs.current = meta.customOrder?.folders || [];
-      currentDirectoryFiles.current = meta.customOrder?.files || [];
+    const isMetaPath = isMeta(directoryPath);
+    let meta;
+    if (!isMetaPath) {
+      // Fetch directory metadata
+      meta = await getDirMeta(directoryPath, location);
+      // Update directory metadata
+      if (meta) {
+        directoryMeta.current = meta;
+        currentDirectoryDirs.current = meta.customOrder?.folders || [];
+        currentDirectoryFiles.current = meta.customOrder?.files || [];
+      }
     }
     // Load directory content
     const entries = await loadDirectoryContentInt(
@@ -815,16 +953,10 @@ export const DirectoryContentContextProvider = ({
       showHiddenEntries,
     );
     // set default directory metadata
-    if (!meta) {
+    if (!isMetaPath && !meta) {
       currentDirectoryFiles.current = [];
-      // add defaultColumnsToShow
-      const columnsToShow = entries
-        .filter((entry) => !entry.isFile)
-        .slice(0, defaultColumnsToShow);
-      currentDirectoryDirs.current = columnsToShow.map((dir) => ({
-        uuid: dir.uuid,
-        name: dir.name,
-      }));
+      // add defaultColumnsToShow for KanBan
+      currentDirectoryDirs.current = getDefaultColumnsToShow(entries);
       const meta = cleanMetaData(
         mergeFsEntryMeta({
           ...getDefaultDirMeta(),
@@ -850,7 +982,15 @@ export const DirectoryContentContextProvider = ({
       }
     }
 
-    setCurrentDirectoryEntries(entries);
+    // On a reload of the directory that's already on screen, keep the
+    // already-loaded sidecar meta of surviving entries so it doesn't flash away
+    // before loadCurrentDirMeta re-resolves it. loadCurrentDirMeta still runs
+    // afterwards and overwrites with the authoritative on-disk meta.
+    setCurrentDirectoryEntries(
+      reloadMeta
+        ? carryForwardMeta(entries, currentDirectoryEntries.current)
+        : entries,
+    );
 
     return entries;
   }
@@ -861,113 +1001,139 @@ export const DirectoryContentContextProvider = ({
    * @param loadDirMeta
    * @param showHiddenEntries
    */
-  function loadDirectoryContent(
-    directoryPath: string,
-    loadDirMeta = false,
-    showHiddenEntries = undefined,
-  ): Promise<TS.FileSystemEntry[]> {
-    // dispatch(actions.setIsLoading(true));
+  const loadDirectoryContent = useCallback(
+    (
+      directoryPath: string,
+      loadDirMeta = false,
+      showHiddenEntries = undefined,
+    ): Promise<TS.FileSystemEntry[]> => {
+      if (selectedEntries.length > 0) {
+        setSelectedEntries([]);
+      }
 
-    if (selectedEntries.length > 0) {
-      setSelectedEntries([]);
-    }
-    if (loadDirMeta) {
-      return getDirMeta(directoryPath, currentLocation).then((meta) => {
-        if (meta) {
-          directoryMeta.current = meta;
-        } else {
-          directoryMeta.current = getDefaultDirMeta();
-        }
-        if (signal.aborted) {
-          return [];
-        }
+      if (loadDirMeta) {
+        return getDirMeta(directoryPath, currentLocation).then((meta) => {
+          if (meta) {
+            directoryMeta.current = meta;
+          } else {
+            directoryMeta.current = getDefaultDirMeta();
+          }
+
+          if (signal?.aborted) {
+            return [];
+          }
+
+          return loadDirectoryContentInt(
+            directoryPath,
+            currentLocation,
+            showHiddenEntries,
+          ).then((entries) => {
+            // Don't commit results from a load that was aborted because
+            // the user switched locations — would clear the newer location.
+            if (signal?.aborted) return entries;
+            setCurrentDirectoryEntries(entries);
+            return entries;
+          });
+        });
+      } else {
+        isMetaLoaded.current = false;
+        directoryMeta.current = getDefaultDirMeta();
         return loadDirectoryContentInt(
           directoryPath,
           currentLocation,
           showHiddenEntries,
         ).then((entries) => {
+          if (signal?.aborted) return entries;
           setCurrentDirectoryEntries(entries);
           return entries;
         });
-      });
-    } else {
-      isMetaLoaded.current = false;
-      directoryMeta.current = getDefaultDirMeta();
-      return loadDirectoryContentInt(
-        directoryPath,
-        currentLocation,
-        showHiddenEntries,
-      ).then((entries) => {
-        setCurrentDirectoryEntries(entries);
-        return entries;
-      });
-    }
-  }
+      }
+    },
+    [
+      currentLocation,
+      signal,
+      selectedEntries,
+      showUnixHiddenEntries,
+      showSymbolicLinks,
+    ],
+  );
 
-  function loadDirectoryContentInt(
-    directoryPath: string,
-    location: CommonLocation,
-    showHiddenEntries = undefined,
-  ): Promise<TS.FileSystemEntry[]> {
-    const uploadCancelled = new Promise((_resolve, reject) => {
-      signal.addEventListener('abort', () => reject());
-    });
+  const loadDirectoryContentInt = useCallback(
+    (
+      directoryPath: string,
+      location: CommonLocation,
+      showHiddenEntries = undefined,
+    ): Promise<TS.FileSystemEntry[]> => {
+      showNotification(t('core:loading'), 'info', false);
 
-    showNotification(t('core:loading'), 'info', false);
-    const resultsLimit = {
-      maxLoops:
-        currentLocation && currentLocation.maxLoops
-          ? currentLocation.maxLoops
-          : AppConfig.maxLoops,
-      IsTruncated: false,
-    };
-    const promise = location
-      .listDirectoryPromise(
-        directoryPath,
-        [], // location.fullTextIndex ? ['extractTextContent'] : [],
-        currentLocation ? currentLocation.ignorePatternPaths : [],
-        resultsLimit,
-      )
-      .then((results) => {
-        if (signal.aborted) {
+      const resultsLimit = {
+        maxLoops: location?.maxLoops ?? AppConfig.maxLoops,
+        IsTruncated: false,
+      };
+
+      const promise = location
+        .listDirectoryPromise(
+          directoryPath,
+          [], // You can enhance this later for fullTextIndex
+          location?.ignorePatternPaths ?? [],
+          resultsLimit,
+        )
+        .then((results) => {
+          if (signal?.aborted) return [];
+
+          if (resultsLimit.IsTruncated) {
+            openIsTruncatedConfirmDialog();
+          }
+
+          if (results !== undefined) {
+            return loadDirectorySuccess(
+              directoryPath,
+              results,
+              location,
+              showHiddenEntries,
+            );
+          }
           return [];
-        }
-        if (resultsLimit.IsTruncated) {
-          openIsTruncatedConfirmDialog();
-        }
-        if (results !== undefined) {
-          // console.debug('app listDirectoryPromise resolved:' + results.length);
-          return loadDirectorySuccess(
-            directoryPath,
-            results,
-            location,
-            showHiddenEntries,
-          );
-        }
-        return [];
-      })
-      .catch((error) => {
-        // console.timeEnd('listDirectoryPromise');
-        return loadDirectoryFailure(error);
-      });
-    return Promise.race([promise, uploadCancelled]).then(() => {
-      // useCancelable will call abort when unmounted. After listDirectoryPromise succeeded,
-      // we no longer care about that method of cancellation. Catch here to avoid an unhandled promise rejection.
-      uploadCancelled.catch(() => {});
-      return promise;
-    });
-  }
+        })
+        .catch((error) => {
+          return loadDirectoryFailure(error);
+        });
+
+      const cancelableFetch = makeCancelable(promise, signal);
+
+      return cancelableFetch
+        .then((response) => response)
+        .catch((err) => {
+          if (err.name === 'AbortError') {
+            console.log('cancelableFetch was canceled');
+            // If we aborted because the device went offline, surface that
+            // explicitly — otherwise the user just sees a silent empty list.
+            if (typeof navigator !== 'undefined' && !navigator.onLine) {
+              showNotification(
+                t('core:offlineLocationUnavailable'),
+                'warning',
+                true,
+              );
+            }
+          } else {
+            console.error('Other error:', err);
+          }
+          return [];
+        });
+    },
+    [signal, showUnixHiddenEntries, showSymbolicLinks],
+  );
 
   function clearDirectoryContent() {
-    currentDirectoryPath.current = undefined;
+    currentDirectory.current = undefined;
     setCurrentDirectoryEntries([]);
   }
 
   function openCurrentDirectory(
     showHiddenEntries = undefined,
   ): Promise<boolean> {
-    if (currentDirectoryPath.current !== undefined) {
-      return openDirectory(currentDirectoryPath.current, showHiddenEntries);
+    if (currentDirectory.current !== undefined) {
+      return openDirectory(currentDirectory.current.path, showHiddenEntries);
     }
     return Promise.resolve(false);
   }
@@ -978,17 +1144,25 @@ export const DirectoryContentContextProvider = ({
     location: CommonLocation = undefined,
   ): Promise<boolean> {
     if (dirPath !== undefined) {
+      manualPerspective.current = 'unspecified';
+      /*if (
+        location &&
+        currentLocation &&
+        currentLocation.type !== location.type
+      ) {*/
+      changeLocation(location, true);
       const cLocation = location || findLocation();
       if (cLocation) {
         return cLocation.checkDirExist(dirPath).then((exist) => {
           if (exist) {
             const reloadMeta =
-              cleanTrailingDirSeparator(currentDirectoryPath.current) ===
+              cleanTrailingDirSeparator(currentDirectory.current?.path) ===
               cleanTrailingDirSeparator(dirPath);
             return loadMetaDirectoryContent(
               dirPath,
               cLocation,
               showHiddenEntries,
+              reloadMeta,
             )
               .then((dirEntries) => {
                 if (dirEntries && reloadMeta) {
@@ -1040,14 +1214,26 @@ export const DirectoryContentContextProvider = ({
     );
 
     //setCurrentDirectoryEntries(directoryContent);
-    currentDirectoryPath.current = cleanTrailingDirSeparator(directoryPath);
-    updateHistory(location.uuid, currentLocationPath.current, directoryPath);
+    currentDirectory.current = location.toFsEntry(
+      cleanTrailingDirSeparator(directoryPath),
+      false,
+    );
+    resolveRelativePath(location.path).then((locationPath) => {
+      updateHistory(location.uuid, locationPath, directoryPath); //currentLocationPath.current
+    });
     return directoryContent;
   }
 
   function loadDirectoryFailure(error?: any) {
     console.log('Error loading directory: ', error);
     //hideNotifications();
+
+    // OfflineError: don't close locations — they'll be usable again when the
+    // device reconnects. Show a clear offline-specific message instead.
+    if (isOfflineError(error)) {
+      showNotification(t('core:offlineLocationUnavailable'), 'warning', true);
+      return [];
+    }
 
     showNotification(
       t('core:errorLoadingFolder') + ': ' + error.message,
@@ -1076,41 +1262,43 @@ export const DirectoryContentContextProvider = ({
       showHiddenEntries !== undefined
         ? showHiddenEntries
         : showUnixHiddenEntries;
-    dirEntries.map((entry) => {
+
+    dirEntries.forEach((entry) => {
       if (!showHidden && entry.name.startsWith('.')) {
-        return true;
+        return;
+      }
+
+      if (!showSymbolicLinks && entry.isSymbolicLink) {
+        return;
       }
 
       if (!showDirs && !entry.isFile) {
-        return true;
+        return;
       }
 
       if (limit !== undefined && directoryContent.length >= limit) {
-        return true;
+        return;
       }
 
       const enhancedEntry: TS.FileSystemEntry = enhanceEntry(
         entry,
-        AppConfig.tagDelimiter,
+        tagDelimiter,
         location?.getDirSeparator(),
       );
-      directoryContent.push({ ...enhancedEntry, locationID: location.uuid });
-      return true;
+      directoryContent.push({
+        ...enhancedEntry,
+        locationID: location.uuid,
+      });
     });
 
     return directoryContent;
   }
 
-  /*const perspective = useMemo(
-    () => getPerspective(),
-    [directoryMeta.current?.perspective, manualPerspective.current],
-  );*/
-
   function isSearching(): boolean {
     return Object.keys(searchQuery.current).length > 0;
   }
 
-  function getPerspective(): TS.PerspectiveType {
+  const currentPerspective: TS.PerspectiveType = useMemo(() => {
     if (manualPerspective.current === 'unspecified') {
       if (
         !directoryMeta.current ||
@@ -1122,7 +1310,8 @@ export const DirectoryContentContextProvider = ({
       return directoryMeta.current.perspective;
     }
     return manualPerspective.current;
-  }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ignored, defaultPerspective]);
 
   function setManualDirectoryPerspective(
     perspective: TS.PerspectiveType,
@@ -1130,7 +1319,7 @@ export const DirectoryContentContextProvider = ({
   ) {
     manualPerspective.current = perspective;
     getAllPropertiesPromise(
-      directory ? directory : currentDirectoryPath.current,
+      directory ? directory : currentDirectory.current?.path,
     )
       .then((entry: TS.FileSystemEntry) => {
         const action: TS.EditMetaAction = {
@@ -1234,13 +1423,13 @@ export const DirectoryContentContextProvider = ({
             meta: {
               ...(entry.meta && entry.meta),
               ...meta,
-              // description: getDescriptionPreview(meta.description, 200),
             },
           },
-          AppConfig.tagDelimiter,
+          tagDelimiter,
           location?.getDirSeparator(),
         );
       }
+      return entry;
     });
   }
 
@@ -1258,7 +1447,6 @@ export const DirectoryContentContextProvider = ({
           return {
             ...(metaAdd && metaAdd),
             ...meta,
-            // description: getDescriptionPreview(meta.description, 200),
           };
         }
         return undefined;
@@ -1279,7 +1467,6 @@ export const DirectoryContentContextProvider = ({
           return {
             ...(metaAdd && metaAdd),
             ...meta,
-            // description: getDescriptionPreview(meta.description, 200),
           };
         }
         return undefined;
@@ -1305,11 +1492,10 @@ export const DirectoryContentContextProvider = ({
           : dirEntries.filter((entry) => entry.isFile);
         const fileEntriesPromises = getFileEntriesPromises(files, meta);
         const thumbs = getThumbs(files, meta);
-        return getEntries([
-          ...dirEntriesPromises,
-          ...fileEntriesPromises,
-          ...thumbs,
-        ]);
+        return getEntries(
+          [...dirEntriesPromises, ...fileEntriesPromises, ...thumbs],
+          dirEntries,
+        );
       })
       .catch((ex) => {
         console.log(ex);
@@ -1340,12 +1526,12 @@ export const DirectoryContentContextProvider = ({
     });
   }
 
-  function getEntries(metaPromises): Promise<TS.FileSystemEntry[]> {
+  function getEntries(metaPromises, dirEntries): Promise<TS.FileSystemEntry[]> {
     // const catchHandler = (error) => undefined;
     //return Promise.all(metaPromises.map((promise) => promise.catch(catchHandler)))
     return executePromisesInBatches(metaPromises, 100)
       .then((entries: TS.FileSystemEntry[]) => {
-        return entries;
+        return mergeByPath(entries, dirEntries);
       })
       .catch((err) => {
         console.log('err updateEntries:', err);
@@ -1392,7 +1578,14 @@ export const DirectoryContentContextProvider = ({
             604800,
           );
           if (thumbPath) {
-            thumbEntry.meta = { id: getUuid(), thumbPath };
+            // Carry only thumbPath. A fresh getUuid() here would clobber the
+            // entry's stable id during mergeByPath (meta.id -> uuid), churning
+            // the React key on every reload and remounting the cell — which
+            // makes the thumbnail blank and reload. Keep the entry's own id.
+            thumbEntry.meta = {
+              ...(entry.meta?.id && { id: entry.meta.id }),
+              thumbPath,
+            };
           }
         }
       } else {
@@ -1400,7 +1593,10 @@ export const DirectoryContentContextProvider = ({
           (m) => thumbPath && thumbPath.endsWith(m.path),
         );
         if (metaFile) {
-          thumbEntry.meta = { id: getUuid(), thumbPath }; //{ ...metaFile, thumbPath };
+          thumbEntry.meta = {
+            ...(entry.meta?.id && { id: entry.meta.id }),
+            thumbPath,
+          };
         }
       }
     }
@@ -1466,20 +1662,20 @@ export const DirectoryContentContextProvider = ({
               if (meta) {
                 return enhanceEntry(
                   { ...entry, meta: { ...meta, ...metaProps } },
-                  AppConfig.tagDelimiter,
+                  tagDelimiter,
                   location.getDirSeparator(),
                 );
               }
               return enhanceEntry(
                 { ...entry, meta: { ...metaProps } },
-                AppConfig.tagDelimiter,
+                tagDelimiter,
                 location.getDirSeparator(),
               );
             });
         } catch (e) {
           return enhanceEntry(
             { ...entry, meta: { ...metaProps } },
-            AppConfig.tagDelimiter,
+            tagDelimiter,
             location.getDirSeparator(),
           );
         }
@@ -1500,11 +1696,17 @@ export const DirectoryContentContextProvider = ({
         location?.getDirSeparator(),
       );
       let thumbPath;
-      if (meta.some((metaFile) => thumbDirPath.endsWith(metaFile.path))) {
-        thumbPath =
-          location.haveObjectStoreSupport() || location.haveWebDavSupport()
+      const metaFile = meta.find((metaFile) =>
+        thumbDirPath.endsWith(metaFile.path),
+      );
+      if (metaFile) {
+        thumbPath = await location.getThumbPath(
+          thumbDirPath,
+          metaFile.lmdt, //? metaFile.lmdt : new Date().getTime(),
+        );
+        /*location.haveObjectStoreSupport() || location.haveWebDavSupport()
             ? await location.getURLforPathInt(thumbDirPath)
-            : thumbDirPath;
+            : thumbDirPath;*/
       }
       if (
         meta.some((metaFile) => metaFilePath.endsWith(metaFile.path)) &&
@@ -1543,16 +1745,19 @@ export const DirectoryContentContextProvider = ({
       currentLocationPath: currentLocationPath.current,
       currentDirectoryEntries: currentDirectoryEntries.current,
       directoryMeta: directoryMeta.current,
-      //currentDirectoryPerspective: currentPerspective.current,
-      currentDirectoryPath: currentDirectoryPath.current,
+      currentDirectoryPath: currentDirectory.current?.path,
+      currentDirectory: currentDirectory.current,
       currentDirectoryFiles: currentDirectoryFiles.current,
-      currentDirectoryDirs: currentDirectoryDirs.current,
+      currentDirectoryDirs:
+        currentDirectoryDirs.current?.length > 0
+          ? currentDirectoryDirs.current
+          : getDefaultColumnsToShow(currentDirectoryEntries.current),
       //isMetaFolderExist: isMetaFolderExist.current,
       searchQuery: searchQuery.current,
       isSearchMode: isSearchMode.current,
       isSearching,
       sendDirMessage,
-      getPerspective,
+      currentPerspective,
       updateCurrentDirEntry,
       setSearchQuery,
       loadDirectoryContent,
@@ -1583,12 +1788,13 @@ export const DirectoryContentContextProvider = ({
       setThumbnails,
       setThumbnail,
       getMetaForEntry,
+      getEnhancedDir,
     };
   }, [
     currentLocation,
     currentLocationPath.current,
     currentDirectoryEntries.current,
-    currentDirectoryPath.current,
+    currentDirectory.current,
     directoryMeta.current,
     currentDirectoryFiles.current,
     currentDirectoryDirs.current,

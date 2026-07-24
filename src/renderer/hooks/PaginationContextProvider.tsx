@@ -26,15 +26,13 @@ import { useEditedEntryMetaContext } from '-/hooks/useEditedEntryMetaContext';
 
 type PaginationContextData = {
   page: number;
-  //pageFiles: TS.FileSystemEntry[];
-  getResentPageFiles: () => TS.FileSystemEntry[];
+  pageFiles: TS.FileSystemEntry[];
   setCurrentPage: (page?: number) => void;
 };
 
 export const PaginationContext = createContext<PaginationContextData>({
   page: 1,
-  //pageFiles: [],
-  getResentPageFiles: undefined,
+  pageFiles: undefined,
   setCurrentPage: undefined,
 });
 
@@ -50,6 +48,12 @@ export const PaginationContextProvider = ({
   const { setReflectMetaActions } = useEditedEntryMetaContext();
   const { settings, showDirectories } = usePerspectiveSettingsContext();
   const { sortedDirContent } = useSortedDirContext();
+  // Only the two settings that actually shape pagination should reset the
+  // current page. Depending on the whole `settings` object would also clobber
+  // page state on every unrelated change (zoom/entrySize, thumbnailMode,
+  // sortBy, …), which is surprising to the user.
+  const gridPageLimit =
+    settings?.gridPageLimit ?? defaultSettings.gridPageLimit;
 
   const [page, setPage] = useState<number>(initPage);
   // const firstRender = useFirstRender();
@@ -65,15 +69,7 @@ export const PaginationContextProvider = ({
         console.debug('meta loaded')
       );
     }*/
-  }, [currentDirectoryPath, searchQuery, settings]); //, isSearchMode isMetaFolderExist]);
-
-  /*const pageFiles: TS.FileSystemEntry[] = useMemo(() => {
-    return getPageFiles(page, sortedDirContent);
-  }, [page, sortedDirContent, settings]);*/
-
-  function getResentPageFiles() {
-    return getPageFiles(page, sortedDirContent);
-  }
+  }, [currentDirectoryPath, searchQuery, gridPageLimit, showDirectories]);
 
   function getPageFiles(currentPage: number, dirContent: TS.FileSystemEntry[]) {
     const gridPageLimit =
@@ -97,6 +93,11 @@ export const PaginationContextProvider = ({
     return files;
   }
 
+  const pageFiles = useMemo(
+    () => getPageFiles(page, sortedDirContent),
+    [page, sortedDirContent, gridPageLimit, showDirectories],
+  );
+
   function setCurrentPage(currentPage?: number) {
     const cPage = currentPage ? currentPage : initPage;
     if (page !== cPage) {
@@ -112,13 +113,14 @@ export const PaginationContextProvider = ({
     }
   }
 
-  const context = useMemo(() => {
-    return {
+  const context = useMemo(
+    () => ({
       page,
-      getResentPageFiles,
+      pageFiles,
       setCurrentPage,
-    };
-  }, [page, currentDirectoryPath, sortedDirContent, settings]);
+    }),
+    [page, pageFiles],
+  );
 
   return (
     <PaginationContext.Provider value={context}>

@@ -38,21 +38,22 @@ import TsToolbarButton from '-/components/TsToolbarButton';
 import ZoomComponent from '-/components/ZoomComponent';
 import { useAiGenerationDialogContext } from '-/components/dialogs/hooks/useAiGenerationDialogContext';
 import { useDeleteMultipleEntriesDialogContext } from '-/components/dialogs/hooks/useDeleteMultipleEntriesDialogContext';
+import { useMenuContext } from '-/components/dialogs/hooks/useMenuContext';
 import { TabNames } from '-/hooks/EntryPropsTabsContextProvider';
 import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
 import { useDirectoryContentContext } from '-/hooks/useDirectoryContentContext';
+import { useIOActionsContext } from '-/hooks/useIOActionsContext';
+import { useNotificationContext } from '-/hooks/useNotificationContext';
 import { useOpenedEntryContext } from '-/hooks/useOpenedEntryContext';
 import { usePerspectiveSettingsContext } from '-/hooks/usePerspectiveSettingsContext';
 import { useSelectedEntriesContext } from '-/hooks/useSelectedEntriesContext';
 import { useSortedDirContext } from '-/perspectives/grid/hooks/useSortedDirContext';
 import { Pro } from '-/pro';
-import { getKeyBindingObject } from '-/reducers/settings';
-import { Box, Divider, Toolbar } from '@mui/material/';
+import { getKeyBindingObject, isHideProFeatures } from '-/reducers/settings';
+import { Box, Divider, Toolbar } from '@mui/material';
 import { alpha, useTheme } from '@mui/material/styles';
-import { saveAs } from 'file-saver';
 import { useTranslation } from 'react-i18next';
 import { useSelector } from 'react-redux';
-import { useMenuContext } from '-/components/dialogs/hooks/useMenuContext';
 
 interface Props {
   prefixDataTID?: string;
@@ -60,7 +61,6 @@ interface Props {
   handleSortingMenu: (event: Object) => void;
   handleExportCsvMenu: () => void;
   openSettings: () => void;
-  openShareFilesDialog?: () => void;
 }
 
 function MainToolbar(props: Props) {
@@ -70,10 +70,14 @@ function MainToolbar(props: Props) {
     handleSortingMenu,
     handleExportCsvMenu,
     openSettings,
-    openShareFilesDialog,
   } = props;
 
-  const { openMoveCopyFilesDialog, openAddRemoveTagsDialog } = useMenuContext();
+  const {
+    openMoveCopyFilesDialog,
+    openAddRemoveTagsDialog,
+    openShareFilesDialog,
+  } = useMenuContext();
+  const { showNotification } = useNotificationContext();
   const { haveLocalSetting } = usePerspectiveSettingsContext();
   const { openAiGenerationDialog } = useAiGenerationDialogContext();
   const { nativeDragModeEnabled, setNativeDragModeEnabled } =
@@ -81,49 +85,50 @@ function MainToolbar(props: Props) {
 
   const { t } = useTranslation();
   const theme = useTheme();
-  const { openEntry } = useOpenedEntryContext();
+  const { openEntry, openedEntry, fileChanged, actuallyCloseFiles } =
+    useOpenedEntryContext();
   const { loadParentDirectoryContent, currentDirectoryPath } =
     useDirectoryContentContext();
   const { selectedEntries } = useSelectedEntriesContext();
+  const { downloadFsEntry } = useIOActionsContext();
   const keyBindings = useSelector(getKeyBindingObject);
+  const hideProFeatures: boolean = useSelector(isHideProFeatures);
   const { currentLocation } = useCurrentLocationContext();
   const { openDeleteMultipleEntriesDialog } =
     useDeleteMultipleEntriesDialogContext();
 
   function showProperties() {
-    return openEntry(currentDirectoryPath, TabNames.propertiesTab);
+    if (openedEntry?.path === currentDirectoryPath) {
+      actuallyCloseFiles();
+    } else {
+      openEntry(currentDirectoryPath, TabNames.propertiesTab);
+    }
   }
 
   function multipleDownload() {
+    // downloadFsEntry handles every backend (object-store signed URLs,
+    // encrypted blobs, plain URLs) and every platform: web/electron via an
+    // <a download> anchor, native mobile via @capacitor/filesystem (Android →
+    // public Download/ folder, iOS → Cache + share sheet). It also surfaces
+    // start/completion notifications on mobile.
     selectedEntries?.forEach((entry) => {
       if (entry.isFile) {
-        const cleanedPath = entry.path.startsWith('/')
-          ? entry.path.substr(1)
-          : entry.path;
-        currentLocation
-          ?.generateURLforPath(cleanedPath, 900)
-          .then((url) => fetch(url))
-          .then((res) => res.blob()) // Gets the response and returns it as a blob
-          .then((blob) => {
-            saveAs(blob, entry.name);
-          });
+        downloadFsEntry(entry);
       }
     });
   }
 
   const showDownloadButton =
-    AppConfig.isWeb &&
     selectedEntries?.length > 0 &&
-    // (PlatformIO.haveObjectStoreSupport() || PlatformIO.haveWebDavSupport()) &&
-    !AppConfig.isCordovaAndroid; // saveAs do not work on Android
+    (AppConfig.isWeb || AppConfig.isNativeMobile);
 
   const folderSettingsAvailable = haveLocalSetting();
 
   return (
     <Toolbar
-      style={{
-        paddingLeft: 5,
-        paddingRight: 5,
+      sx={{
+        paddingLeft: '5px !important',
+        paddingRight: '5px !important',
         position: 'absolute',
         zIndex: 1,
         background:
@@ -191,7 +196,22 @@ function MainToolbar(props: Props) {
             keyBinding={keyBindings['addRemoveTags']}
             aria-label={t('core:tagSelectedEntries')}
             data-tid={prefixDataTID + 'PerspectiveAddRemoveTags'}
-            onClick={() => openAddRemoveTagsDialog(selectedEntries)}
+            onClick={() => {
+              if (
+                openedEntry &&
+                fileChanged &&
+                selectedEntries &&
+                selectedEntries.some((e) => e.path === openedEntry.path)
+              ) {
+                showNotification(
+                  `You can't edit tags, because '${openedEntry.path}' is opened for editing`,
+                  'default',
+                  true,
+                );
+                return;
+              }
+              openAddRemoveTagsDialog(selectedEntries);
+            }}
           >
             <TagIcon />
           </TsToolbarButton>
@@ -233,21 +253,23 @@ function MainToolbar(props: Props) {
             <DeleteIcon />
           </TsToolbarButton>
         )}
-        {openShareFilesDialog && currentLocation?.haveObjectStoreSupport() && (
-          <TsToolbarButton
-            tooltip={t('core:shareFiles')}
-            title={t('core:shareFiles')}
-            aria-label={t('core:shareFiles')}
-            data-tid={prefixDataTID + 'PerspectiveShareFiles'}
-            onClick={openShareFilesDialog}
-            disabled={selectedEntries.length < 1}
-          >
-            <ShareIcon />
-          </TsToolbarButton>
-        )}
+        {!hideProFeatures &&
+          Pro &&
+          currentLocation?.haveObjectStoreSupport() && (
+            <TsToolbarButton
+              tooltip={t('core:shareFiles')}
+              title={t('core:shareFiles')}
+              aria-label={t('core:shareFiles')}
+              data-tid={prefixDataTID + 'PerspectiveShareFiles'}
+              onClick={() => openShareFilesDialog()}
+              disabled={selectedEntries.length < 1}
+            >
+              <ShareIcon />
+            </TsToolbarButton>
+          )}
         <Divider flexItem orientation="vertical" sx={{ mx: 0.5, my: 1 }} />
       </Box>
-      <Box sx={{ display: { xs: 'none', sm: 'flex' } }}>
+      <Box sx={{ display: 'flex' }}>
         <ZoomComponent preview={false} />
         <Divider flexItem orientation="vertical" sx={{ mx: 0.5, my: 1 }} />
       </Box>
@@ -261,8 +283,8 @@ function MainToolbar(props: Props) {
           <DownloadIcon />
         </TsToolbarButton>
       )}
-      {Pro &&
-        !AppConfig.isCordovaAndroid && ( // SaveAs do not work on Android
+      {!hideProFeatures &&
+        Pro && ( // SaveAs do not work on Android
           <TsToolbarButton
             tooltip={t('core:exportCsv')}
             title={t('core:startExportButton')}
@@ -279,9 +301,13 @@ function MainToolbar(props: Props) {
           onClick={() => {
             setNativeDragModeEnabled(!nativeDragModeEnabled);
           }}
-          title={t('core:dragMode')}
+          title={t('core:dragModeCaption')}
         >
-          {nativeDragModeEnabled ? <DragOnIcon /> : <DragOffIcon />}
+          {nativeDragModeEnabled ? (
+            <DragOnIcon color="primary" />
+          ) : (
+            <DragOffIcon />
+          )}
         </TsToolbarButton>
       )}
       <Box sx={{ flexGrow: 1 }} />

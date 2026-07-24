@@ -16,24 +16,34 @@
  *
  */
 
-import React, { useEffect, useReducer } from 'react';
+import React, { useEffect } from 'react';
 
 import AppConfig from '-/AppConfig';
 
-import { Pro } from '-/pro';
-import { PerspectiveIDs } from '-/perspectives';
-import { useDirectoryContentContext } from '-/hooks/useDirectoryContentContext';
-import LoadingLazy from '-/components/LoadingLazy';
-import { SortedDirContextProvider } from '-/perspectives/grid/hooks/SortedDirContextProvider';
-import { PaginationContextProvider } from '-/hooks/PaginationContextProvider';
-import { ThumbGenerationContextProvider } from '-/hooks/ThumbGenerationContextProvider';
-import { PerspectiveSettingsContextProvider } from '-/hooks/PerspectiveSettingsContextProvider';
-import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
 import CustomDragLayer from '-/components/CustomDragLayer';
+import { ErrorBoundary } from '-/components/ErrorBoundary';
+import LoadingLazy from '-/components/LoadingLazy';
 import TargetFileBox from '-/components/TargetFileBox';
+import { usePerspectiveOnboardingContext } from '-/components/dialogs/hooks/usePerspectiveOnboardingContext';
+import { PaginationContextProvider } from '-/hooks/PaginationContextProvider';
+import { PerspectiveSettingsContextProvider } from '-/hooks/PerspectiveSettingsContextProvider';
+import { ThumbGenerationContextProvider } from '-/hooks/ThumbGenerationContextProvider';
+import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
+import { useDirectoryContentContext } from '-/hooks/useDirectoryContentContext';
+import { useNotificationContext } from '-/hooks/useNotificationContext';
+import {
+  AvailablePerspectives,
+  hasExternalPerspectiveComponent,
+  loadExternalPerspectiveComponent,
+  PerspectiveIDs,
+  perspectiveHasOnboarding,
+} from '-/perspectives';
+import { SortedDirContextProvider } from '-/perspectives/grid/hooks/SortedDirContextProvider';
+import { Pro } from '-/pro';
+import { getSeenPerspectiveOnboardings } from '-/reducers/settings';
+import i18n from '-/services/i18n';
 import { NativeTypes } from 'react-dnd-html5-backend';
-import { useEditedEntryMetaContext } from '-/hooks/useEditedEntryMetaContext';
-import useFirstRender from '-/utils/useFirstRender';
+import { useSelector } from 'react-redux';
 
 const GridPerspective = React.lazy(
   () =>
@@ -85,9 +95,27 @@ if (Pro && Pro.Perspectives && Pro.Perspectives.GalleryPerspective) {
 function GalleryPerspectiveAsync(props) {
   return (
     <React.Suspense fallback={<LoadingLazy />}>
-      <ThumbGenerationContextProvider>
-        <GalleryPerspective {...props} />
-      </ThumbGenerationContextProvider>
+      <PerspectiveSettingsContextProvider>
+        <ThumbGenerationContextProvider>
+          <GalleryPerspective {...props} />
+        </ThumbGenerationContextProvider>
+      </PerspectiveSettingsContextProvider>
+    </React.Suspense>
+  );
+}
+
+let StreamPerspective = React.Fragment;
+if (Pro && Pro.Perspectives && Pro.Perspectives.StreamPerspective) {
+  StreamPerspective = Pro.Perspectives.StreamPerspective;
+}
+function StreamPerspectiveAsync(props) {
+  return (
+    <React.Suspense fallback={<LoadingLazy />}>
+      <PerspectiveSettingsContextProvider>
+        <ThumbGenerationContextProvider>
+          <StreamPerspective {...props} />
+        </ThumbGenerationContextProvider>
+      </PerspectiveSettingsContextProvider>
     </React.Suspense>
   );
 }
@@ -132,10 +160,104 @@ if (Pro && Pro.Perspectives && Pro.Perspectives.FolderVizPerspective) {
 function FolderVizPerspectiveAsync(props) {
   return (
     <React.Suspense fallback={<LoadingLazy />}>
-      <ThumbGenerationContextProvider>
-        <FolderVizPerspective {...props} />
-      </ThumbGenerationContextProvider>
+      <PerspectiveSettingsContextProvider>
+        <ThumbGenerationContextProvider>
+          <FolderVizPerspective {...props} />
+        </ThumbGenerationContextProvider>
+      </PerspectiveSettingsContextProvider>
     </React.Suspense>
+  );
+}
+
+let CalendarPerspective = React.Fragment;
+if (Pro && Pro.Perspectives && Pro.Perspectives.CalendarPerspective) {
+  CalendarPerspective = Pro.Perspectives.CalendarPerspective;
+}
+function CalendarPerspectiveAsync(props) {
+  return (
+    <React.Suspense fallback={<LoadingLazy />}>
+      <PerspectiveSettingsContextProvider>
+        <ThumbGenerationContextProvider>
+          <CalendarPerspective {...props} />
+        </ThumbGenerationContextProvider>
+      </PerspectiveSettingsContextProvider>
+    </React.Suspense>
+  );
+}
+
+// Cache of lazy components for external (package-shipped) perspectives.
+// Each entry is created on first render of that perspective and reused on
+// subsequent switches so the chunk is only fetched once.
+const externalLazyCache: Record<string, React.LazyExoticComponent<any>> = {};
+
+function getExternalPerspectiveLazy(
+  perspectiveId: string,
+): React.LazyExoticComponent<any> | undefined {
+  if (externalLazyCache[perspectiveId]) {
+    return externalLazyCache[perspectiveId];
+  }
+  // Predicate-based gate so we don't kick off the dynamic import twice
+  // (once to probe, once inside React.lazy) — the discarded probe promise
+  // would otherwise leak as an unhandled rejection if the chunk failed.
+  if (!hasExternalPerspectiveComponent(perspectiveId)) return undefined;
+  externalLazyCache[perspectiveId] = React.lazy(
+    () => loadExternalPerspectiveComponent(perspectiveId)!,
+  );
+  return externalLazyCache[perspectiveId];
+}
+
+function ExternalPerspectiveAsync({
+  perspectiveId,
+}: {
+  perspectiveId: string;
+}) {
+  const Comp = getExternalPerspectiveLazy(perspectiveId);
+  if (!Comp) return null;
+  return (
+    <React.Suspense fallback={<LoadingLazy />}>
+      <PerspectiveSettingsContextProvider>
+        <SortedDirContextProvider>
+          <PaginationContextProvider>
+            <ThumbGenerationContextProvider>
+              <Comp />
+            </ThumbGenerationContextProvider>
+          </PaginationContextProvider>
+        </SortedDirContextProvider>
+      </PerspectiveSettingsContextProvider>
+    </React.Suspense>
+  );
+}
+
+// Isolates failures in any individual perspective (built-in or external)
+// so a crash shows an inline error inside the directory pane instead of
+// blanking the whole renderer. resetKeys clears the error automatically
+// when the user switches perspective or folder.
+function PerspectiveBoundary({
+  perspectiveId,
+  currentDirectoryPath,
+  children,
+}: {
+  perspectiveId: string;
+  currentDirectoryPath?: string;
+  children: React.ReactNode;
+}) {
+  const { showNotification } = useNotificationContext();
+  return (
+    <ErrorBoundary
+      title={i18n.t('core:perspectiveFailedToLoad')}
+      label={`${i18n.t('core:perspectiveLabel')} ${perspectiveId}`}
+      resetKeys={[perspectiveId, currentDirectoryPath]}
+      onError={() =>
+        showNotification(
+          i18n.t('core:perspectiveFailedToLoad'),
+          'error',
+          true,
+          'perspectiveCrashTID',
+        )
+      }
+    >
+      {children}
+    </ErrorBoundary>
   );
 }
 
@@ -154,48 +276,79 @@ interface Props {}
 
 function RenderPerspective(props: Props) {
   const { currentLocationId } = useCurrentLocationContext();
-  const { getPerspective } = useDirectoryContentContext();
-  const { metaActions } = useEditedEntryMetaContext();
-  const [ignored, forceUpdate] = useReducer((x) => x + 1, 0, undefined);
-  const firstRender = useFirstRender();
+  const { currentPerspective, currentDirectory } = useDirectoryContentContext();
+  const currentDirectoryPath = currentDirectory?.path;
+  const { openPerspectiveOnboarding } = usePerspectiveOnboardingContext();
+  const seenOnboardings = useSelector(getSeenPerspectiveOnboardings);
 
+  // Auto-open the perspective's onboarding dialog the first time the user
+  // switches into it. Only runs for perspectives that ship an
+  // onboardingExport in their tsextension manifest. The "seen" flag is
+  // persisted in Redux and cleared by the "Show intro" button in Settings
+  // for manual re-runs.
   useEffect(() => {
-    if (!firstRender && metaActions && metaActions.length > 0) {
-      for (const action of metaActions) {
-        if (action.action === 'perspectiveChange') {
-          forceUpdate();
-        }
-      }
-    }
-  }, [metaActions]);
+    if (!currentPerspective || !currentLocationId) return;
+    if (seenOnboardings[currentPerspective]) return;
+    if (!perspectiveHasOnboarding(currentPerspective)) return;
+    openPerspectiveOnboarding(currentPerspective);
+    // We intentionally depend on currentPerspective only — re-running on
+    // seenOnboardings changes would re-open the dialog after the user marks
+    // it seen by closing it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentPerspective, currentLocationId]);
 
   const showWelcomePanel = !currentLocationId;
-  //!currentDirectoryPath && currentDirectoryEntries.length < 1;
-
-  if (showWelcomePanel) {
-    return AppConfig.showWelcomePanel ? <WelcomePanelAsync /> : null;
-  }
 
   function getPerspectiveComponent() {
-    const perspective = getPerspective();
-    if (perspective === PerspectiveIDs.LIST) {
-      return <ListPerspectiveAsync />;
+    const wrap = (id: string, node: React.ReactNode) => (
+      <PerspectiveBoundary
+        perspectiveId={id}
+        currentDirectoryPath={currentDirectoryPath}
+      >
+        {node}
+      </PerspectiveBoundary>
+    );
+    if (currentPerspective === PerspectiveIDs.LIST) {
+      return wrap(PerspectiveIDs.LIST, <ListPerspectiveAsync />);
     }
-    if (Pro && perspective === PerspectiveIDs.GALLERY) {
-      return <GalleryPerspectiveAsync />;
+    if (Pro && currentPerspective === PerspectiveIDs.GALLERY) {
+      return wrap(PerspectiveIDs.GALLERY, <GalleryPerspectiveAsync />);
     }
-    if (Pro && perspective === PerspectiveIDs.MAPIQUE) {
-      return <MapiquePerspectiveAsync />;
+    if (Pro && currentPerspective === PerspectiveIDs.STREAM) {
+      return wrap(PerspectiveIDs.STREAM, <StreamPerspectiveAsync />);
     }
-    if (Pro && perspective === PerspectiveIDs.KANBAN) {
-      return <KanBanPerspectiveAsync />;
+    if (Pro && currentPerspective === PerspectiveIDs.MAPIQUE) {
+      return wrap(PerspectiveIDs.MAPIQUE, <MapiquePerspectiveAsync />);
     }
-    if (Pro && perspective === PerspectiveIDs.FOLDERVIZ) {
-      return <FolderVizPerspectiveAsync />;
+    if (Pro && currentPerspective === PerspectiveIDs.KANBAN) {
+      return wrap(PerspectiveIDs.KANBAN, <KanBanPerspectiveAsync />);
     }
-
-    return <GridPerspectiveAsync />;
+    if (Pro && currentPerspective === PerspectiveIDs.FOLDERVIZ) {
+      return wrap(PerspectiveIDs.FOLDERVIZ, <FolderVizPerspectiveAsync />);
+    }
+    if (Pro && currentPerspective === PerspectiveIDs.CALENDAR) {
+      return wrap(PerspectiveIDs.CALENDAR, <CalendarPerspectiveAsync />);
+    }
+    // External perspective from a package — resolved via the build-time
+    // generated loader map. Returns null silently if the perspective ID
+    // doesn't match any built-in or external entry; the fallback effect in
+    // FolderContainer.tsx will route to the first enabled perspective.
+    const externalMeta = AvailablePerspectives.find(
+      (p) => p.external && p.id === currentPerspective,
+    );
+    if (externalMeta) {
+      return wrap(
+        externalMeta.id,
+        <ExternalPerspectiveAsync perspectiveId={externalMeta.id} />,
+      );
+    }
+    return wrap(PerspectiveIDs.GRID, <GridPerspectiveAsync />);
   }
+
+  if (showWelcomePanel) {
+    return AppConfig.ExtShowWelcomePanel ? <WelcomePanelAsync /> : null;
+  }
+
   const { FILE } = NativeTypes;
   return (
     <TargetFileBox style={{ height: '100%' }} accepts={[FILE]}>

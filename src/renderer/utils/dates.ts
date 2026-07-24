@@ -51,74 +51,142 @@ export function isYearPeriod(tagDate: string): boolean {
   );
 }
 
-/** Returns true if string is this format: 201512 */
+/** Validates that an 8-digit string (YYYYMMDD) represents a real calendar date */
+function isValidDatePart(yyyymmdd: string): boolean {
+  const year = parseInt(yyyymmdd.slice(0, 4), 10);
+  const month = parseInt(yyyymmdd.slice(4, 6), 10);
+  const day = parseInt(yyyymmdd.slice(6, 8), 10);
+  if (month < 1 || month > 12 || day < 1) return false;
+  return day <= getDaysInMonth(year, month);
+}
+
+/** Returns true if string is this format: 201512 (valid month 01-12) */
 export function isYearMonth(tagDate: string): boolean {
-  return /(^|\s)([0123][0123456789][0123456789][0123456789][01][0123456789])(\s|$)/.test(
-    tagDate,
-  );
+  if (
+    !/(^|\s)([0123][0123456789][0123456789][0123456789][01][0123456789])(\s|$)/.test(
+      tagDate,
+    )
+  ) {
+    return false;
+  }
+  const match = tagDate.trim();
+  const month = parseInt(match.slice(4, 6), 10);
+  return month >= 1 && month <= 12;
 }
 
-/** Returns true if string is this format: 201512-201604 */
+/** Returns true if string is this format: 201512-201604 (valid months 01-12) */
 export function isYearMonthPeriod(tagDate: string): boolean {
-  return /(^|\s)([0123][0123456789][0123456789][0123456789][01][0123456789]-[0123][0123456789][0123456789][0123456789][01][0123456789])(\s|$)/.test(
-    tagDate,
-  );
+  if (
+    !/(^|\s)([0123][0123456789][0123456789][0123456789][01][0123456789]-[0123][0123456789][0123456789][0123456789][01][0123456789])(\s|$)/.test(
+      tagDate,
+    )
+  ) {
+    return false;
+  }
+  const t = tagDate.trim();
+  const m1 = parseInt(t.slice(4, 6), 10);
+  const m2 = parseInt(t.slice(11, 13), 10);
+  return m1 >= 1 && m1 <= 12 && m2 >= 1 && m2 <= 12;
 }
 
-/** Returns true if string is this format: 20151223 */
+/** Returns true if string is this format: 20151223 (valid month 01-12 and day for that month) */
 export function isYearMonthDay(tagDate: string): boolean {
-  return /(^|\s)([0123][0123456789][0123456789][0123456789][01][0123456789][0123][0123456789])(\s|$)/.test(
-    tagDate,
-  );
+  if (
+    !/(^|\s)([0123][0123456789][0123456789][0123456789][01][0123456789][0123][0123456789])(\s|$)/.test(
+      tagDate,
+    )
+  ) {
+    return false;
+  }
+  return isValidDatePart(tagDate.trim().slice(0, 8));
 }
 
-/** Returns true if string is this format: 20151223-20160223 */
+/** Returns true if string is this format: 20151223-20160223 (valid dates) */
 export function isYearMonthDayPeriod(tagDate: string): boolean {
-  return /(^|\s)([0123][0123456789][0123456789][0123456789][01][0123456789][0123][0123456789]-[0123][0123456789][0123456789][0123456789][01][0123456789][0123][0123456789])(\s|$)/.test(
-    tagDate,
-  );
+  if (
+    !/(^|\s)([0123][0123456789][0123456789][0123456789][01][0123456789][0123][0123456789]-[0123][0123456789][0123456789][0123456789][01][0123456789][0123][0123456789])(\s|$)/.test(
+      tagDate,
+    )
+  ) {
+    return false;
+  }
+  const t = tagDate.trim();
+  return isValidDatePart(t.slice(0, 8)) && isValidDatePart(t.slice(9, 17));
 }
 
-/** Returns true if string is this format: 20151223~01 */
+/** Returns true if string is this format: 20151223~01 (valid date) */
 export function isYearMonthDayHour(tagDate: string): boolean {
-  return /(^|\s)([0123][0123456789][0123456789][0123456789][01][0123456789][0123][0123456789][~T][0123456][0123456789])(\s|$)/.test(
-    tagDate,
-  );
+  if (
+    !/(^|\s)([0123][0123456789][0123456789][0123456789][01][0123456789][0123][0123456789][~T][0123456][0123456789])(\s|$)/.test(
+      tagDate,
+    )
+  ) {
+    return false;
+  }
+  return isValidDatePart(tagDate.trim().slice(0, 8));
 }
 
-/** Returns true if string is this format: 20190712~17-20190712~17 */
+/** Returns true if string is this format: 20190712~17-20190712~17 (valid dates) */
 export function isYearMonthDayHourPeriod(tagDate: string): boolean {
-  return /(^|\s)([0123][0123456789][0123456789][0123456789][01][0123456789][0123][0123456789][~T][0123456][0123456789]-[0123][0123456789][0123456789][0123456789][01][0123456789][0123][0123456789][~T][0123456][0123456789])(\s|$)/.test(
-    tagDate,
-  );
+  if (
+    !/(^|\s)([0123][0123456789][0123456789][0123456789][01][0123456789][0123][0123456789][~T][0123456][0123456789]-[0123][0123456789][0123456789][0123456789][01][0123456789][0123][0123456789][~T][0123456][0123456789])(\s|$)/.test(
+      tagDate,
+    )
+  ) {
+    return false;
+  }
+  const t = tagDate.trim();
+  return isValidDatePart(t.slice(0, 8)) && isValidDatePart(t.slice(12, 20));
 }
 
-/** Returns true if string is this format: 20151223~0112 or 20151223T0112 */
+/** Returns true if string is this format: 20151223~0112 or 20151223T0112 (valid date) */
 export function isYearMonthDayHourMin(tagDate: string): boolean {
-  return /(^|\s)([0123][0123456789][0123456789][0123456789][01][0123456789][0123][0123456789][~T][0123456][0123456789][0123456][0123456789])(\s|$)/.test(
-    tagDate,
-  );
+  if (
+    !/(^|\s)([0123][0123456789][0123456789][0123456789][01][0123456789][0123][0123456789][~T][0123456][0123456789][0123456][0123456789])(\s|$)/.test(
+      tagDate,
+    )
+  ) {
+    return false;
+  }
+  return isValidDatePart(tagDate.trim().slice(0, 8));
 }
 
-/** Returns true if string is this format: 20190712~1740-20190712~1740 */
+/** Returns true if string is this format: 20190712~1740-20190712~1740 (valid dates) */
 export function isYearMonthDayHourMinPeriod(tagDate: string): boolean {
-  return /(^|\s)([0123][0123456789][0123456789][0123456789][01][0123456789][0123][0123456789][~T][0123456][0123456789][0123456][0123456789]-[0123][0123456789][0123456789][0123456789][01][0123456789][0123][0123456789][~T][0123456][0123456789][0123456][0123456789])(\s|$)/.test(
-    tagDate,
-  );
+  if (
+    !/(^|\s)([0123][0123456789][0123456789][0123456789][01][0123456789][0123][0123456789][~T][0123456][0123456789][0123456][0123456789]-[0123][0123456789][0123456789][0123456789][01][0123456789][0123][0123456789][~T][0123456][0123456789][0123456][0123456789])(\s|$)/.test(
+      tagDate,
+    )
+  ) {
+    return false;
+  }
+  const t = tagDate.trim();
+  return isValidDatePart(t.slice(0, 8)) && isValidDatePart(t.slice(14, 22));
 }
 
-/** Returns true if string is this format: 20151223~011358 */
+/** Returns true if string is this format: 20151223~011358 (valid date) */
 export function isYearMonthDayHourMinSec(tagDate: string): boolean {
-  return /(^|\s)([0123][0123456789][0123456789][0123456789][01][0123456789][0123][0123456789][~T][0123456][0123456789][0123456][0123456789][0123456][0123456789])(\s|$)/.test(
-    tagDate,
-  );
+  if (
+    !/(^|\s)([0123][0123456789][0123456789][0123456789][01][0123456789][0123][0123456789][~T][0123456][0123456789][0123456][0123456789][0123456][0123456789])(\s|$)/.test(
+      tagDate,
+    )
+  ) {
+    return false;
+  }
+  return isValidDatePart(tagDate.trim().slice(0, 8));
 }
 
-/** Returns true if string is this format: 20190712~174031-20190712~174031 */
+/** Returns true if string is this format: 20190712~174031-20190712~174031 (valid dates) */
 export function isYearMonthDayHourMinSecPeriod(tagDate: string): boolean {
-  return /(^|\s)([0123][0123456789][0123456789][0123456789][01][0123456789][0123][0123456789][~T][0123456][0123456789][0123456][0123456789][0123456][0123456789]-[0123][0123456789][0123456789][0123456789][01][0123456789][0123][0123456789][~T][0123456][0123456789][0123456][0123456789][0123456][0123456789])(\s|$)/.test(
-    tagDate,
-  );
+  if (
+    !/(^|\s)([0123][0123456789][0123456789][0123456789][01][0123456789][0123][0123456789][~T][0123456][0123456789][0123456][0123456789][0123456][0123456789]-[0123][0123456789][0123456789][0123456789][01][0123456789][0123][0123456789][~T][0123456][0123456789][0123456][0123456789][0123456][0123456789])(\s|$)/.test(
+      tagDate,
+    )
+  ) {
+    return false;
+  }
+  const t = tagDate.trim();
+  return isValidDatePart(t.slice(0, 8)) && isValidDatePart(t.slice(16, 24));
 }
 
 /** Returns the number of day in month, January = 1 -> 31 .. December = 12 */
@@ -618,4 +686,99 @@ export function splitValue(value: string, index: number) {
   const currentLng = value.substring(index);
 
   return parseFloat(currentLat) + ',' + parseFloat(currentLng);
+}
+
+// Date object to '2025-12-23T04:34:23.641' without taking the timezone into consideration
+export function getLocalISOString(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  const hours = String(date.getHours()).padStart(2, '0');
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  const seconds = String(date.getSeconds()).padStart(2, '0');
+  const ms = String(date.getMilliseconds()).padStart(3, '0');
+  return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}.${ms}`;
+}
+
+// Date object to '2025-12-23'
+export function formatDateForEchart(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+export function extractDate(value: string): Date | null {
+  let parsingValue = value;
+  // handling for compound tags like booked-20251224 or some-tag-20251224
+  const values = parsingValue.split('-');
+  if (values.length > 1) {
+    parsingValue = values[values.length - 1];
+  }
+
+  // Strip time component from datetime tags like 20240218T114708
+  const tIndex = parsingValue.indexOf('T');
+  if (tIndex !== -1) {
+    parsingValue = parsingValue.slice(0, tIndex);
+  }
+
+  let parsedDate = parseYearMonthDayString(parsingValue);
+  let date;
+  if (parsedDate) {
+    date = parsedDate;
+  } else {
+    parsedDate = parseYearMonthString(parsingValue);
+    if (parsedDate) {
+      date = parsedDate;
+    } else {
+      parsedDate = parseYearString(parsingValue);
+      date = parsedDate;
+    }
+  }
+  return date;
+}
+
+export function parseYearMonthDayString(value: string): Date | null {
+  if (!/^\d{8}$/.test(value)) {
+    return null; // Invalid format
+  }
+
+  const year = parseInt(value.slice(0, 4), 10);
+  const month = parseInt(value.slice(4, 6), 10);
+  const day = parseInt(value.slice(6, 8), 10);
+
+  if (month < 1 || month > 12) {
+    return null; // Invalid month
+  }
+
+  if (day < 1 || day > 31) {
+    return null; // Invalid day
+  }
+  const parsedDate = new Date(year, month - 1, day); // JS months are 0-based
+  return parsedDate;
+}
+
+export function parseYearMonthString(value: string): Date | null {
+  if (!/^\d{6}$/.test(value)) {
+    return null; // Invalid format
+  }
+
+  const year = parseInt(value.slice(0, 4), 10);
+  const month = parseInt(value.slice(4, 6), 10);
+
+  if (month < 1 || month > 12) {
+    return null; // Invalid month
+  }
+
+  return new Date(year, month - 1, 1); // JS months are 0-based
+}
+
+export function parseYearString(value: string): Date | null {
+  if (!/^\d{4}$/.test(value)) {
+    return null; // Invalid format
+  }
+
+  const year = parseInt(value.slice(0, 4), 10);
+
+  return new Date('' + year);
 }

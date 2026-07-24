@@ -1,14 +1,13 @@
 import pathLib from 'path';
 import fs from 'fs';
 import sh from 'shelljs';
-const S3rver = require('s3rver');
-//const corsConfig = require.resolve('./s3rver/cors.xml');
+import express from 'express';
+import serveStatic from 'serve-static';
+import portfinder from 'portfinder';
+import http from 'http';
 
 export async function globalSetup() {
-  // global.isWin = /^win/.test(process.platform);
-  // global.isMac = /^darwin/.test(process.platform);
-
-  const extensionDir = pathLib.resolve(__dirname); //,'../tests');
+  const extensionDir = pathLib.resolve(__dirname);
   if (!sh.test('-d', extensionDir)) {
     sh.mkdir(extensionDir);
   }
@@ -16,135 +15,137 @@ export async function globalSetup() {
   sh.cd(extensionDir);
 }
 
-export async function startMinio() {
-  const winMinio = pathLib.resolve(__dirname, './bin/minio.exe');
-  const unixMinio = pathLib.resolve(__dirname, './bin/minio');
+/**
+ * Start S3Proxy (Java-based S3-compatible server) for a given test worker directory.
+ *
+ * @param {string} testWorkerDir  Relative directory under tests/ (e.g. 'testdata-0')
+ * @param {number} [port=4569]    Port to listen on
+ * @param {boolean} [silent=true] Suppress stdout
+ * @returns {Promise<import('child_process').ChildProcess>}
+ */
+export async function runS3Proxy(testWorkerDir, port = 4569, silent = true) {
+  const { spawn } = require('child_process');
 
-  const command = global.isWin ? winMinio : unixMinio;
-  const minioProcess = await require('child_process').spawn(command, [
-    'server',
-    pathLib.resolve(__dirname, './testdata-tmp/file-structure'),
+  const baseDir = pathLib.resolve(
+    __dirname,
+    testWorkerDir,
+    'file-structure',
+  );
+
+  // Create the bucket directory if it doesn't exist
+  const bucketDir = pathLib.join(baseDir, 'supported-filestypes');
+  if (!fs.existsSync(bucketDir)) {
+    fs.mkdirSync(bucketDir, { recursive: true });
+  }
+
+  // Write a per-worker config file
+  const configPath = pathLib.resolve(
+    __dirname,
+    testWorkerDir,
+    's3proxy.conf',
+  );
+  fs.writeFileSync(
+    configPath,
+    [
+      's3proxy.authorization=none',
+      `s3proxy.endpoint=http://127.0.0.1:${port}`,
+      's3proxy.ignore-unknown-headers=true',
+      's3proxy.cors-allow-all=true',
+      'jclouds.provider=filesystem-nio2',
+      'jclouds.identity=test',
+      'jclouds.credential=test',
+      `jclouds.filesystem.basedir=${baseDir.replace(/\\/g, '/')}`,
+    ].join('\n') + '\n',
+  );
+
+  const jarPath = pathLib.resolve(__dirname, 's3proxy.jar');
+  const s3proxyProcess = spawn('java', [
+    '-jar',
+    jarPath,
+    '--properties',
+    configPath,
   ]);
 
-  minioProcess.on('exit', function (code) {
-    // console.log('exit here with code: ', code);
+  s3proxyProcess.on('exit', function (code) {
+    console.error('S3Proxy exit with code:', code);
   });
-  minioProcess.on('close', (code, signal) => {
-    // console.log(`child process terminated due to receipt of signal ${signal}`);
-  });
-
-  minioProcess.stdout.on('data', function (data) {
-    // console.log('stdout: ' + data);
+  s3proxyProcess.on('close', (code, signal) => {
+    console.error(`S3Proxy closed with code ${code}, signal ${signal}`);
   });
 
-  minioProcess.stderr.on('data', function (data) {
-    console.log('stderr: ' + data);
-  });
-  return minioProcess;
-}
-export function stopMinio(process) {
-  if (process) {
-    // Send SIGHUP to process.
-    console.log('stopMinio');
-    process.stdin.pause();
-    process.kill(); //'SIGHUP');
+  if (!silent) {
+    s3proxyProcess.stdout.on('data', function (data) {
+      console.log('S3Proxy stdout: ' + data);
+    });
   }
+
+  s3proxyProcess.stderr.on('data', function (data) {
+    // Always log stderr to capture Java errors/crashes
+    console.error('S3Proxy stderr: ' + data);
+  });
+
+  // Wait for S3Proxy to be ready by polling the endpoint
+  await waitForPort(port, 15000);
+  console.log(`S3Proxy running on port ${port} for dir: ${baseDir}`);
+
+  return s3proxyProcess;
 }
 
-export async function startChromeDriver() {
-  //const childProcess = await require('child_process');
-  const chromeDriver = await require('chromedriver');
-  //const binPath = chromedriver.path;
-
-  const args = ['--url-base=/', '--port=9515'];
-
-  await chromeDriver.start(args);
-  /*const process = await childProcess.execFile(binPath, args, function (err, stdout, stderr) {
-    // handle results
-    console.log('err: ' + err);
-    console.log('stdout: ' + stdout);
-    console.log('stderr: ' + stderr);
-  });*/
-  return chromeDriver;
+/**
+ * Poll until a port is accepting connections.
+ */
+function waitForPort(port, timeoutMs = 10000) {
+  const start = Date.now();
+  return new Promise((resolve, reject) => {
+    const check = () => {
+      const req = http.get(`http://127.0.0.1:${port}/`, (res) => {
+        res.resume();
+        resolve();
+      });
+      req.on('error', () => {
+        if (Date.now() - start > timeoutMs) {
+          reject(new Error(`S3Proxy did not start within ${timeoutMs}ms`));
+        } else {
+          setTimeout(check, 200);
+        }
+      });
+      req.end();
+    };
+    check();
+  });
 }
 
-export async function stopChromeDriver(chromeDriver) {
-  chromeDriver.stop();
-  // Send SIGHUP to process.
-  /*console.log('stopChromeDriver');
-  process.stdin.pause();
-  process.kill(); //'SIGHUP');*/
-}
-
-export async function startWebServer() {
-  const express = await require('express');
-  const serveStatic = await require('serve-static');
-
-  const port = 8000;
+/**
+ * Start a static file server on a free port.
+ *
+ * @param {number} [preferredPort=0]  Pass 0 to let the OS pick an available port.
+ * @returns {Promise<{ app: import('express').Express, port: number, server: import('http').Server }>}
+ */
+export async function startWebServer(preferredPort = 0) {
   const app = express();
 
-  await app.use(
+  // Serve the contents of ../web with index.html as the default
+  app.use(
     serveStatic(pathLib.resolve(__dirname, '../web'), {
       index: ['index.html'],
     }),
   );
-  if (global.isMac) {
-    //todo copyfiles do not work for MacOS
-    // await app.use(serveStatic('../app'));
+  // If preferredPort is 0, let portfinder choose between 1024 and 49151
+  let portToUse = preferredPort;
+  if (preferredPort === 0) {
+    portfinder.basePort = 1024;
+    portfinder.highestPort = 49151;
+    portToUse = await portfinder.getPortPromise();
   }
-  app.server = app.listen(port);
-  console.log('Webserver listining on http://127.0.0.1:' + port);
-  return app;
-}
 
-export async function stopServices(s3Server, webServer, minioServer) {
-  await stopS3Server(s3Server);
-  await stopWebServer(webServer);
-  await stopMinio(minioServer);
-}
+  return new Promise((resolve, reject) => {
+    // Listen on 0 to let the OS assign a free port
+    const server = app.listen(portToUse, '127.0.0.1', () => {
+      const { port } = server.address();
+      console.log(`Webserver listening at http://127.0.0.1:${port}`);
+      resolve({ app, port, server });
+    });
 
-export async function stopWebServer(app) {
-  if (app) {
-    await app.server.close();
-    app = null;
-  }
-}
-
-export async function stopS3Server(server) {
-  if (server) {
-    await server.close();
-    server = null;
-  }
-}
-
-export async function runS3Server(silent = true) {
-  // Set NODE_OPTIONS environment variable to use openssl-legacy-provider
-  process.env.NODE_OPTIONS = '--openssl-legacy-provider';
-
-  const directoryTargetPath = pathLib.resolve(
-    __dirname,
-    'testdata-tmp',
-    'file-structure',
-  );
-  const corsConfig = pathLib.resolve(__dirname, 's3rver', 'cors.xml');
-  const instance = new S3rver({
-    port: 4569,
-    address: 'localhost',
-    silent: silent,
-    directory: directoryTargetPath,
-    resetOnClose: true,
-    sslEnabled: false,
-    configureBuckets: [
-      {
-        name: 'supported-filestypes',
-        configs: [fs.readFileSync(corsConfig)],
-      },
-    ],
+    server.on('error', reject);
   });
-  try {
-    await instance.run();
-  } catch (e) {
-    console.log('S3rver run', e);
-  }
-  return instance;
 }

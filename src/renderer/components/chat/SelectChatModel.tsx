@@ -16,16 +16,24 @@
  *
  */
 
-import { AIIcon, RemoveIcon } from '-/components/CommonIcons';
+import {
+  AIIcon,
+  DownloadIcon,
+  OllamaIcon,
+  RemoveIcon,
+} from '-/components/CommonIcons';
 import TsIconButton from '-/components/TsIconButton';
 import TsSelect from '-/components/TsSelect';
 import { AIProvider } from '-/components/chat/ChatTypes';
-import { getOllamaModels } from '-/components/chat/OllamaClient';
-import ConfirmDialog from '-/components/dialogs/ConfirmDialog';
 import { useChatContext } from '-/hooks/useChatContext';
+import { useNotificationContext } from '-/hooks/useNotificationContext';
 import { getDefaultAIProvider } from '-/reducers/settings';
-import DownloadIcon from '@mui/icons-material/Download';
-import { ListItemIcon, MenuItem } from '@mui/material';
+import {
+  ListItemIcon,
+  ListItemText,
+  ListSubheader,
+  MenuItem,
+} from '@mui/material';
 import InputAdornment from '@mui/material/InputAdornment';
 import { format, parseISO } from 'date-fns';
 import { ModelResponse } from 'ollama';
@@ -46,19 +54,25 @@ function SelectChatModel(props: Props) {
   const { t } = useTranslation();
   const { id, label, aiProvider, chosenModel, handleChangeModel, disabled } =
     props;
-  const { removeModel, getOllamaClient, models } = useChatContext();
+  const { removeModel, getAiClient, models } = useChatContext();
+  const { openConfirmDialog } = useNotificationContext();
 
   const defaultAiProvider: AIProvider = useSelector(getDefaultAIProvider);
-  const [isCustomModelPromptDialogOpened, setCustomModelPromptDialogOpened] =
-    useState(false);
   const [installedModels, setModels] = useState(
     aiProvider?.id === defaultAiProvider?.id ? models : [],
   );
 
+  // Ollama supports in-app model download/delete; OpenAI-compatible servers
+  // (LM Studio, llama.cpp, …) manage models externally, so those controls hide.
+  const isOllama = aiProvider?.engine === 'ollama';
+
   useEffect(() => {
-    if (aiProvider && aiProvider.engine === 'ollama') {
-      getOllamaClient(aiProvider.url).then((client) => {
-        getOllamaModels(client).then((m) => {
+    if (aiProvider) {
+      getAiClient(aiProvider).then((client) => {
+        if (!client) {
+          return;
+        }
+        client.list().then((m) => {
           if (!m || JSON.stringify(m) !== JSON.stringify(installedModels)) {
             setModels(m ? m : []);
           }
@@ -114,7 +128,7 @@ function SelectChatModel(props: Props) {
       size_vram: 0,
       details: {
         family: 'ollama',
-        format: 'requires least 8GB of VRAM.',
+        format: 'requires least 8GB of RAM.',
         parent_model: 'ollama',
         families: ['ollama'],
         parameter_size: '',
@@ -140,24 +154,6 @@ function SelectChatModel(props: Props) {
       },
     },
     {
-      name: 'codegemma',
-      model: 'codegemma',
-      modified_at: new Date(),
-      size: 1,
-      digest: '',
-      expires_at: new Date(),
-      size_vram: 0,
-      details: {
-        family: 'ollama',
-        format:
-          'CodeGemma models are text-to-text and text-to-code decoder-only models and are available as a 7 billion pretrained variant that specializes in code completion and code generation tasks, a 7 billion parameter instruction-tuned variant for code chat and instruction following and a 2 billion parameter pretrained variant.',
-        parent_model: 'ollama',
-        families: ['ollama'],
-        parameter_size: '',
-        quantization_level: '',
-      },
-    },
-    {
       name: 'llava',
       model: 'llava',
       modified_at: new Date(),
@@ -175,28 +171,27 @@ function SelectChatModel(props: Props) {
         quantization_level: '',
       },
     },
-    {
-      name: 'tinyllama',
-      model: 'tinyllama',
-      modified_at: new Date(),
-      size: 1,
-      digest: '',
-      expires_at: new Date(),
-      size_vram: 0,
-      details: {
-        family: 'ollama',
-        format: 'TinyLlama is a compact model with only 1.1B parameters.',
-        parent_model: 'ollama',
-        families: ['ollama'],
-        parameter_size: '',
-        quantization_level: '',
-      },
-    },
   ];
 
   const changeModel = (event: ChangeEvent<HTMLInputElement>) => {
     if (event.target.value === 'customModel') {
-      setCustomModelPromptDialogOpened(true);
+      openConfirmDialog(
+        t('core:downloadChatModel'),
+        undefined,
+        (result) => {
+          if (result && typeof result === 'string') {
+            handleChangeModel(result);
+          }
+        },
+        'cancelInstallCustomModel',
+        'confirmInstallCustomModel',
+        'confirmCustomModelContent',
+        undefined,
+        t('core:model'),
+        'E.g.: llama3.2:1b, further models available on ollama.com/search',
+        t('core:startDownload'),
+        t('core:cancel'),
+      );
     } else {
       handleChangeModel(event.target.value);
     }
@@ -206,108 +201,114 @@ function SelectChatModel(props: Props) {
     removeModel(chosenModel);
   };
   function getTitle(model) {
-    return model ? format(parseISO(model.modified_at), 'yyyy-MM-dd') : '';
+    // OpenAI-compatible servers don't report a modified date.
+    return model && model.modified_at
+      ? format(parseISO(model.modified_at), 'yyyy-MM-dd')
+      : '';
   }
 
   return (
-    <>
-      <TsSelect
-        disabled={disabled}
-        value={chosenModel ? chosenModel : 'init'}
-        onChange={changeModel}
-        label={label ? label : ''}
-        id={id ? id : 'selectChatModelId'}
-        slotProps={{
-          input: {
-            endAdornment: chosenModel && (
-              <InputAdornment position="end" sx={{ ml: -12 }}>
-                <TsIconButton
-                  aria-label={t('core:deleteModel')}
-                  onClick={handleRemoveModel}
-                  data-tid="deleteModelTID"
-                >
-                  <RemoveIcon />
-                </TsIconButton>
-              </InputAdornment>
-            ),
-          },
-        }}
-      >
-        <MenuItem value="init" disabled>
-          {t('core:chooseModel')}
-        </MenuItem>
-        <MenuItem value="" disabled>
-          {t('core:installedAIModel')}
-        </MenuItem>
-        {installedModels && installedModels.length > 0 ? (
-          installedModels.map((model) => (
-            <MenuItem
-              key={model.name}
-              value={model.name}
-              title={getTitle(model)}
+    <TsSelect
+      disabled={disabled}
+      value={chosenModel ? chosenModel : 'init'}
+      onChange={changeModel}
+      sx={{ '& .MuiSelect-select': { padding: '4px' } }}
+      label={label ? label : ''}
+      id={id ? id : 'selectChatModelId'}
+      slotProps={{
+        input: {
+          endAdornment: chosenModel && isOllama && (
+            <InputAdornment
+              position="end"
+              sx={{ marginLeft: '-30px', marginRight: '10px' }}
             >
-              {' '}
-              <ListItemIcon>
-                <AIIcon fontSize="small" />
-              </ListItemIcon>
-              {model.name} {(model.size / (1024 * 1024 * 1024)).toFixed(2)} GB
-            </MenuItem>
-          ))
-        ) : (
-          <MenuItem value="" disabled>
-            {t('core:noAIModelsInstaller')}
+              <TsIconButton
+                aria-label={t('core:deleteModel')}
+                onClick={handleRemoveModel}
+                data-tid="deleteModelTID"
+              >
+                <RemoveIcon fontSize="small" />
+              </TsIconButton>
+            </InputAdornment>
+          ),
+        },
+      }}
+    >
+      <MenuItem value="init" disabled>
+        {t('core:chooseModel')}
+      </MenuItem>
+      <ListSubheader>{t('core:installedAIModels')}</ListSubheader>
+      {installedModels && installedModels.length > 0 ? (
+        installedModels.map((model) => (
+          <MenuItem key={model.name} value={model.name} title={getTitle(model)}>
+            <ListItemIcon
+              sx={{
+                display: 'inline-block',
+                minWidth: '30px',
+                paddingLeft: '3px',
+              }}
+            >
+              {isOllama ? (
+                <OllamaIcon
+                  sx={{
+                    width: '24px',
+                    height: '24px',
+                    verticalAlign: 'middle',
+                  }}
+                />
+              ) : (
+                <AIIcon
+                  sx={{
+                    width: '24px',
+                    height: '24px',
+                    verticalAlign: 'middle',
+                  }}
+                />
+              )}
+            </ListItemIcon>
+            <ListItemText
+              sx={{
+                display: 'inline-flex',
+                alignItems: 'center',
+              }}
+            >
+              {model.name}
+              {model.size > 0 &&
+                ' ' + (model.size / (1024 * 1024 * 1024)).toFixed(2) + ' GB'}
+            </ListItemText>
           </MenuItem>
-        )}
+        ))
+      ) : (
         <MenuItem value="" disabled>
-          {t('core:exampleInstallableModels')}
+          {t('core:noAIModelsInstaller')}
         </MenuItem>
-        {ollamaAvailableModels.map((model) => (
+      )}
+      {isOllama && (
+        <ListSubheader>{t('core:exampleInstallableModels')}</ListSubheader>
+      )}
+      {isOllama &&
+        ollamaAvailableModels.map((model) => (
           <MenuItem
             key={model.name}
             value={model.name}
             title={model.details.format}
           >
             <ListItemIcon>
-              <DownloadIcon fontSize="small" />
+              <DownloadIcon />
             </ListItemIcon>
             {model.name}
           </MenuItem>
         ))}
-        <MenuItem value="" disabled>
-          {t('core:moreActions')}
-        </MenuItem>
+      {isOllama && <ListSubheader>{t('core:moreActions')}</ListSubheader>}
+      {isOllama && (
         <MenuItem value="customModel">
           <ListItemIcon>
-            <DownloadIcon fontSize="small" />
+            <DownloadIcon />
           </ListItemIcon>
           {t('core:installCustomModel')}
         </MenuItem>
-      </TsSelect>
-      <ConfirmDialog
-        prompt={t('core:model')}
-        open={isCustomModelPromptDialogOpened}
-        onClose={() => {
-          setCustomModelPromptDialogOpened(false);
-        }}
-        title={t('core:downloadChatModel')}
-        helpText={
-          'E.g.: llama3.2:1b, further models available on ollama.com/search'
-        }
-        // content={t('core:chooseModel')}
-        confirmCallback={(result) => {
-          if (result && typeof result === 'string') {
-            handleChangeModel(result);
-          } else {
-            setCustomModelPromptDialogOpened(false);
-          }
-        }}
-        cancelDialogTID="cancelInstallCustomModel"
-        confirmDialogTID="confirmInstallCustomModel"
-        confirmDialogContentTID="confirmCustomModelContent"
-        customConfirmText={t('core:startDownload')}
-        customCancelText={t('core:cancel')}
-      />
-    </>
+      )}
+    </TsSelect>
   );
 }
 

@@ -20,17 +20,23 @@ import React, {
   createContext,
   useEffect,
   useMemo,
-  useReducer,
   useRef,
+  useState,
 } from 'react';
 import { TS } from '-/tagspaces.namespace';
 import { getTagLibrary } from '-/services/taglibrary-utils';
 import { getUuid } from '@tagspaces/tagspaces-common/utils-io';
+import { Pro } from '-/pro';
+import { useTagGroupsLocationContext } from '-/hooks/useTagGroupsLocationContext';
+import { useSelector } from 'react-redux';
+import { getSaveTagInLocation } from '-/reducers/settings';
 
 type EditedTagLibraryContextData = {
   tagGroups: TS.TagGroup[];
   broadcast: BroadcastChannel;
-  reflectTagLibraryChanged: (tg: TS.TagGroup[]) => void;
+  reflectTagLibraryChanged: () => void;
+  refreshTagLibrary: (force?: boolean) => void;
+  setTagGroups: (tg: TS.TagGroup[]) => void;
 };
 
 export const EditedTagLibraryContext =
@@ -38,6 +44,8 @@ export const EditedTagLibraryContext =
     tagGroups: undefined,
     broadcast: undefined,
     reflectTagLibraryChanged: undefined,
+    refreshTagLibrary: undefined,
+    setTagGroups: undefined,
   });
 
 export type EditedTagLibraryContextProviderProps = {
@@ -47,43 +55,89 @@ export type EditedTagLibraryContextProviderProps = {
 export const EditedTagLibraryContextProvider = ({
   children,
 }: EditedTagLibraryContextProviderProps) => {
-  const tagGroups = useRef<TS.TagGroup[]>(getTagLibrary());
+  // INITIAL VALUE from disk
+  const [tagGroups, setTagGroups] = useState<TS.TagGroup[]>(getTagLibrary());
+  const { getTagsFromLocations } = useTagGroupsLocationContext();
+  const saveTagInLocation: boolean = useSelector(getSaveTagInLocation);
+  // Generate a unique ID
+  const instanceId = useRef<string>(getUuid());
+  const broadcast = useMemo(() => new BroadcastChannel('tag-library-sync'), []);
 
-  const [ignored, forceUpdate] = useReducer((x) => x + 1, 0, undefined);
-  const broadcast = new BroadcastChannel('tag-library-sync');
-  // Generate a unique ID for the tab
-  const instanceId = getUuid();
-
+  // Re-run when getTagsFromLocations changes too: it changes identity once the
+  // locations finish loading on startup, which is what lets the location tag
+  // groups merge in on first launch (not only after a second window opened).
   useEffect(() => {
-    // Listen for messages from other tabs
+    refreshTagLibrary();
+  }, [saveTagInLocation, getTagsFromLocations]);
+
+  // The broadcast handler is registered once (the channel is created/closed
+  // once), so route it through a ref to always call the current
+  // refreshTagLibrary — otherwise it would invoke the first-render closure,
+  // which captured the pre-rehydration saveTagInLocation and empty locations.
+  const refreshRef = useRef(refreshTagLibrary);
+  refreshRef.current = refreshTagLibrary;
+
+  // Listen for incoming broadcasts
+  useEffect(() => {
+    // Listen for messages from other instances
     broadcast.onmessage = (event: MessageEvent) => {
       const action = event.data as TS.BroadcastMessage;
-      if (instanceId !== action.uuid) {
-        if (action.type === 'tagLibraryChanged') {
-          tagGroups.current = getTagLibrary();
-          forceUpdate();
-        }
+      if (action.uuid === instanceId.current) return;
+
+      if (action.type === 'tagLibraryChanged') {
+        refreshRef.current(true);
       }
     };
-  }, []);
-
-  function reflectTagLibraryChanged(tg: TS.TagGroup[]) {
-    tagGroups.current = tg;
-    const message: TS.BroadcastMessage = {
-      uuid: instanceId,
-      type: 'tagLibraryChanged',
+    // clean up on unmount
+    return () => {
+      broadcast.close();
     };
-    broadcast.postMessage(message);
-    forceUpdate();
+  }, [broadcast]);
+
+  function refreshTagLibrary(force = false) {
+    if (Pro && saveTagInLocation) {
+      getTagsFromLocations().then((locationTagGroups) => {
+        if (locationTagGroups && Object.keys(locationTagGroups).length > 0) {
+          // Dedup by uuid: location copy wins over the main-library copy,
+          // since saveTagInLocation means the location is the source of truth.
+          // getTagsFromLocations already stamps locationId + workSpaceId.
+          const byUuid = new Map<string, TS.TagGroup>();
+          for (const g of getTagLibrary()) {
+            if (g.uuid) byUuid.set(g.uuid, g);
+          }
+          for (const groups of Object.values(locationTagGroups)) {
+            for (const g of groups) {
+              if (g.uuid) byUuid.set(g.uuid, g);
+            }
+          }
+          setTagGroups(Array.from(byUuid.values()));
+        }
+      });
+    } else if (force) {
+      setTagGroups(getTagLibrary());
+    }
+  }
+
+  function reflectTagLibraryChanged() {
+    //refreshTagLibrary(true);
+    broadcast.postMessage({
+      uuid: instanceId.current,
+      type: 'tagLibraryChanged',
+    });
   }
 
   const context = useMemo(() => {
     return {
-      tagGroups: tagGroups.current,
+      tagGroups: tagGroups,
       broadcast: broadcast,
+      setTagGroups,
       reflectTagLibraryChanged,
+      // Via the ref so the manual "Refresh tag library" action always runs the
+      // current closure (latest saveTagInLocation / locations), not the one
+      // captured the last time `tagGroups` changed.
+      refreshTagLibrary: (force?: boolean) => refreshRef.current(force),
     };
-  }, [tagGroups.current]);
+  }, [tagGroups]);
 
   return (
     <EditedTagLibraryContext.Provider value={context}>

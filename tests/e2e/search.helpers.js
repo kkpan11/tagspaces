@@ -1,19 +1,15 @@
+import { findAction } from '../../src/renderer/components/SearchOptions';
 import {
   clickOn,
   expectElementExist,
-  expectTagsExistBySelector,
   getGridFileSelector,
-  isDisabled,
   isDisplayed,
-  selectorFile,
   selectRowFiles,
-  setInputKeys,
   setInputValue,
   typeInputValue,
-  waitForNotification,
+  waitForNotification
 } from './general.helpers';
 import { AddRemoveTagsToSelectedFiles } from './perspective-grid.helpers';
-import { findAction } from '../../src/renderer/components/SearchOptions';
 
 export const regexQuery = '!"#$%&\'()*+,-./@:;<=>[\\]^_`{|}~';
 export const searchTag = 'tag1';
@@ -29,11 +25,11 @@ export async function addSearchCommand(
   executeSearch = true,
   forceOpenMenu = false,
 ) {
-  if (await isDisplayed('#textQuery', false, 2000)) {
+  if (!(await isDisplayed('#textQuery', true, 4000))) {
     await clickOn('[data-tid=toggleSearch]');
   }
   await expectElementExist('#textQuery', true, 3000);
-  await typeInputValue('#textQuery', command);
+  await global.client.type('#textQuery', command);
   if (!findAction(command, true)) {
     await global.client.keyboard.press('Enter');
   }
@@ -59,12 +55,13 @@ export async function searchEngine(
   options = {},
   executeSearch = true,
 ) {
-  if (!(await isDisplayed('#textQuery'))) {
+  if (!(await isDisplayed('#textQuery', true, 3000))) {
     await clickOn('[data-tid=toggleSearch]');
+    await expectElementExist('#textQuery', true, 5000);
   }
-  await typeInputValue('#textQuery', filename);
+  await global.client.type('#textQuery', filename);
   if (executeSearch) {
-    if (!(await isDisplayed('[data-tid=searchAdvancedTID]'))) {
+    if (!(await isDisplayed('[data-tid=searchAdvancedTID]', true, 3000))) {
       await clickOn('[data-tid=advancedSearch]');
     }
     if (options.tagName) {
@@ -72,7 +69,10 @@ export async function searchEngine(
     }
 
     if (options.reindexing) {
-      await clickOn('[data-tid=forceIndexingTID]');
+      // forceIndexingTID is a TsSwitch (MUI Switch) since the force-reindex
+      // redesign — clicking the root span doesn't reliably toggle it, so
+      // check the underlying input (same pattern as changeFullTextIndex).
+      await global.client.check('[data-tid=forceIndexingTID] input');
     }
     if (options.searchType) {
       await clickOn('[data-tid=' + options.searchType + ']');

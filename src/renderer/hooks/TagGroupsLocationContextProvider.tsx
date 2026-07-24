@@ -16,19 +16,21 @@
  *
  */
 
-import React, { createContext, useMemo } from 'react';
+import AppConfig from '-/AppConfig';
+import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
+import { usePlatformFacadeContext } from '-/hooks/usePlatformFacadeContext';
+import { Pro } from '-/pro';
+import { getSaveTagInLocation } from '-/reducers/settings';
+import { mergeFsEntryMeta } from '-/services/utils-io';
 import { TS } from '-/tagspaces.namespace';
-import { getDescriptionPreview, mergeFsEntryMeta } from '-/services/utils-io';
+import { CommonLocation } from '-/utils/CommonLocation';
+import versionMeta from '-/version.json';
 import {
   getMetaDirectoryPath,
   getMetaFileLocationForDir,
 } from '@tagspaces/tagspaces-common/paths';
-import AppConfig from '-/AppConfig';
-import versionMeta from '-/version.json';
-import { usePlatformFacadeContext } from '-/hooks/usePlatformFacadeContext';
+import React, { createContext, useMemo } from 'react';
 import { useSelector } from 'react-redux';
-import { getSaveTagInLocation } from '-/reducers/settings';
-import { CommonLocation } from '-/utils/CommonLocation';
 
 type TagGroupsLocationContextData = {
   getTagGroups: (location: CommonLocation) => Promise<TS.TagGroup[]>;
@@ -53,6 +55,7 @@ type TagGroupsLocationContextData = {
     location: CommonLocation,
     metaFile?,
   ) => Promise<TS.FileSystemEntryMeta>;
+  getTagsFromLocations: () => Promise<TagGroupsByLocation>;
 };
 
 export const TagGroupsLocationContext =
@@ -63,8 +66,10 @@ export const TagGroupsLocationContext =
     removeLocationTagGroup: undefined,
     mergeLocationTagGroup: undefined,
     loadLocationDataPromise: undefined,
+    getTagsFromLocations: undefined,
   });
 
+export type TagGroupsByLocation = Record<string, TS.TagGroup[]>;
 export type TagGroupsLocationContextProviderProps = {
   children: React.ReactNode;
 };
@@ -74,27 +79,38 @@ export const TagGroupsLocationContextProvider = ({
 }: TagGroupsLocationContextProviderProps) => {
   const { createDirectoryPromise, saveTextFilePromise } =
     usePlatformFacadeContext();
-
+  const { locations } = useCurrentLocationContext();
   const saveTagInLocation: boolean = useSelector(getSaveTagInLocation);
 
-  /*useEffect(() => {
-    if (currentLocation) {
-      getTagGroups(currentLocation.path).then((groups) => {
+  async function getTagsFromLocations(): Promise<TagGroupsByLocation> {
+    const result: TagGroupsByLocation = {};
+
+    if (locations && locations.length > 0) {
+      const allFetches = locations.map(async (location) => {
+        const groups = await getTagGroups(location);
         if (groups && groups.length > 0) {
-          tagGroups.current = groups.map((group) => ({
-            ...group,
-            locationID: currentLocation.uuid,
-          }));
+          result[location.uuid] = groups;
         }
       });
+
+      await Promise.all(allFetches);
     }
-  }, [currentLocation]);*/
+
+    return result;
+  }
 
   function getTagGroups(location: CommonLocation): Promise<TS.TagGroup[]> {
     return loadLocationDataPromise(location).then(
       (fsEntryMeta: TS.FileSystemEntryMeta) => {
-        if (fsEntryMeta) {
-          return fsEntryMeta.tagGroups;
+        if (fsEntryMeta?.tagGroups) {
+          // Stamp locationId and inherit workSpaceId from the parent location
+          // so workspace-filter logic can match location-stored tag groups.
+          // An explicit workSpaceId on the tag group wins over the location's.
+          return fsEntryMeta.tagGroups.map((g) => ({
+            ...g,
+            locationId: location.uuid,
+            workSpaceId: g.workSpaceId ?? location.workSpaceId,
+          }));
         }
         return undefined;
       },
@@ -106,21 +122,12 @@ export const TagGroupsLocationContextProvider = ({
     metaFile = AppConfig.folderLocationsFile,
   ): Promise<TS.FileSystemEntryMeta> {
     if (saveTagInLocation) {
-      //const entryProperties = await location.getPropertiesPromise(location.path);
-      //if (!entryProperties.isFile) {
       const metaFilePath = getMetaFileLocationForDir(
         location.path,
         location.getDirSeparator(),
         metaFile,
       );
       return location.loadJSONFile(metaFilePath);
-      /*const metaData = await location.loadJSONFile(metaFilePath);
-      if (metaData) {
-        return {
-          ...metaData,
-          description: getDescriptionPreview(metaData.description, 200),
-        };
-      }*/
     }
     return Promise.resolve(undefined);
   }
@@ -129,7 +136,7 @@ export const TagGroupsLocationContextProvider = ({
     location: CommonLocation,
     tagGroup: TS.TagGroup,
   ): Promise<TS.FileSystemEntryMeta> {
-    if (!saveTagInLocation) {
+    if (!saveTagInLocation || !Pro || !location) {
       return Promise.resolve(undefined);
     }
     return loadLocationDataPromise(location)
@@ -179,7 +186,7 @@ export const TagGroupsLocationContextProvider = ({
     tagGroup: TS.TagGroup,
     replaceTags = false,
   ): Promise<TS.FileSystemEntryMeta> {
-    if (!saveTagInLocation) {
+    if (!saveTagInLocation || !Pro || !location) {
       return Promise.resolve(undefined);
     }
     return new Promise((resolve, reject) => {
@@ -254,7 +261,7 @@ export const TagGroupsLocationContextProvider = ({
     location: CommonLocation,
     tagGroupUuid: string,
   ): Promise<TS.FileSystemEntryMeta> {
-    if (!saveTagInLocation) {
+    if (!saveTagInLocation || !Pro || !location) {
       return Promise.resolve(undefined);
     }
     return new Promise((resolve, reject) => {
@@ -293,7 +300,7 @@ export const TagGroupsLocationContextProvider = ({
     location: CommonLocation,
     tagGroup: TS.TagGroup,
   ): Promise<TS.FileSystemEntryMeta> {
-    if (!saveTagInLocation) {
+    if (!saveTagInLocation || !Pro || !location) {
       return Promise.resolve(undefined);
     }
     return new Promise((resolve, reject) => {
@@ -305,7 +312,12 @@ export const TagGroupsLocationContextProvider = ({
           const newTagGroup = { ...tagGroup, children: oldTagGroup.children };
           let tagGroups;
           if (fsEntryMeta.tagGroups && fsEntryMeta.tagGroups.length > 0) {
-            tagGroups = [...fsEntryMeta.tagGroups, newTagGroup];
+            tagGroups = [
+              ...fsEntryMeta.tagGroups.filter(
+                (group) => group.uuid !== tagGroup.uuid,
+              ),
+              newTagGroup,
+            ];
           } else {
             tagGroups = [newTagGroup];
           }
@@ -345,11 +357,9 @@ export const TagGroupsLocationContextProvider = ({
     location: CommonLocation,
     metaData: any,
   ): Promise<any> {
-    if (!saveTagInLocation) {
+    if (!saveTagInLocation || !location) {
       return Promise.resolve(undefined);
     }
-    // const entryProperties = await location.getPropertiesPromise(location.path);
-    // if (entryProperties) {
     let metaFilePath;
     // if (!entryProperties.isFile) {
     // check and create meta folder if not exist
@@ -385,21 +395,25 @@ export const TagGroupsLocationContextProvider = ({
       content,
       true,
     );
-    // }
-    // return Promise.reject(new Error('file not found' + path));
   }
 
   const context = useMemo(() => {
     return {
-      //locationTagGroups: tagGroups.current,
       getTagGroups,
       createLocationTagGroup,
       editLocationTagGroup,
       removeLocationTagGroup,
       mergeLocationTagGroup,
       loadLocationDataPromise,
+      getTagsFromLocations,
     };
-  }, [saveTagInLocation]);
+    // `locations` must be a dependency: getTagsFromLocations closes over it, and
+    // on first launch locations populate (async Redux rehydration) AFTER this
+    // provider first renders. Without it the closure stays bound to the empty
+    // initial array, so location tag groups never load until something else
+    // (e.g. a second window) rebuilds the context. Its identity changes when
+    // CurrentLocationContext reassigns allLocations.current.
+  }, [saveTagInLocation, locations]);
 
   return (
     <TagGroupsLocationContext.Provider value={context}>

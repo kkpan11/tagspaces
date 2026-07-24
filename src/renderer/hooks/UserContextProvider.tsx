@@ -16,11 +16,27 @@
  *
  */
 
+import AppConfig from '-/AppConfig';
 import React, { createContext, useMemo, useRef } from 'react';
-import { CognitoUserInterface } from '@aws-amplify/ui-components';
+
+/**
+ * Generic authenticated-user shape. Previously this was Amplify's
+ * `CognitoUserInterface`; it is now a local type so the auth scaffolding
+ * (UserContext + account popover) is decoupled from any specific provider.
+ * A future auth provider populates this via `loggedIn()`.
+ */
+export interface TsUser {
+  username?: string;
+  attributes?: { email?: string; [k: string]: any };
+  preferredMFA?: string;
+  challengeName?: string;
+  challengeParam?: any;
+  associateSoftwareToken?: () => void;
+  verifySoftwareToken?: () => void;
+}
 
 type UserContextData = {
-  currentUser: CognitoUserInterface;
+  currentUser: TsUser;
   loggedIn: (authData: any) => void;
   isLoggedIn: () => boolean;
 };
@@ -36,8 +52,8 @@ export type UserContextProviderProps = {
 };
 
 export const UserContextProvider = ({ children }: UserContextProviderProps) => {
-  // Create a factory function to generate a CognitoUserInterface object
-  const createCognitoUser = (attributes: any): CognitoUserInterface => {
+  // Create a factory function to generate a TsUser object
+  const createUser = (attributes: any): TsUser => {
     return {
       attributes: attributes,
       associateSoftwareToken: () => {},
@@ -47,12 +63,12 @@ export const UserContextProvider = ({ children }: UserContextProviderProps) => {
     };
   };
 
-  const user = useRef<CognitoUserInterface>(
-    window.ExtDemoUser ? createCognitoUser(window.ExtDemoUser) : undefined,
+  const user = useRef<TsUser>(
+    AppConfig.ExtDemoUser ? createUser(AppConfig.ExtDemoUser) : undefined,
   );
   const [ignored, forceUpdate] = React.useReducer((x) => x + 1, 0, undefined);
 
-  function loggedIn(authData: CognitoUserInterface) {
+  function loggedIn(authData: TsUser) {
     user.current = authData;
     forceUpdate();
   }

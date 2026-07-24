@@ -3,6 +3,8 @@ import {
   CloseIcon,
   DeleteIcon,
   DownloadIcon,
+  EntryBookmarkAddIcon,
+  EntryBookmarkIcon,
   FullScreenIcon,
   FullWidthIcon,
   LinkIcon,
@@ -11,24 +13,30 @@ import {
   OpenNewWindowIcon,
   ParentFolderIcon,
   ReloadIcon,
+  RenameIcon,
 } from '-/components/CommonIcons';
+import { ProLabel } from '-/components/HelperComponents';
 import TsMenuList from '-/components/TsMenuList';
-import ConfirmDialog from '-/components/dialogs/ConfirmDialog';
+import { useMenuContext } from '-/components/dialogs/hooks/useMenuContext';
 import MenuKeyBinding from '-/components/menus/MenuKeyBinding';
 import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
 import { useFullScreenContext } from '-/hooks/useFullScreenContext';
 import { useIOActionsContext } from '-/hooks/useIOActionsContext';
+import { useNotificationContext } from '-/hooks/useNotificationContext';
 import { useOpenedEntryContext } from '-/hooks/useOpenedEntryContext';
+import { Pro } from '-/pro';
 import {
   getKeyBindingObject,
   getWarningOpeningFilesExternally,
   isDesktopMode,
+  isHideProFeatures,
 } from '-/reducers/settings';
 import {
   createNewInstance,
   openDirectoryMessage,
   openFileMessage,
 } from '-/services/utils-io';
+import { TS } from '-/tagspaces.namespace';
 import {
   Divider,
   ListItemIcon,
@@ -37,7 +45,7 @@ import {
   MenuItem,
 } from '@mui/material';
 import { extractDirectoryName } from '@tagspaces/tagspaces-common/paths';
-import { useState } from 'react';
+import { useContext, useReducer } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSelector } from 'react-redux';
 
@@ -61,7 +69,6 @@ function EntryContainerMenu(props: Props) {
   const { toggleFullScreen } = useFullScreenContext();
   const { openedEntry } = useOpenedEntryContext();
   const { t } = useTranslation();
-  // const theme = useTheme();
   const {
     toggleEntryFullWidth,
     openLink,
@@ -69,15 +76,60 @@ function EntryContainerMenu(props: Props) {
     sharingParentFolderLink,
   } = useOpenedEntryContext();
   const keyBindings = useSelector(getKeyBindingObject);
+  const { openRenameEntryDialog } = useMenuContext();
   const { currentLocation } = useCurrentLocationContext();
   const { deleteFile, downloadFsEntry } = useIOActionsContext();
-  //const { showNotification } = useNotificationContext();
+  const { openConfirmDialog } = useNotificationContext();
   const desktopMode = useSelector(isDesktopMode);
+  const hideProFeatures: boolean = useSelector(isHideProFeatures);
   const warningOpeningFilesExternally = useSelector(
     getWarningOpeningFilesExternally,
   );
-  const [isDeleteEntryModalOpened, setDeleteEntryModalOpened] =
-    useState<boolean>(false);
+  const [, forceUpdate] = useReducer((x) => x + 1, 0);
+
+  const bookmarksContext = Pro?.contextProviders?.BookmarksContext
+    ? useContext<TS.BookmarksContextData>(Pro.contextProviders.BookmarksContext)
+    : undefined;
+
+  const isBookmarked =
+    !!bookmarksContext && bookmarksContext.haveBookmark(openedEntry.path);
+
+  const toggleBookmark = () => {
+    if (Pro && bookmarksContext) {
+      if (isBookmarked) {
+        bookmarksContext.delBookmark(openedEntry.path);
+      } else {
+        bookmarksContext.setBookmark(openedEntry.path, sharingLink);
+      }
+      forceUpdate();
+    }
+    handleClose();
+  };
+
+  function setDeleteEntryModalOpened() {
+    const title = openedEntry.isFile
+      ? t('core:deleteConfirmationTitle')
+      : t('core:deleteDirectory');
+    const content = openedEntry.isFile
+      ? t('core:doYouWantToDeleteFile')
+      : t('core:deleteDirectoryContentConfirm', {
+          dirPath: entryName,
+        });
+
+    openConfirmDialog(
+      title,
+      content,
+      (result) => {
+        if (result) {
+          return deleteFile(openedEntry.path, openedEntry.uuid);
+        }
+      },
+      'cancelDeleteTID',
+      'confirmDeleteTID',
+      'confirmDialogContentTID',
+      openedEntry.isFile && [entryName],
+    );
+  }
 
   const navigateToFolder = () => {
     if (openedEntry.isFile) {
@@ -171,7 +223,39 @@ function EntryContainerMenu(props: Props) {
         <ListItemText primary={t('core:downloadFile')} />
       </MenuItem>,
     );
-    menuItems.push(<Divider key={'divider1'} />);
+    // Bookmarking is a Pro feature. Hide the entry entirely when the user
+    // opted out of Pro teasers (isHideProFeatures); otherwise show it —
+    // functional on Pro, disabled with a PRO badge on the free version.
+    if (!hideProFeatures || Pro) {
+      menuItems.push(
+        <MenuItem
+          key={'toggleBookmarkKey'}
+          data-tid="toggleBookmarkTID"
+          disabled={!Pro}
+          aria-label={t(
+            isBookmarked ? 'core:removeBookmark' : 'core:addBookmark',
+          )}
+          onClick={toggleBookmark}
+        >
+          <ListItemIcon>
+            {isBookmarked ? (
+              <EntryBookmarkIcon sx={{ color: 'primary.main' }} />
+            ) : (
+              <EntryBookmarkAddIcon />
+            )}
+          </ListItemIcon>
+          <ListItemText
+            primary={
+              <>
+                {t(isBookmarked ? 'core:removeBookmark' : 'core:addBookmark')}
+                {!Pro && <ProLabel />}
+              </>
+            }
+          />
+        </MenuItem>,
+      );
+    }
+    menuItems.push(<Divider key={`divider-${menuItems.length}`} />);
     menuItems.push(
       <MenuItem
         key={'fileContainerSwitchToFullScreenKey'}
@@ -209,14 +293,31 @@ function EntryContainerMenu(props: Props) {
       );
     }
     if (!currentLocation?.isReadOnly) {
-      menuItems.push(<Divider key={'divider3'} />);
+      menuItems.push(<Divider key={`divider-${menuItems.length}`} />);
+      menuItems.push(
+        <MenuItem
+          key={'renameEntryKey'}
+          data-tid="renameEntryTID"
+          aria-label={t('core:renameFile')}
+          onClick={() => {
+            openRenameEntryDialog();
+            handleClose();
+          }}
+        >
+          <ListItemIcon>
+            <RenameIcon />
+          </ListItemIcon>
+          <ListItemText primary={t('core:renameFile')} />
+          <MenuKeyBinding keyBinding={keyBindings['renameFile']} />
+        </MenuItem>,
+      );
       menuItems.push(
         <MenuItem
           key={'deleteEntryKey'}
           data-tid="deleteEntryTID"
           aria-label={t('core:deleteEntry')}
           onClick={() => {
-            setDeleteEntryModalOpened(true);
+            setDeleteEntryModalOpened();
             handleClose();
           }}
         >
@@ -227,7 +328,7 @@ function EntryContainerMenu(props: Props) {
         </MenuItem>,
       );
     }
-    menuItems.push(<Divider key={'divider2'} />);
+    menuItems.push(<Divider key={`divider-${menuItems.length}`} />);
     menuItems.push(
       <MenuItem
         key={'navigateToParentKey'}
@@ -241,7 +342,7 @@ function EntryContainerMenu(props: Props) {
         <ListItemText primary={t('core:navigateToParentDirectory')} />
       </MenuItem>,
     );
-    if (!AppConfig.isCordova) {
+    if (!AppConfig.isNativeMobile) {
       menuItems.push(
         <MenuItem
           key={'openInWindowKey'}
@@ -256,7 +357,7 @@ function EntryContainerMenu(props: Props) {
         </MenuItem>,
       );
     }
-    if (AppConfig.isCordova) {
+    if (AppConfig.isNativeMobile) {
       menuItems.push(
         <MenuItem
           key={'shareFileKey'}
@@ -275,7 +376,8 @@ function EntryContainerMenu(props: Props) {
       !(
         currentLocation?.haveObjectStoreSupport() ||
         currentLocation?.haveWebDavSupport() ||
-        AppConfig.isWeb
+        AppConfig.isWeb ||
+        AppConfig.isNativeMobile
       ) &&
       !(AppConfig.isAndroid && !openedEntry.isFile)
     ) {
@@ -318,7 +420,39 @@ function EntryContainerMenu(props: Props) {
         <MenuKeyBinding keyBinding={keyBindings['reloadDocument']} />
       </MenuItem>,
     );
-    menuItems.push(<Divider key={'divider6'} />);
+    // Bookmarking is a Pro feature. Hide the entry entirely when the user
+    // opted out of Pro teasers (isHideProFeatures); otherwise show it —
+    // functional on Pro, disabled with a PRO badge on the free version.
+    if (!hideProFeatures || Pro) {
+      menuItems.push(
+        <MenuItem
+          key={'toggleBookmarkKey'}
+          data-tid="toggleBookmarkTID"
+          disabled={!Pro}
+          aria-label={t(
+            isBookmarked ? 'core:removeBookmark' : 'core:addBookmark',
+          )}
+          onClick={toggleBookmark}
+        >
+          <ListItemIcon>
+            {isBookmarked ? (
+              <EntryBookmarkIcon sx={{ color: 'primary.main' }} />
+            ) : (
+              <EntryBookmarkAddIcon />
+            )}
+          </ListItemIcon>
+          <ListItemText
+            primary={
+              <>
+                {t(isBookmarked ? 'core:removeBookmark' : 'core:addBookmark')}
+                {!Pro && <ProLabel />}
+              </>
+            }
+          />
+        </MenuItem>,
+      );
+    }
+    menuItems.push(<Divider key={`divider-${menuItems.length}`} />);
     menuItems.push(
       <MenuItem
         key={'openInMainAreaKey'}
@@ -332,7 +466,7 @@ function EntryContainerMenu(props: Props) {
         <ListItemText primary={t('core:openInMainArea')} />
       </MenuItem>,
     );
-    if (!AppConfig.isCordova) {
+    if (!AppConfig.isNativeMobile) {
       menuItems.push(
         <MenuItem
           key={'openInWindowKey'}
@@ -351,7 +485,8 @@ function EntryContainerMenu(props: Props) {
       !(
         currentLocation?.haveObjectStoreSupport() ||
         currentLocation?.haveWebDavSupport() ||
-        AppConfig.isWeb
+        AppConfig.isWeb ||
+        AppConfig.isNativeMobile
       )
     ) {
       menuItems.push(
@@ -388,14 +523,31 @@ function EntryContainerMenu(props: Props) {
       );
     }
     if (!currentLocation?.isReadOnly) {
-      menuItems.push(<Divider key={'divider4'} />);
+      menuItems.push(<Divider key={`divider-${menuItems.length}`} />);
+      menuItems.push(
+        <MenuItem
+          key={'renameFolderKey'}
+          data-tid="renameFolderTID"
+          aria-label={t('core:renameDirectory')}
+          onClick={() => {
+            openRenameEntryDialog();
+            handleClose();
+          }}
+        >
+          <ListItemIcon>
+            <RenameIcon />
+          </ListItemIcon>
+          <ListItemText primary={t('core:renameDirectory')} />
+          <MenuKeyBinding keyBinding={keyBindings['renameFile']} />
+        </MenuItem>,
+      );
       menuItems.push(
         <MenuItem
           key={'deleteFolderKey'}
           data-tid="deleteFolderTID"
           aria-label={t('core:deleteDirectory')}
           onClick={() => {
-            setDeleteEntryModalOpened(true);
+            setDeleteEntryModalOpened();
             handleClose();
           }}
         >
@@ -403,13 +555,12 @@ function EntryContainerMenu(props: Props) {
             <DeleteIcon />
           </ListItemIcon>
           <ListItemText primary={t('core:deleteDirectory')} />
-          {/* <MenuKeyBinding keyBinding={keyBindings['deleteDocument']} /> */}
         </MenuItem>,
       );
     }
   }
 
-  menuItems.push(<Divider key={'divider5'} />);
+  menuItems.push(<Divider key={`divider-${menuItems.length}`} />);
   menuItems.push(
     <MenuItem
       key={'openDirectoryExternallyKey'}
@@ -447,35 +598,6 @@ function EntryContainerMenu(props: Props) {
       >
         <TsMenuList sx={{ minWidth: 300 }}>{menuItems}</TsMenuList>
       </Menu>
-      {isDeleteEntryModalOpened && (
-        <ConfirmDialog
-          open={isDeleteEntryModalOpened}
-          onClose={() => {
-            setDeleteEntryModalOpened(false);
-          }}
-          title={
-            openedEntry.isFile
-              ? t('core:deleteConfirmationTitle')
-              : t('core:deleteDirectory')
-          }
-          content={
-            openedEntry.isFile
-              ? t('core:doYouWantToDeleteFile')
-              : t('core:deleteDirectoryContentConfirm', {
-                  dirPath: entryName,
-                })
-          }
-          list={openedEntry.isFile && [entryName]}
-          confirmCallback={(result) => {
-            if (result) {
-              return deleteFile(openedEntry.path, openedEntry.uuid);
-            }
-          }}
-          cancelDialogTID="cancelSaveBeforeCloseDialog"
-          confirmDialogTID="confirmSaveBeforeCloseDialog"
-          confirmDialogContentTID="confirmDialogContent"
-        />
-      )}
     </>
   );
 }

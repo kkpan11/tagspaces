@@ -16,25 +16,36 @@
  */
 
 import AppConfig from '-/AppConfig';
+import { Pro } from '-/pro';
+import defaultSettings from '-/reducers/settings-default';
+import i18n from '-/services/i18n';
 import { TS } from '-/tagspaces.namespace';
 import { CommonLocation } from '-/utils/CommonLocation';
 import { prepareTagForExport } from '@tagspaces/tagspaces-common/misc';
 import {
   baseName,
   cleanFrontDirSeparator,
+  cleanRootPath,
   cleanTrailingDirSeparator,
+  extractFileExtension,
   extractFileName,
   extractTagsAsObjects,
+  generateSharingLink,
 } from '@tagspaces/tagspaces-common/paths';
-import { getUuid } from '@tagspaces/tagspaces-common/utils-io';
+import { getUuid, loadJSONString } from '@tagspaces/tagspaces-common/utils-io';
+import Links from 'assets/links';
+import DOMPurify from 'dompurify';
 import { saveAs } from 'file-saver';
+import { marked } from 'marked';
 import removeMd from 'remove-markdown';
-import defaultSettings from '-/reducers/settings-default';
 import versionMeta from '../version.json';
 
 export const instanceId = getUuid();
 
-export function getAllTags(entry: TS.FileSystemEntry): Array<TS.Tag> {
+export function getAllTags(
+  entry: TS.FileSystemEntry,
+  tagDelimiter: string,
+): Array<TS.Tag> {
   const tags = [];
   if (entry.meta && entry.meta.tags && entry.meta.tags.length > 0) {
     tags.push(...entry.meta.tags);
@@ -46,7 +57,7 @@ export function getAllTags(entry: TS.FileSystemEntry): Array<TS.Tag> {
     entry.path.indexOf(AppConfig.beginTagContainer) !== -1 &&
     entry.path.indexOf(AppConfig.endTagContainer) !== -1
   ) {
-    fileNameTags = extractTagsAsObjects(entry.name, AppConfig.tagDelimiter);
+    fileNameTags = extractTagsAsObjects(entry.name, tagDelimiter);
   }
   if (fileNameTags) {
     if (tags.length > 0) {
@@ -61,42 +72,6 @@ export function getAllTags(entry: TS.FileSystemEntry): Array<TS.Tag> {
   return tags;
 }
 
-/*export function enhanceOpenedEntry(
-  entry: TS.OpenedEntry,
-  tagDelimiter,
-): TS.OpenedEntry {
-  if (entry.isFile) {
-    const fineNameTags = extractTagsAsObjects(
-      entry.path,
-      tagDelimiter,
-      PlatformIO.getDirSeparator(),
-    );
-    if (fineNameTags.length > 0) {
-      if (entry.tags && entry.tags.length > 0) {
-        const uniqueTags = entry.tags.filter(
-          (tag) =>
-            fineNameTags.findIndex((obj) => obj.title === tag.title) === -1,
-        );
-        return {
-          ...entry,
-          tags: [...uniqueTags, ...fineNameTags],
-        };
-      }
-      return {
-        ...entry,
-        tags: fineNameTags,
-      };
-    }
-  } else {
-    // ignore wrong size from fs.stats for directories
-    return {
-      ...entry,
-      size: undefined,
-    };
-  }
-  return entry;
-}*/
-
 /**
  * sort in place
  * @param directories
@@ -108,7 +83,12 @@ export function orderDirectories(
 ) {
   // if (sortBy === 'custom') {
   try {
-    if (metaArray && metaArray.length > 0) {
+    if (
+      directories &&
+      directories.length > 0 &&
+      metaArray &&
+      metaArray.length > 0
+    ) {
       const arrLength = directories.length;
       directories.sort((a, b) => {
         let indexA = metaArray.findIndex(
@@ -153,6 +133,66 @@ export function orderByMetaArray(
   });
 }
 
+export interface CandidateExtension {
+  extensionId: string;
+  extensionName: string;
+  role: 'viewer' | 'editor';
+  isDefault: boolean;
+}
+
+const TEXT_EDITOR_ID = '@tagspaces/extensions/text-editor';
+
+export function findCandidateExtensionsForFile(
+  filePath: string,
+  supportedFileTypes: Array<TS.FileTypes>,
+  extensionsFound: Array<{
+    extensionId: string;
+    extensionName: string;
+    extensionTypes: string[];
+    extensionEnabled: boolean;
+  }>,
+  dirSeparator: string = AppConfig.dirSeparator,
+): CandidateExtension[] {
+  const fileExtension = extractFileExtension(
+    filePath,
+    dirSeparator,
+  ).toLowerCase();
+  const fileType = supportedFileTypes.find(
+    (ft) => ft.type && ft.type.toLowerCase() === fileExtension,
+  );
+  const defaultViewerId = fileType?.viewer;
+  const defaultEditorId = fileType?.editor;
+
+  const candidates: CandidateExtension[] = [];
+  const seenIds = new Set<string>();
+
+  const add = (
+    extensionId: string | undefined,
+    role: 'viewer' | 'editor',
+    isDefault: boolean,
+  ) => {
+    if (!extensionId) return;
+    if (seenIds.has(extensionId)) return;
+    const ext = extensionsFound.find((e) => e.extensionId === extensionId);
+    if (!ext || !ext.extensionEnabled) return;
+    if (!ext.extensionTypes?.includes(role)) return;
+    seenIds.add(extensionId);
+    candidates.push({
+      extensionId,
+      extensionName: ext.extensionName,
+      role,
+      isDefault,
+    });
+  };
+
+  add(defaultViewerId, 'viewer', true);
+  add(defaultEditorId, 'editor', true);
+  add(TEXT_EDITOR_ID, 'viewer', defaultViewerId === TEXT_EDITOR_ID);
+  add(TEXT_EDITOR_ID, 'editor', defaultEditorId === TEXT_EDITOR_ID);
+
+  return candidates;
+}
+
 export function findExtensionPathForId(
   extensionId: string,
   extensionExternalPath = undefined,
@@ -169,7 +209,7 @@ export function findExtensionPathForId(
   if (AppConfig.isWeb) {
     return 'modules/' + extensionId;
   }
-  if (AppConfig.isCordova) {
+  if (AppConfig.isNativeMobile) {
     return 'node_modules/' + extensionId;
   }
   return process.env.NODE_ENV === 'development'
@@ -251,19 +291,23 @@ export function getPrevFile(
 }
 
 export function saveAsTextFile(blob: any, filename: string) {
-  saveAs(blob, filename);
-}
-
-/*function getCommonFolder(paths: Array<string>) {
-  const rootFolders = paths.map(p =>
-    extractContainingDirectoryPath(p, PlatformIO.getDirSeparator())
-  );
-  const firstRootFolder = rootFolders[0];
-  if (rootFolders.every(rf => rf === firstRootFolder)) {
-    return firstRootFolder;
+  if (AppConfig.isCapacitor) {
+    // file-saver triggers a download via an <a download> + blob: URL click.
+    // That does nothing inside the Capacitor WebView (there is no Downloads
+    // mechanism, and iOS WKWebView blocks blob downloads), so exports silently
+    // failed on Android/iOS. Route through the native filesystem instead:
+    // downloadFile() fetches the blob: URL and writes the bytes via
+    // @capacitor/filesystem — Android into the public Download/ folder, iOS
+    // into Cache followed by the share sheet ("Save to Files", AirDrop, …).
+    const ioAPI = require('-/services/io-capacitor');
+    const url = URL.createObjectURL(blob);
+    return ioAPI
+      .downloadFile(filename, url)
+      .finally(() => URL.revokeObjectURL(url));
   }
-  return false;
-}*/
+  saveAs(blob, filename);
+  return Promise.resolve({ path: filename, shared: false });
+}
 
 export function isFulfilled<T>(
   result: PromiseSettledResult<T>,
@@ -282,56 +326,6 @@ export function getFulfilledResults<T>(
 ) {
   return results.filter(isFulfilled).map((result) => result.value);
 }
-
-/*export async function loadSubFolders(path: string, loadHidden = false) {
-  const folderContent = await PlatformIO.listDirectoryPromise(path, []); // 'extractThumbPath']);
-  const subfolders = [];
-  let i = 0;
-  let isHidden = false;
-  if (folderContent !== undefined) {
-    folderContent.map((entry) => {
-      if (!entry.isFile) {
-        isHidden = entry.name.startsWith('.');
-        if (isHidden) {
-          if (loadHidden) {
-            subfolders.push({
-              key: '0-' + (i += 1),
-              isLeaf: false,
-              name: entry.name,
-              isFile: entry.isFile,
-              lmdt: entry.lmdt,
-              meta: entry.meta,
-              path: entry.path,
-              tags: entry.tags,
-            });
-          } else {
-            // do nothing
-          }
-        } else {
-          subfolders.push({
-            key: '0-' + (i += 1),
-            isLeaf: false,
-            name: entry.name,
-            isFile: entry.isFile,
-            lmdt: entry.lmdt,
-            meta: entry.meta,
-            path: entry.path,
-            tags: entry.tags,
-          });
-        }
-      }
-      return true;
-    });
-  }
-  return subfolders;
-}*/
-
-/*function cleanFileName(fileName, prefixTagContainer) {
-  if (prefixTagContainer && fileName.endsWith(prefixTagContainer)) {
-    return fileName.slice(0, -prefixTagContainer.length);
-  }
-  return fileName.trim();
-}*/
 
 export function parseNewTags(tagsInput: string, tagGroup: TS.TagGroup) {
   if (tagGroup) {
@@ -387,61 +381,6 @@ export function cleanMetaData(
   if (metaData.autoSave !== undefined) {
     cleanedMeta.autoSave = metaData.autoSave;
   }
-  /*if (metaData.perspectiveSettings) {  // clean perspectiveSettings !== defaultSettings
-    Object.keys(metaData.perspectiveSettings).forEach(perspective => {
-      if (!cleanedMeta.perspectiveSettings) {
-        cleanedMeta.perspectiveSettings = {};
-      }
-      cleanedMeta.perspectiveSettings[perspective] = {
-        ...(metaData.perspectiveSettings[perspective].showDirectories !=
-          defaultSettings.showDirectories && {
-          showDirectories:
-            metaData.perspectiveSettings[perspective].showDirectories
-        }),
-        ...(metaData.perspectiveSettings[perspective].showTags !=
-          defaultSettings.showTags && {
-          showTags: metaData.perspectiveSettings[perspective].showTags
-        }),
-        ...(metaData.perspectiveSettings[perspective].layoutType !=
-          defaultSettings.layoutType && {
-          layoutType: metaData.perspectiveSettings[perspective].layoutType
-        }),
-        ...(metaData.perspectiveSettings[perspective].orderBy !=
-          defaultSettings.orderBy && {
-          orderBy: metaData.perspectiveSettings[perspective].orderBy
-        }),
-        ...(metaData.perspectiveSettings[perspective].sortBy !=
-          defaultSettings.sortBy && {
-          sortBy: metaData.perspectiveSettings[perspective].sortBy
-        }),
-        ...(metaData.perspectiveSettings[perspective].singleClickAction !=
-          defaultSettings.singleClickAction && {
-          singleClickAction:
-            metaData.perspectiveSettings[perspective].singleClickAction
-        }),
-        ...(metaData.perspectiveSettings[perspective].entrySize !=
-          defaultSettings.entrySize && {
-          entrySize: metaData.perspectiveSettings[perspective].entrySize
-        }),
-        ...(metaData.perspectiveSettings[perspective].thumbnailMode !=
-          defaultSettings.thumbnailMode && {
-          thumbnailMode: metaData.perspectiveSettings[perspective].thumbnailMode
-        }),
-        ...(metaData.perspectiveSettings[perspective].gridPageLimit !=
-          defaultSettings.gridPageLimit && {
-          gridPageLimit: metaData.perspectiveSettings[perspective].gridPageLimit
-        })
-      };
-      if (
-        Object.keys(cleanedMeta.perspectiveSettings[perspective]).length === 0
-      ) {
-        delete cleanedMeta.perspectiveSettings[perspective];
-      }
-    });
-    if (Object.keys(cleanedMeta.perspectiveSettings).length === 0) {
-      delete cleanedMeta.perspectiveSettings;
-    }
-  } */
   if (metaData.tagGroups && metaData.tagGroups.length > 0) {
     cleanedMeta.tagGroups = metaData.tagGroups;
   }
@@ -469,9 +408,10 @@ export function findBackgroundColorForFolder(fsEntry: TS.FileSystemEntry) {
 export function findColorForEntry(
   fsEntry: TS.FileSystemEntry,
   supportedFileTypes: Array<any>,
+  defaultFolderColor: string,
 ): string {
   if (!fsEntry.isFile) {
-    return AppConfig.defaultFolderColor;
+    return defaultFolderColor;
   }
   if (fsEntry.extension !== undefined) {
     return findColorForFileExt(fsEntry.extension, supportedFileTypes);
@@ -499,19 +439,160 @@ export function findColorForFileExt(
 
 export function loadFileContentPromise(
   fullPath: string,
-  type: string,
+  type: string = 'arraybuffer',
 ): Promise<any> {
   return new Promise((resolve, reject) => {
     const xhr: any = new XMLHttpRequest();
     xhr.open('GET', fullPath, true);
-    xhr.responseType = type || 'arraybuffer';
+    xhr.responseType = type;
     xhr.onerror = reject;
     xhr.onload = () => {
-      const response = xhr.response || xhr.responseText;
-      if (response) {
+      if (xhr.status === 200 || xhr.status === 0) {
+        const response = xhr.response || xhr.responseText;
         resolve(response);
       } else {
         reject(new Error('loadFileContentPromise error'));
+      }
+    };
+    xhr.send();
+  });
+}
+
+export function getLastVersionPromise(signal?: AbortSignal): Promise<string> {
+  return new Promise((resolve, reject) => {
+    console.log('Checking for new version...');
+    // Allow the caller to abort the request — if the dialog/component
+    // unmounts before the server responds, the xhr can be aborted instead
+    // of leaking through closure refs. Pre-aborted signals reject right
+    // away.
+    if (signal?.aborted) {
+      reject(new DOMException('Aborted', 'AbortError'));
+      return;
+    }
+
+    let versionFile = 'tagspaces.json';
+    const proText = Pro ? 'pro-' : '';
+    // Desktop architecture suffix. process.arch isn't reachable in the
+    // sandboxed renderer, so the preload bridge exposes it as
+    // window.electronIO.arch ('arm64' | 'x64' | …). Apple Silicon / Windows
+    // on ARM / ARM Linux get the -arm64 descriptor; everything else keeps
+    // the existing x64 (and bare 'mac') names.
+    const isArm64 =
+      typeof window !== 'undefined' &&
+      (window as any).electronIO?.arch === 'arm64';
+    // Native mobile must be matched BEFORE the desktop OS branches: the iOS
+    // WebView UA matches isMacLike (iPhone/iPad) and the Android WebView UA
+    // contains "Linux", so leaving them last makes iOS resolve to the macOS
+    // descriptor and Android to the Linux one (the isAndroid branch was dead).
+    if (AppConfig.isWeb) {
+      versionFile = 'tagspaces-pro-web.json';
+    } else if (AppConfig.isCapacitoriOS) {
+      versionFile = 'tagspaces-' + proText + 'ios.json';
+    } else if (AppConfig.isCapacitorAndroid) {
+      versionFile = 'tagspaces-' + proText + 'android.json';
+    } else if (AppConfig.isWin) {
+      versionFile =
+        'tagspaces-' + proText + (isArm64 ? 'win-arm64' : 'win-x64') + '.json';
+    } else if (AppConfig.isMacLike) {
+      versionFile =
+        'tagspaces-' + proText + (isArm64 ? 'mac-arm64' : 'mac') + '.json';
+    } else if (AppConfig.isLinux) {
+      versionFile =
+        'tagspaces-' +
+        proText +
+        (isArm64 ? 'linux-arm64' : 'linux-x64') +
+        '.json';
+    } else if (AppConfig.isAndroid) {
+      versionFile = 'tagspaces-' + proText + 'android.json';
+    }
+    const updateUrl =
+      Links.links.checkNewVersionURL +
+      versionFile +
+      '?cv=' +
+      versionMeta.version;
+
+    // HTTPS enforcement — refuse to fetch update metadata over plain HTTP.
+    // The version string is read into trusted code paths (semver compare,
+    // user-visible "X is available" prompt), so a MITM-injected response
+    // is the wrong thing to silently downgrade to.
+    if (!updateUrl.startsWith('https://')) {
+      reject(new Error('Update URL must use https:// — refusing to fetch'));
+      return;
+    }
+
+    const xhr = new XMLHttpRequest();
+    xhr.open('GET', updateUrl, true);
+    xhr.responseType = 'text';
+    // 10s ceiling so a hung server (slow DNS, captive portal silently
+    // dropping packets) doesn't leave the promise dangling forever and
+    // block consumers like initApp's checkForUpdate dispatch.
+    xhr.timeout = 10000;
+
+    const onAbort = () => {
+      try {
+        xhr.abort();
+      } catch {
+        /* xhr already done */
+      }
+      reject(new DOMException('Aborted', 'AbortError'));
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
+    const cleanup = () => {
+      signal?.removeEventListener('abort', onAbort);
+    };
+
+    xhr.onerror = () => {
+      cleanup();
+      reject(new Error('Network error while checking for new version'));
+    };
+    xhr.ontimeout = () => {
+      cleanup();
+      reject(new Error('Timeout while checking for new version'));
+    };
+    xhr.onload = () => {
+      cleanup();
+      // Non-2xx responses (404, 500, captive-portal HTML, …) reach onload
+      // too — bail explicitly so we don't try to JSON-parse arbitrary
+      // payloads and silently throw out of the callback.
+      if (xhr.status < 200 || xhr.status >= 300) {
+        reject(
+          new Error(
+            `HTTP ${xhr.status}${xhr.statusText ? ' ' + xhr.statusText : ''}`,
+          ),
+        );
+        return;
+      }
+      // Content-Type guard — only accept what the update server claims is
+      // JSON. Captive portals, error pages from CDNs, and CORS preflight
+      // misconfigurations often return text/html with a 200; without this
+      // check we'd JSON-parse arbitrary HTML. Header value may include
+      // charset suffix (e.g. "application/json; charset=utf-8"), so use
+      // a prefix match.
+      const contentType = (
+        xhr.getResponseHeader('Content-Type') || ''
+      ).toLowerCase();
+      if (contentType && !contentType.startsWith('application/json')) {
+        reject(
+          new Error(
+            `Unexpected Content-Type for update metadata: ${contentType}`,
+          ),
+        );
+        return;
+      }
+      try {
+        const data = xhr.responseText;
+        const versioningData = loadJSONString(data);
+        if (
+          versioningData &&
+          versioningData.appVersion &&
+          versioningData.appVersion.length > 0
+        ) {
+          resolve(versioningData.appVersion);
+        } else {
+          reject(new Error('Could not validate update data'));
+        }
+      } catch (err) {
+        reject(err instanceof Error ? err : new Error(String(err)));
       }
     };
     xhr.send();
@@ -524,74 +605,31 @@ export function loadFileContentPromise(
  */
 export function getDescriptionPreview(mdContent, maxLength = 200) {
   if (!mdContent) return '';
-  // let preview = mdContent
-  //   .replace(
-  //     /\[(.*?)\]\(.*?\)/g, // remove link href, also dataurls
-  //     // /\(data:([\w\/\+]+);(charset=[\w-]+|base64).*,([a-zA-Z0-9+/]+={0,2})\)/g,
-  //     '',
-  //   )
-  //   .replace(/<[^>]*>/g, '') // remove html
-  //   .replace(/\*|~|#|_/g, '');
   let preview = removeMd(mdContent);
   if (preview.length > maxLength) {
     preview = preview.substring(0, maxLength) + '...';
   }
   return preview.replaceAll('\n', ' ').replaceAll('|', '').replaceAll('\\', '');
-  // .replaceAll('\\\\', '');
-  // return preview.replace(/[#*!_\[\]()`]/g, '');
 }
 
-// export function removeMarkDown(mdContent) {
-//   if (!mdContent) return '';
-//   let result = marked.parse(DOMPurify.sanitize(mdContent));
-//   const span = document.createElement('span');
-//   span.innerHTML = result;
-//   result = span.textContent || span.innerText;
-//   return result;
-// }
+export function convertMarkDownToHtml(mdContent: string) {
+  marked.setOptions({
+    pedantic: false,
+    gfm: true,
+    breaks: false,
+  });
+  const creationDate = new Date().toISOString();
+  // @ts-ignore
+  const sanitiezedHTML = DOMPurify.sanitize(marked.parse(mdContent));
+  const result = `<!DOCTYPE html><html>
+<head><meta charset="UTF-8"></head>
+<body data-createdwith="${versionMeta.name}" data-createdon="${creationDate}">
+${sanitiezedHTML}
+</body>
+</html>`;
 
-// export function convertMarkDown(mdContent: string, directoryPath: string) {
-//   const customRenderer = new marked.Renderer();
-//   customRenderer.link = (href, title, text) => `
-//       <a href="#"
-//         title="${href}"
-//         onClick="event.preventDefault(); event.stopPropagation(); window.postMessage(JSON.stringify({ command: 'openLinkExternally', link: '${href}' }), '*'); return false;">
-//         ${text}
-//       </a>`;
-
-//   customRenderer.image = (href, title, text) => {
-//     let sourceUrl = href;
-//     const dirSep = PlatformIO.getDirSeparator();
-//     if (
-//       !sourceUrl.startsWith('http') &&
-//       directoryPath &&
-//       directoryPath !== dirSep
-//     ) {
-//       sourceUrl = directoryPath.endsWith(dirSep)
-//         ? directoryPath + sourceUrl
-//         : directoryPath + dirSep + sourceUrl;
-//     }
-//     if (PlatformIO.haveObjectStoreSupport() || PlatformIO.haveWebDavSupport()) {
-//       sourceUrl = PlatformIO.getURLforPath(sourceUrl);
-//     }
-//     return `<img src="${sourceUrl}" style="max-width: 100%">
-//         ${text}
-//     </img>`;
-//   };
-//
-//   marked.setOptions({
-//     renderer: customRenderer,
-//     pedantic: false,
-//     gfm: true,
-//     tables: true,
-//     breaks: false,
-//     smartLists: true,
-//     smartypants: false,
-//     xhtml: true,
-//   });
-
-//   return marked.parse(DOMPurify.sanitize(mdContent));
-// }
+  return result;
+}
 
 /**
  * @param url
@@ -713,35 +751,114 @@ function mergeTags(oldTagsArray: Array<TS.Tag>, newTagsArray: Array<TS.Tag>) {
   return [...oldTagsArray, ...uniqueTags];
 }
 
-/*export function setLocationType(location: CommonLocation): Promise<boolean> {
-  if (location) {
-    if (location.type === locationType.TYPE_CLOUD) {
-      return PlatformIO.enableObjectStoreSupport(location);
-    } else if (location.type === locationType.TYPE_WEBDAV) {
-      PlatformIO.enableWebdavSupport(location);
-    } else if (location.type === locationType.TYPE_LOCAL) {
-      PlatformIO.disableObjectStoreSupport();
-      PlatformIO.disableWebdavSupport();
-    }
-    return Promise.resolve(true);
-  }
-  return Promise.resolve(false);
-}*/
-
 export function getRelativeEntryPath(
   currentLocationPath: string,
   entryPath: string,
 ): string {
   const entryPathCleaned = cleanTrailingDirSeparator(entryPath);
   const currentPathCleaned = cleanTrailingDirSeparator(currentLocationPath);
-  // const isCloudLocation = location.type === locationType.TYPE_CLOUD;
-  // const currentLocationPath = getCleanLocationPath(location);
-  // let relEntryPath = isCloudLocation
-  //   ? entryPathCleaned
-  //   : entryPathCleaned.replace(currentLocationPath, '');
   let relEntryPath = entryPathCleaned.replace(currentPathCleaned, '');
   relEntryPath = cleanFrontDirSeparator(relEntryPath);
   return relEntryPath;
+}
+
+/**
+ * Build a TagSpaces `ts://?...` sharing link for the given entry inside its
+ * location. Canonical recipe — all callers that produce a shareable link
+ * (FileMenu, DirectoryMenu, FilePickerDialog) should go through this.
+ *
+ * Files go in the `tsepath` slot, folders in the `tsdpath` slot.
+ *
+ * `getMetadataID` is required: it produces a stable sidecar UUID that
+ * survives renames (the runtime `entry.uuid` does not). Pass the function
+ * from `useIOActionsContext()`.
+ */
+export function buildSharingLinkForEntry(
+  entry: TS.FileSystemEntry,
+  location: CommonLocation,
+  getMetadataID: (
+    path: string,
+    id: string,
+    location: CommonLocation,
+    isFile: boolean,
+  ) => Promise<string>,
+): Promise<string> {
+  const sep = location.getDirSeparator?.() || '/';
+  const relativeEntryPath = cleanRootPath(
+    entry.path || '',
+    location.path || '',
+    sep,
+  );
+  return getMetadataID(
+    entry.path,
+    entry.uuid || '',
+    location,
+    entry.isFile,
+  ).then((id) =>
+    entry.isFile
+      ? generateSharingLink(location.uuid, relativeEntryPath, undefined, id)
+      : generateSharingLink(location.uuid, undefined, relativeEntryPath, id),
+  );
+}
+
+/**
+ * Build a Markdown-style relative path from `sourceDir` to the entry.
+ * Returns `null` when relativity is not possible — either no `sourceDir` was
+ * provided, or the entry and source dir are not under the same location root.
+ *
+ * Same directory  → returns the leaf name (e.g. `B.md`).
+ * Descendant      → `subdir/B.md`.
+ * Sibling/parent  → `../images/B.png`.
+ *
+ * Callers are responsible for providing the correct `sourceDir`:
+ * - For a file's description: the file's containing directory
+ * - For a folder's description: the folder itself
+ */
+export function buildRelativeLinkForEntry(
+  entry: TS.FileSystemEntry,
+  location: CommonLocation,
+  sourceDir: string,
+): string | null {
+  if (!entry.path || !sourceDir) return null;
+  const root = cleanTrailingDirSeparator(location.path || '').replace(
+    /\\/g,
+    '/',
+  );
+  const target = cleanTrailingDirSeparator(entry.path).replace(/\\/g, '/');
+  const sourceDirNorm = cleanTrailingDirSeparator(sourceDir).replace(
+    /\\/g,
+    '/',
+  );
+
+  // Both source and target must live under the same location root.
+  if (root) {
+    if (!(target === root || target.startsWith(root + '/'))) return null;
+    if (!(sourceDirNorm === root || sourceDirNorm.startsWith(root + '/'))) {
+      return null;
+    }
+  }
+
+  const sourceRel = cleanFrontDirSeparator(
+    root ? sourceDirNorm.slice(root.length) : sourceDirNorm,
+  );
+  const targetRel = cleanFrontDirSeparator(
+    root ? target.slice(root.length) : target,
+  );
+  const sourceSegments = sourceRel ? sourceRel.split('/') : [];
+  const targetSegments = targetRel ? targetRel.split('/') : [];
+
+  let common = 0;
+  while (
+    common < sourceSegments.length &&
+    common < targetSegments.length &&
+    sourceSegments[common] === targetSegments[common]
+  ) {
+    common += 1;
+  }
+  const upHops = sourceSegments.length - common;
+  const tail = targetSegments.slice(common).join('/');
+  const relative = '../'.repeat(upHops) + tail;
+  return relative.length > 0 ? relative : './';
 }
 
 /**
@@ -778,25 +895,6 @@ export function mergeFsEntryMeta(props: any = {}): TS.FileSystemEntryMeta {
   };
 }
 
-/*export function openedToFsEntry(openedEntry: TS.OpenedEntry): TS.FileSystemEntry {
-  return {
-    uuid: getUuid(),
-    name: openedEntry.isFile
-      ? extractFileName(openedEntry.path, PlatformIO.getDirSeparator())
-      : extractDirectoryName(openedEntry.path, PlatformIO.getDirSeparator()),
-    isFile: openedEntry.isFile,
-    extension: extractFileExtension(
-      openedEntry.path,
-      PlatformIO.getDirSeparator(),
-    ),
-    description: openedEntry.meta?.description,
-    tags: openedEntry.tags,
-    size: openedEntry.size,
-    lmdt: openedEntry.lmdt,
-    path: openedEntry.path,
-  };
-}*/
-
 export function getDefaultViewer(fileType) {
   const type = defaultSettings.supportedFileTypes.find(
     (fType) => fType.type === fileType,
@@ -819,36 +917,62 @@ export function getDefaultEditor(fileType) {
 export function openUrl(url: string): void {
   if (AppConfig.isElectron) {
     window.electronIO.ipcRenderer.sendMessage('openUrl', url);
+  } else if (AppConfig.isCapacitor) {
+    // A Capacitor WebView can't handle target="_blank" / window.open
+    // reliably — it either swallows the click or navigates the app itself
+    // away. Delegate to the io-capacitor Browser.open path, which opens an
+    // SFSafariViewController (iOS) / Custom Tab (Android) and returns the
+    // user to the app afterwards.
+    const ioAPI = require('-/services/io-capacitor');
+    ioAPI.openUrl(url);
   } else {
-    // web or cordova
+    // web
     openUrlForWeb(url);
   }
+}
+
+export function sanitizeAttribution(html: string | undefined): string {
+  return DOMPurify.sanitize(html ?? '', {
+    ALLOWED_TAGS: ['a', 'b', 'i', 'em', 'strong', 'span'],
+    ALLOWED_ATTR: ['href', 'title', 'target', 'rel'],
+  });
 }
 
 export function openURLExternally(url: string, skipConfirmation = false) {
   if (skipConfirmation) {
     openUrl(url);
   } else if (
-    window.confirm('Do you really want to open this url: ' + url + ' ?')
+    window.confirm(
+      i18n.t('core:confirmOpenUrl', {
+        url,
+        interpolation: { escapeValue: false },
+      }),
+    )
   ) {
     openUrl(url);
   }
 }
 
-export function openUrlForWeb(url) {
+export function openUrlForWeb(url: string): void {
+  if (!url) {
+    console.warn('openUrlForWeb: URL is required');
+    return;
+  }
+
   const tmpLink = document.createElement('a');
   tmpLink.target = '_blank';
   tmpLink.href = url;
   tmpLink.rel = 'noopener noreferrer';
   document.body.appendChild(tmpLink);
   tmpLink.click();
-  tmpLink.parentNode.removeChild(tmpLink);
-  // window.open(url, '_blank').opener = null;
-  // Object.assign(anchor, {
-  //   target: '_blank',
-  //   href: url,
-  //   rel: 'noopener noreferrer'
-  // }).click();
+
+  // Delay removal to ensure click is fully processed
+  // Use requestAnimationFrame for better timing
+  requestAnimationFrame(() => {
+    if (tmpLink.parentNode) {
+      tmpLink.parentNode.removeChild(tmpLink);
+    }
+  });
 }
 
 export async function executePromisesInBatches<T>(
@@ -874,6 +998,11 @@ export async function executePromisesInBatches<T>(
 
   return results;
 }
+
+// `runConcurrent` lives in a leaf module (no Pro / DOM imports) so it can
+// be unit-tested without dragging in this whole file. Re-exported here so
+// existing callers don't have to change their imports.
+export { runConcurrent } from '-/utils/runConcurrent';
 
 export function setZoomFactorElectron(zoomLevel) {
   if (AppConfig.isElectron) {
@@ -929,14 +1058,31 @@ export function createThumbnailsInWorker(
 
 export function getDirProperties(path): Promise<TS.DirProp> {
   if (AppConfig.isElectron) {
-    return window.electronIO.ipcRenderer.invoke('getDirProperties', path);
+    try {
+      return window.electronIO.ipcRenderer.invoke('getDirProperties', path);
+    } catch (e) {
+      return Promise.reject(e);
+    }
   } else {
     return Promise.reject(
-      new Error(
-        'platformDirProperties is supported on Electron local storage.',
-      ),
+      new Error('getDirProperties is supported on Electron local storage.'),
     );
   }
+}
+
+export function resolveRelativePath(path: string): Promise<string> {
+  if (
+    path &&
+    (path.startsWith('.' + AppConfig.dirSeparator) ||
+      path.startsWith('./') ||
+      path.startsWith('..' + AppConfig.dirSeparator) ||
+      path.startsWith('../')) && // location paths are not with platform dirSeparator
+    AppConfig.isElectron
+  ) {
+    // relative paths
+    return window.electronIO.ipcRenderer.invoke('resolveRelativePaths', path);
+  }
+  return Promise.resolve(path);
 }
 
 export function watchFolderMessage(locationPath, depth) {
@@ -961,18 +1107,28 @@ export function openFileMessage(
   filePath: string,
   warningOpeningFilesExternally: boolean,
 ): void {
+  // Decode for display only — the raw filePath is still sent to Electron below.
+  let displayPath = filePath;
+  try {
+    displayPath = decodeURIComponent(filePath);
+  } catch (ex) {
+    // keep the original path if it is not a valid encoded URI
+  }
   if (
     !warningOpeningFilesExternally ||
     // eslint-disable-next-line no-restricted-globals
     confirm(
-      'Do you really want to open "' +
-        filePath +
-        '"? Execution of some files can be potentially dangerous!',
+      // Native confirm() renders plain text, so disable i18next HTML escaping
+      // (otherwise path separators show up as &#x2F; etc.).
+      i18n.t('core:confirmOpenFile', {
+        path: displayPath,
+        interpolation: { escapeValue: false },
+      }),
     )
   ) {
     if (AppConfig.isElectron) {
       window.electronIO.ipcRenderer.sendMessage('openFile', filePath);
-    } else if (AppConfig.isCordova) {
+    } else if (AppConfig.isNativeMobile) {
     } else {
       console.error('Is supported only in Electron');
     }
@@ -1014,14 +1170,6 @@ export function unZip(filePath, targetPath): Promise<string> {
   }
 }
 
-/*export function removeExtension(extensionId: string) {
-  if (AppConfig.isElectron) {
-    window.electronIO.ipcRenderer.sendMessage('removeExtension', extensionId);
-  } else {
-    console.error('remove extensions is supported only on Electron.');
-  }
-}*/
-
 export function quitApp(): void {
   if (AppConfig.isElectron) {
     window.electronIO.ipcRenderer.sendMessage('quitApp');
@@ -1036,13 +1184,76 @@ export function uploadAbort(path?: string): Promise<any> {
 export function getDevicePaths(): Promise<any> {
   if (AppConfig.isElectron) {
     return window.electronIO.ipcRenderer.invoke('getDevicePaths');
-  } else if (AppConfig.isCordova) {
-    const ioAPI = require('@tagspaces/tagspaces-common-cordova');
+  } else if (AppConfig.isCapacitor) {
+    const ioAPI = require('-/services/io-capacitor');
     return ioAPI.getDevicePaths();
   } else {
     console.log('getDevicePaths not supported');
     return Promise.resolve(undefined);
   }
+}
+
+/**
+ * iOS Capacitor only: resolve the iCloud Drive ubiquity container.
+ * Returns { available, containerPath, documentsPath }. `available` is false on
+ * any non-iOS platform or when the user isn't signed into iCloud.
+ */
+export function getICloudContainer(): Promise<{
+  available: boolean;
+  containerPath?: string;
+  documentsPath?: string;
+}> {
+  if (AppConfig.isCapacitor) {
+    const ioAPI = require('-/services/io-capacitor');
+    return ioAPI.getICloudContainer();
+  }
+  return Promise.resolve({ available: false });
+}
+
+function buildMetaLookup(
+  entriesToMerge: TS.FileSystemEntry[],
+): Record<string, TS.FileSystemEntryMeta> {
+  const metaLookup: Record<string, TS.FileSystemEntryMeta> = {};
+  for (const entry of entriesToMerge) {
+    if (!entry) continue;
+
+    const { path, meta } = entry;
+    // default meta to an object
+    const incomingMeta = meta ?? {};
+
+    // if we haven't seen this path, start with a shallow clone of incomingMeta
+    if (!metaLookup[path]) {
+      metaLookup[path] = { id: getUuid(), ...incomingMeta };
+    } else {
+      // now both sides are objects, safe to merge
+      Object.assign(metaLookup[path], incomingMeta);
+    }
+  }
+
+  return metaLookup;
+}
+
+/**
+ * @param entriesToMerge -> updated entries with only
+ * @param dirEntries -> currentDirEntries
+ */
+export function mergeByPath(
+  entriesToMerge: TS.FileSystemEntry[],
+  dirEntries: TS.FileSystemEntry[],
+): TS.FileSystemEntry[] {
+  const lookup = buildMetaLookup(entriesToMerge);
+
+  return dirEntries.map((e) => {
+    const extraMeta = lookup[e.path];
+    if (extraMeta) {
+      return {
+        ...e,
+        meta: { ...(e.meta || {}), ...extraMeta },
+        ...(extraMeta.id && { uuid: extraMeta.id }),
+      };
+    }
+    return e;
+  });
 }
 
 /**
@@ -1055,78 +1266,46 @@ export function downloadFile(
   filePath: string,
   fileUrl: string,
   dirSeparator: string,
-): number {
+): number | Promise<{ path: string; shared: boolean }> {
   const entryName = `${baseName(filePath, dirSeparator)}`;
   const fileName = extractFileName(entryName, dirSeparator);
 
-  if (AppConfig.isCordova) {
-    if (fileUrl) {
-      const downloadCordova = (uri, filename) => {
-        const { Downloader } = window.plugins;
-
-        const downloadSuccessCallback = (result) => {
-          // result is an object
-          /* {
-            path: "file:///storage/sdcard0/documents/My Pdf.pdf", // Returns full file path
-            file: "My Pdf.pdf", // Returns Filename
-            folder: "documents" // Returns folder name
-          } */
-          console.log(result.file); // My Pdf.pdf
-        };
-
-        const downloadErrorCallback = (error) => {
-          console.log(error);
-        };
-
-        const options = {
-          title: 'Downloading File:' + filename, // Download Notification Title
-          url: uri, // File Url
-          path: filename, // The File Name with extension
-          description: 'The file is downloading', // Download description Notification String
-          visible: true, // This download is visible and shows in the notifications while in progress and after completion.
-          folder: 'documents', // Folder to save the downloaded file, if not exist it will be created
-        };
-
-        Downloader.download(
-          options,
-          downloadSuccessCallback,
-          downloadErrorCallback,
-        );
-      };
-      downloadCordova(fileUrl, entryName);
-    } else {
+  if (AppConfig.isCapacitor) {
+    if (!fileUrl) {
       console.log('Can only download HTTP/HTTPS URIs');
       return -1;
-      //showNotification(t('core:cantDownloadLocalFile'));
     }
-  } else {
-    const downloadLink = document.getElementById('downloadFile');
-    if (downloadLink) {
-      if (AppConfig.isWeb) {
-        // eslint-disable-next-line no-restricted-globals
-        const { protocol } = location;
-        // eslint-disable-next-line no-restricted-globals
-        const { hostname } = location;
-        // eslint-disable-next-line no-restricted-globals
-        const { port } = location;
-        const link = `${protocol}//${hostname}${
-          port !== '' ? `:${port}` : ''
-        }/${filePath}`;
-        downloadLink.setAttribute('href', link);
-      } else {
-        downloadLink.setAttribute('href', `file:///${filePath}`);
-      }
+    const ioAPI = require('-/services/io-capacitor');
+    // Returns a promise so the caller can confirm start/completion to the user.
+    return ioAPI.downloadFile(fileName, fileUrl);
+  }
 
-      if (fileUrl) {
-        // mostly the s3 case
-        downloadLink.setAttribute('target', '_blank');
-        downloadLink.setAttribute('href', fileUrl);
-      }
-
-      downloadLink.setAttribute('download', fileName); // works only for same origin
-      downloadLink.click();
-      return 0;
+  const downloadLink = document.getElementById('downloadFile');
+  if (downloadLink) {
+    if (AppConfig.isWeb) {
+      // eslint-disable-next-line no-restricted-globals
+      const { protocol } = location;
+      // eslint-disable-next-line no-restricted-globals
+      const { hostname } = location;
+      // eslint-disable-next-line no-restricted-globals
+      const { port } = location;
+      const link = `${protocol}//${hostname}${
+        port !== '' ? `:${port}` : ''
+      }/${filePath}`;
+      downloadLink.setAttribute('href', link);
+    } else {
+      downloadLink.setAttribute('href', `file:///${filePath}`);
     }
+
+    if (fileUrl) {
+      // mostly the s3 case
+      downloadLink.setAttribute('target', '_blank');
+      downloadLink.setAttribute('href', fileUrl);
+    }
+
+    downloadLink.setAttribute('download', fileName); // works only for same origin
+    downloadLink.click();
+    return 0;
   }
   return 1;
 }
@@ -1134,108 +1313,179 @@ export function downloadFile(
 export function selectDirectoryDialog(): Promise<any> {
   if (AppConfig.isElectron) {
     return window.electronIO.ipcRenderer.invoke('selectDirectoryDialog');
-  } else if (AppConfig.isCordova) {
-    const ioAPI = require('@tagspaces/tagspaces-common-cordova');
+  } else if (AppConfig.isCapacitor) {
+    const ioAPI = require('-/services/io-capacitor');
     return ioAPI.selectDirectoryDialog();
   }
   return Promise.reject(new Error('selectDirectoryDialog: not implemented'));
 }
 
-export function removePrefix(str, prefix) {
+/**
+ * Capture a photo with the native camera and return it as a browser File.
+ * Capacitor-only: the WebView's file chooser can't open the camera directly,
+ * so this provides the missing capture trigger. Resolves null on cancel.
+ */
+export function takePicture(): Promise<File | null> {
+  if (AppConfig.isCapacitor) {
+    const ioAPI = require('-/services/io-capacitor');
+    return ioAPI.takePicture();
+  }
+  return Promise.reject(new Error('takePicture: not implemented'));
+}
+
+export function removePrefix(
+  str: string | null | undefined,
+  prefix: string | null | undefined,
+): string {
   if (str && prefix && str.length > prefix.length && str.startsWith(prefix)) {
     return str.slice(prefix.length);
   }
   return str.trim();
 }
 
+// Cached MIME type map for performance
+const MIME_TYPE_MAP: Readonly<Record<string, string>> = Object.freeze({
+  txt: 'text/plain',
+  md: 'text/markdown',
+  html: 'text/html',
+  htm: 'text/html',
+  css: 'text/css',
+  js: 'application/javascript',
+  json: 'application/json',
+  xml: 'application/xml',
+  pdf: 'application/pdf',
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  bmp: 'image/bmp',
+  webp: 'image/webp',
+  mp3: 'audio/mpeg',
+  wav: 'audio/wav',
+  mp4: 'video/mp4',
+  avi: 'video/x-msvideo',
+  mov: 'video/quicktime',
+  zip: 'application/zip',
+  rar: 'application/x-rar-compressed',
+});
+
 export function getMimeType(extension: string): string | undefined {
-  const mimeTypes: { [key: string]: string } = {
-    txt: 'text/plain',
-    html: 'text/html',
-    htm: 'text/html',
-    css: 'text/css',
-    js: 'application/javascript',
-    json: 'application/json',
-    xml: 'application/xml',
-    pdf: 'application/pdf',
-    png: 'image/png',
-    jpg: 'image/jpeg',
-    jpeg: 'image/jpeg',
-    gif: 'image/gif',
-    bmp: 'image/bmp',
-    webp: 'image/webp',
-    mp3: 'audio/mpeg',
-    wav: 'audio/wav',
-    mp4: 'video/mp4',
-    avi: 'video/x-msvideo',
-    mov: 'video/quicktime',
-    zip: 'application/zip',
-    rar: 'application/x-rar-compressed',
-  };
-  return mimeTypes[extension.toLowerCase()];
+  if (!extension) return undefined;
+  return MIME_TYPE_MAP[extension.toLowerCase()];
+}
+
+// Reverse of MIME_TYPE_MAP — the canonical (first-listed) extension per MIME
+// type, e.g. image/jpeg → "jpg", text/html → "html".
+const EXTENSION_FOR_MIME_TYPE: Readonly<Record<string, string>> = Object.freeze(
+  Object.entries(MIME_TYPE_MAP).reduce(
+    (acc, [ext, mime]) => {
+      if (!acc[mime]) acc[mime] = ext;
+      return acc;
+    },
+    {} as Record<string, string>,
+  ),
+);
+
+/**
+ * Reverse of getMimeType: a canonical file extension (without leading dot) for a
+ * Content-Type / MIME type, ignoring any "; charset=…" suffix. Returns undefined
+ * for unknown types.
+ */
+export function getExtensionForMimeType(mimeType: string): string | undefined {
+  if (!mimeType) return undefined;
+  const type = mimeType.split(';')[0].trim().toLowerCase();
+  return EXTENSION_FOR_MIME_TYPE[type];
 }
 
 export function toTsLocation(location: CommonLocation): TS.S3Location {
-  return {
+  // Build result with required fields first
+  const result: any = {
     uuid: location.uuid || getUuid(),
     name: location.name,
     type: location.type,
-    ...(location.authType && { authType: location.authType }),
-    ...(location.username && { username: location.username }),
-    ...(location.password && { password: location.password }),
-    ...(location.path && { path: location.path }),
-    ...(location.isDefault && { isDefault: location.isDefault }),
-    ...(location.isReadOnly && { isReadOnly: location.isReadOnly }),
-    ...(location.isNotEditable && { isNotEditable: location.isNotEditable }),
-    ...(location.watchForChanges && {
-      watchForChanges: location.watchForChanges,
-    }),
-    ...(location.disableIndexing && {
-      disableIndexing: location.disableIndexing,
-    }),
-    ...(location.reloadOnFocus && {
-      reloadOnFocus: location.reloadOnFocus,
-    }),
-    ...(location.disableThumbnailGeneration && {
-      disableThumbnailGeneration: location.disableThumbnailGeneration,
-    }),
-    ...(location.fullTextIndex && { fullTextIndex: location.fullTextIndex }),
-    ...(location.maxIndexAge && { maxIndexAge: location.maxIndexAge }),
-    ...(location.maxLoops && { maxLoops: location.maxLoops }),
-    ...(location.persistTagsInSidecarFile && {
-      persistTagsInSidecarFile: location.persistTagsInSidecarFile,
-    }),
-    ...(location.ignorePatternPaths && {
-      ignorePatternPaths: location.ignorePatternPaths,
-    }),
-    ...(location.autoOpenedFilename && {
-      autoOpenedFilename: location.autoOpenedFilename,
-    }),
-    ...(location.creationDate && { creationDate: location.creationDate }),
-    ...(location.lastEditedDate && { lastEditedDate: location.lastEditedDate }),
-    ...(location.accessKeyId && { accessKeyId: location.accessKeyId }),
-    ...(location.secretAccessKey && {
-      secretAccessKey: location.secretAccessKey,
-    }),
-    ...(location.sessionToken && { sessionToken: location.sessionToken }),
-    ...(location.bucketName && { bucketName: location.bucketName }),
-    ...(location.region && { region: location.region }),
-    ...(location.endpointURL && { endpointURL: location.endpointURL }),
-    ...(location.encryptionKey && { encryptionKey: location.encryptionKey }),
   };
-}
 
-export function toBase64Image(uint8Array): string {
-  if (uint8Array) {
-    try {
-      let binaryString = '';
-      uint8Array.forEach((byte) => {
-        binaryString += String.fromCharCode(byte);
-      });
-      return btoa(binaryString);
-    } catch (e) {
-      console.log('toBase64Image', e);
+  // Add optional fields efficiently - only if they have values
+  const optionalFields: Array<keyof CommonLocation> = [
+    'workSpaceId',
+    'authType',
+    'username',
+    'password',
+    'path',
+    'isDefault',
+    'isReadOnly',
+    'isNotEditable',
+    'watchForChanges',
+    'disableIndexing',
+    'reloadOnFocus',
+    'disableThumbnailGeneration',
+    'fullTextIndex',
+    'extractLinks',
+    'maxIndexAge',
+    'maxLoops',
+    'persistTagsInSidecarFile',
+    'ignorePatternPaths',
+    'autoOpenedFilename',
+    'creationDate',
+    'lastEditedDate',
+    'accessKeyId',
+    'secretAccessKey',
+    'sessionToken',
+    'bucketName',
+    'region',
+    'endpointURL',
+    'encryptionKey',
+  ];
+
+  for (const field of optionalFields) {
+    const value = location[field];
+    if (value !== undefined && value !== null && value !== '') {
+      result[field] = value;
     }
   }
-  return undefined;
+
+  return result as TS.S3Location;
+}
+
+// toBase64Image lives in its own dependency-free module so it stays
+// unit-testable; re-exported here for existing import sites.
+export { toBase64Image } from '-/services/base64';
+
+/**
+ * Extensions for a search type group, validated. Group names can come from
+ * persisted per-folder settings (tsm.json travels with the folder) and
+ * SearchTypeGroups itself can be overridden by external config
+ * (ExtSearchTypeGroups), so unknown or inherited keys ('constructor',
+ * '__proto__') and non-array values must yield [] instead of
+ * Object.prototype members.
+ */
+export function getSearchTypeGroupExts(group: string): string[] {
+  const groups = AppConfig.SearchTypeGroups;
+  const exts =
+    groups && Object.prototype.hasOwnProperty.call(groups, group)
+      ? groups[group]
+      : undefined;
+  return Array.isArray(exts)
+    ? exts.filter((ext): ext is string => typeof ext === 'string')
+    : [];
+}
+
+/**
+ * shallow compare Entries array (and optional mtime)
+ * @param a
+ * @param b
+ */
+export function entriesEquals(
+  a?: TS.FileSystemEntry[],
+  b?: TS.FileSystemEntry[],
+) {
+  if (a === b) return true;
+  if (!Array.isArray(a) || !Array.isArray(b)) return false;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i].path !== b[i]?.path) return false;
+    // optional check if you have mtime/mtime-like field
+    if ((a[i] as any).mtime !== (b[i] as any)?.mtime) return false;
+  }
+  return true;
 }

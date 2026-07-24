@@ -27,6 +27,9 @@ import TagContainer from './TagContainer';
 import { TS } from '-/tagspaces.namespace';
 import { useCurrentLocationContext } from '-/hooks/useCurrentLocationContext';
 import { useTaggingActionsContext } from '-/hooks/useTaggingActionsContext';
+import { useSelectedEntriesRef } from '-/hooks/useSelectedEntriesRef';
+import { useSelector } from 'react-redux';
+import { getTagDelimiter } from '-/reducers/settings';
 
 interface Props {
   tag: TS.Tag;
@@ -54,8 +57,8 @@ interface Props {
   ) => void;
   editTagForEntry?: (path: string, tag: TS.Tag) => void;
   deleteIcon?: Object;
-  selectedEntries: Array<TS.FileSystemEntry>;
   reorderTags?: boolean;
+  dndDisabled?: boolean;
 }
 
 const TagContainerDnd = (props: Props) => {
@@ -72,13 +75,17 @@ const TagContainerDnd = (props: Props) => {
     changeTagOrder,
     editTagForEntry,
     moveTag,
-    selectedEntries,
+    dndDisabled,
   } = props;
 
   const { addTags } = useTaggingActionsContext();
-  const { findLocation } = useCurrentLocationContext();
+  const { currentLocation } = useCurrentLocationContext();
+  // Read latest selectedEntries on demand from a ref so this component does
+  // not subscribe to selection re-renders. The drop handler fires on user
+  // gesture, not on render — reading ref.current at gesture time is correct.
+  const selectedEntriesRef = useSelectedEntriesRef();
   const tagContainerRef = useRef<HTMLSpanElement>(null);
-  const currentLocation = findLocation();
+  const tagDelimiter: string = useSelector(getTagDelimiter);
 
   const endDrag = (item, monitor) => {
     // const item = monitor.getItem();
@@ -100,6 +107,7 @@ const TagContainerDnd = (props: Props) => {
       }
     } else if (dropResult && dropResult.entry) {
       // console.log(`Dropped item: ${item.tag.title} onto file: ${dropResult.entry.path}!`);
+      const selectedEntries = selectedEntriesRef.current ?? [];
       if (
         selectedEntries.some((entry) => entry.path === dropResult.entry.path)
       ) {
@@ -114,6 +122,7 @@ const TagContainerDnd = (props: Props) => {
     type: DragItemTypes.TAG,
     item: { tag, tagGroup },
     end: endDrag,
+    canDrag: () => !dndDisabled,
     collect: (monitor) => ({
       isDragging: monitor.isDragging(),
     }),
@@ -193,7 +202,7 @@ const TagContainerDnd = (props: Props) => {
       if (dragItem.tag.type === 'plain') {
         const extractedTags = extractTags(
           entry.path,
-          AppConfig.tagDelimiter,
+          tagDelimiter,
           currentLocation?.getDirSeparator(),
         );
         if (
@@ -236,7 +245,21 @@ const TagContainerDnd = (props: Props) => {
   drag(drop(tagContainerRef));
 
   return (
-    <span ref={tagContainerRef} {...rest}>
+    <span
+      ref={tagContainerRef}
+      {...rest}
+      // Stop only the bubbling `drag` event so it doesn't reach the grid / list
+      // Card's `onDrag` selection handler, which would otherwise collapse a
+      // multi-selection down to the dragged-from entry — breaking "drag a tag
+      // onto the selected entries to tag them all" whenever the tag's own entry
+      // is not part of the selection. `dragstart` is deliberately left to bubble
+      // up to react-dnd's window-level handlers; stopping it there disables the
+      // empty drag preview (browser draws the chip + surroundings instead) and
+      // breaks drop detection. The `drag` event is not used by react-dnd, so
+      // suppressing it here is safe — the Card already does the same via
+      // handleCellClick.
+      onDrag={(event) => event.stopPropagation()}
+    >
       <TagContainer
         tag={tag}
         tagGroup={tagGroup}

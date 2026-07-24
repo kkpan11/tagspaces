@@ -16,6 +16,7 @@
  *
  */
 
+import AppConfig from '-/AppConfig';
 import DraggablePaper from '-/components/DraggablePaper';
 import TsButton from '-/components/TsButton';
 import TsIconButton from '-/components/TsIconButton';
@@ -55,13 +56,14 @@ interface Props {
   open: boolean;
   onClose: () => void;
   selectedDirectoryPath?: string;
+  skipSelection?: boolean;
   callback?: (newDirPath: string) => void;
 }
 
 function CreateDirectoryDialog(props: Props) {
   const { t } = useTranslation();
   const { createDirectory, setBackgroundColorChange } = useIOActionsContext();
-  const { findLocation } = useCurrentLocationContext();
+  const { currentLocation } = useCurrentLocationContext();
   const { currentDirectoryPath, getAllPropertiesPromise } =
     useDirectoryContentContext();
   const { showNotification } = useNotificationContext();
@@ -73,39 +75,7 @@ function CreateDirectoryDialog(props: Props) {
   const [name, setName] = useState('');
 
   const [ignored, forceUpdate] = useReducer((x) => x + 1, 0, undefined);
-  const { open, onClose, selectedDirectoryPath } = props;
-  const currentLocation = findLocation();
-
-  const defaultBackgrounds = [
-    'transparent',
-    // '#00000044',
-    '#ac725e44',
-    '#f83a2244',
-    // '#ff753744',
-    '#ffad4644',
-    '#42d69244',
-    // '#00800044',
-    '#7bd14844',
-    '#fad16544',
-    '#92e1c044',
-    '#9fe1e744',
-    '#9fc6e744',
-    '#4986e744',
-    '#9a9cff44',
-    '#c2c2c244',
-    '#cca6ac44',
-    '#f691b244',
-    // '#cd74e644',
-    // '#a47ae244',
-    // '#845EC260',
-    // '#D65DB160',
-    // '#FF6F9160',
-    // '#FF967160',
-    // '#FFC75F60',
-    // '#F9F87160',
-    // '#008E9B60',
-    // '#008F7A60',
-  ];
+  const { open, onClose, selectedDirectoryPath, skipSelection } = props;
 
   function handleValidation(dirName) {
     if (!dirNameValidation(dirName)) {
@@ -129,7 +99,13 @@ function CreateDirectoryDialog(props: Props) {
       );
       currentLocation.checkDirExist(dirPath).then((exist) => {
         if (!exist) {
-          createDirectory(dirPath).then(() => {
+          createDirectory(
+            dirPath,
+            currentLocation.uuid,
+            true,
+            true,
+            skipSelection,
+          ).then(() => {
             if (props.callback) {
               props.callback(dirPath);
             }
@@ -141,7 +117,7 @@ function CreateDirectoryDialog(props: Props) {
             }
           });
         } else {
-          showNotification('Directory ' + dirPath + ' exist!');
+          showNotification(t('core:directoryExistsAlert', { path: dirPath }));
         }
       });
 
@@ -170,10 +146,11 @@ function CreateDirectoryDialog(props: Props) {
       data-tid="confirmCreateNewDirectory"
       id="confirmCreateNewDirectory"
       variant="contained"
-      style={{
-        // @ts-ignore
-        WebkitAppRegion: 'no-drag',
-      }}
+      sx={
+        {
+          WebkitAppRegion: 'no-drag',
+        } as React.CSSProperties & { WebkitAppRegion?: string }
+      }
     >
       {t('core:ok')}
     </TsButton>
@@ -234,14 +211,21 @@ function CreateDirectoryDialog(props: Props) {
             label={t('backgroundColor')}
             retrieveValue={() => backgroundColor.current}
             value={' '}
-            style={{ marginTop: 0 }}
+            sx={{ marginTop: 0 }}
             slotProps={{
               input: {
                 readOnly: true,
                 endAdornment: (
-                  <InputAdornment position="end" style={{ height: 300 }}>
-                    <Box style={{ padding: 10, width: 300 }}>
-                      {defaultBackgrounds.map((background, cnt) => (
+                  <InputAdornment position="end" sx={{ height: '300px' }}>
+                    <Box
+                      sx={{
+                        margin: '10px',
+                        width: '400px',
+                        height: '200px',
+                        overflow: 'auto',
+                      }}
+                    >
+                      {AppConfig.backgroundColors.map((background, cnt) => (
                         <React.Fragment key={cnt}>
                           <TsIconButton
                             tooltip={background}
@@ -251,10 +235,10 @@ function CreateDirectoryDialog(props: Props) {
                               backgroundColor.current = background;
                               forceUpdate();
                             }}
-                            style={{
+                            sx={{
                               backgroundColor: background,
                               backgroundImage: background,
-                              margin: 5,
+                              margin: '5px',
                               ...(backgroundColor.current === background && {
                                 border: '0.5rem outset ' + background,
                               }),
